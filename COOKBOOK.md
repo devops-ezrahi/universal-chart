@@ -1947,5 +1947,5 @@ env:
 ```
 
 > **apiVersion**: all three CRDs share `externalSecretsApiVersion` (default
-> `external-secrets.io/v1beta1`) — override it once at the top level if your ESO
-> install uses a different API version.
+> `external-secrets.io/v1`) — override it once at the top level if your ESO
+> install is old enough to still be on `external-secrets.io/v1beta1`.

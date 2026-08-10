@@ -344,7 +344,7 @@ secrets: {}
 # CRDs installed on the cluster; this chart only renders the custom
 # resources, not the operator. All three are MAP-BASED (keyed by name).
 # ---------------------------------------------------------------------------
-externalSecretsApiVersion: external-secrets.io/v1beta1
+externalSecretsApiVersion: external-secrets.io/v1
 
 # SecretStore — namespaced, defines where ExternalSecrets in THIS namespace
 # pull from (Vault, AWS Secrets Manager, Azure Key Vault, GCP Secret
