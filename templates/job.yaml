@@ -1,0 +1,36 @@
+{{- range $name, $spec := .Values.jobs }}
+{{- include "universal-chart.validateVolumeMounts" (dict
+      "label" (printf "job %s" $name)
+      "volumeMounts" $spec.volumeMounts
+      "volumes" $spec.volumes
+      "initContainers" $spec.initContainers
+      "sidecars" $spec.sidecars) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-%s" (include "universal-chart.fullname" $) $name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "universal-chart.labels" $ | nindent 4 }}
+    {{- with $spec.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  backoffLimit: {{ $spec.backoffLimit | default 3 }}
+  {{- with $spec.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ . }}
+  {{- end }}
+  {{- with $spec.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ . }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "universal-chart.selectorLabels" $ | nindent 8 }}
+    spec:
+      {{- include "universal-chart.jobPodSpec" (dict "Values" $.Values "Chart" $.Chart "Release" $.Release "job" (merge $spec (dict "name" $name))) | nindent 6 }}
+{{- end }}
