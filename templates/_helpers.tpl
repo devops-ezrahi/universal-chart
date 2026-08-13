@@ -43,8 +43,33 @@ name. Used for both the primary fullname and the per-cronjob-key suffix
 (.Values.cronjobs is map-based to support more than one CronJob per chart).
 Usage: {{ include "universal-chart.cronJobName" (dict "root" $ "name" $name) }}
 */}}
+{{/*
+CronJob/Job names are prefixed with the release's fullname so that several of
+them in one release cannot collide. But when the key IS the fullname — the
+common case for a release holding a single CronJob named after itself —
+prefixing produces a doubled name like "nightly-report-nightly-report": not
+the name the source manifest used, so anything referencing it by name looks
+for the wrong object, and it spends the length budget twice. That budget is
+52 rather than 63 for CronJob because Kubernetes appends a timestamp when the
+CronJob spawns a Job, so doubling makes silent truncation (and truncation
+collisions) much likelier.
+
+Skipping the prefix only on an exact match keeps the collision-avoidance
+intact: two differently-named CronJobs in one release still get distinct
+prefixed names. Same idea as Helm's own fullname helper avoiding
+"release-release".
+*/}}
+{{- define "universal-chart.subresourceName" -}}
+{{- $full := include "universal-chart.fullname" .root -}}
+{{- if eq .name $full -}}
+{{- $full -}}
+{{- else -}}
+{{- printf "%s-%s" $full .name -}}
+{{- end -}}
+{{- end }}
+
 {{- define "universal-chart.cronJobName" -}}
-{{- printf "%s-%s" (include "universal-chart.fullname" .root) .name | trunc 52 | trimSuffix "-" }}
+{{- include "universal-chart.subresourceName" . | trunc 52 | trimSuffix "-" }}
 {{- end }}
 
 {{/*

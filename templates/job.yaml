@@ -9,7 +9,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ printf "%s-%s" (include "universal-chart.fullname" $) $name | trunc 63 | trimSuffix "-" }}
+  name: {{ include "universal-chart.subresourceName" (dict "root" $ "name" $name) | trunc 63 | trimSuffix "-" }}
   labels:
     {{- include "universal-chart.labels" $ | nindent 4 }}
     {{- with $spec.labels }}
