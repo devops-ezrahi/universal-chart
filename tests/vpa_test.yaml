@@ -49,6 +49,9 @@ tests:
       vpa:
         enabled: true
     asserts:
+      # 'StatefulSet' — the real Kubernetes kind (capital S in Set). Same trap
+      # as the HPA test: a template matching the old 'Statefulset' expectation
+      # would give the VPA a targetRef it can never resolve.
       - equal:
           path: spec.targetRef.kind
-          value: Statefulset
+          value: StatefulSet

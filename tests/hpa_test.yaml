@@ -85,6 +85,11 @@ tests:
         minReplicas: 1
         maxReplicas: 10
     asserts:
+      # 'StatefulSet' with the capital S in Set — the real Kubernetes kind.
+      # Asserting 'Statefulset' made this fail against a correct template, and
+      # "fixing" the template to match would have pointed scaleTargetRef at a
+      # kind that does not exist, leaving the HPA unable to find its target
+      # and silently never scaling.
       - equal:
           path: spec.scaleTargetRef.kind
-          value: Statefulset
+          value: StatefulSet

@@ -159,7 +159,14 @@ tests:
           path: spec.template.spec.containers[0].image
           value: "my-registry/app:2.0.0"
 
+  # appVersion is pinned here rather than tracking Chart.yaml: the point of
+  # this test is that an empty tag FALLS BACK to appVersion, not what
+  # appVersion happens to be today. Asserting the live value made it fail the
+  # moment Chart.yaml went 1.0.0 -> 2.0.0, which says nothing about the
+  # template.
   - it: should default tag to appVersion
+    chart:
+      appVersion: 1.0.0
     set:
       image:
         repository: nginx
