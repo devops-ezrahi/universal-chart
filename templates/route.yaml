@@ -3,7 +3,7 @@
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: {{ include "universal-chart.fullname" $ }}
+  name: {{ .name | default (include "universal-chart.fullname" $) }}
   labels:
     {{- include "universal-chart.labels" $ | nindent 4 }}
   {{- with merge ($.Values.commonAnnotations | default dict) (.annotations | default dict) }}
@@ -19,7 +19,7 @@ spec:
   {{- end }}
   to:
     kind: Service
-    name: {{ include "universal-chart.fullname" $ }}
+    name: {{ .serviceName | default (include "universal-chart.primaryServiceName" $) }}
     weight: 100
   port:
     targetPort: {{ .targetPort | default (include "universal-chart.firstKey" $.Values.service.ports) }}

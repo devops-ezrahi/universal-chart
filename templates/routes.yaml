@@ -25,7 +25,7 @@ spec:
   {{- end }}
   to:
     kind: Service
-    name: {{ $spec.serviceName | default (include "universal-chart.fullname" $) }}
+    name: {{ $spec.serviceName | default (include "universal-chart.primaryServiceName" $) }}
     weight: 100
   port:
     targetPort: {{ $spec.targetPort | default (include "universal-chart.firstKey" $.Values.service.ports) }}

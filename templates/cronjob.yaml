@@ -19,8 +19,14 @@ metadata:
 spec:
   schedule: {{ $spec.schedule | quote }}
   concurrencyPolicy: {{ $spec.concurrencyPolicy | default "Forbid" }}
-  successfulJobsHistoryLimit: {{ $spec.successfulJobsHistoryLimit | default 3 }}
-  failedJobsHistoryLimit: {{ $spec.failedJobsHistoryLimit | default 1 }}
+  {{- /* hasKey, not `| default`: Go template's `default` treats 0 as empty, so
+         an explicitly declared `successfulJobsHistoryLimit: 0` ("keep no
+         completed pods") silently rendered as 3 and leaked pods. Same for
+         failedJobsHistoryLimit and both backoffLimits below. The fallbacks are
+         Kubernetes' own defaults, so an unset field renders what the API server
+         would have filled in rather than a number this chart invented. */}}
+  successfulJobsHistoryLimit: {{ if hasKey $spec "successfulJobsHistoryLimit" }}{{ $spec.successfulJobsHistoryLimit }}{{ else }}3{{ end }}
+  failedJobsHistoryLimit: {{ if hasKey $spec "failedJobsHistoryLimit" }}{{ $spec.failedJobsHistoryLimit }}{{ else }}1{{ end }}
   {{- if hasKey $spec "suspend" }}
   suspend: {{ $spec.suspend }}
   {{- end }}
@@ -29,7 +35,8 @@ spec:
   {{- end }}
   jobTemplate:
     spec:
-      backoffLimit: {{ $spec.jobTemplate.backoffLimit | default 3 }}
+      {{- $jt := $spec.jobTemplate | default dict }}
+      backoffLimit: {{ if hasKey $jt "backoffLimit" }}{{ $jt.backoffLimit }}{{ else }}6{{ end }}
       {{- with $spec.jobTemplate.activeDeadlineSeconds }}
       activeDeadlineSeconds: {{ . }}
       {{- end }}

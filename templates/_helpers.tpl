@@ -105,6 +105,24 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Primary Service name — the object rendered by templates/service.yaml.
+
+Defaults to the release fullname, but a source manifest often names its Service
+something else ('<app>-service' is the common convention). That name is not
+decorative: Routes, Ingresses, other releases' config and in-cluster DNS all
+address a Service BY NAME, so silently renaming it to the release breaks every
+one of those references. .Values.service.name carries the real name.
+
+Everything that references the primary Service must resolve it THROUGH this
+helper, never through fullname directly — otherwise renaming the Service leaves
+the reference dangling. Current callers: service.yaml (the object itself),
+route.yaml + routes.yaml (spec.to.name) and ingress.yaml (backend.service.name).
+*/}}
+{{- define "universal-chart.primaryServiceName" -}}
+{{- .Values.service.name | default (include "universal-chart.fullname" .) }}
+{{- end }}
+
+{{/*
 ServiceAccount name
 */}}
 {{- define "universal-chart.serviceAccountName" -}}
@@ -140,11 +158,18 @@ Helm deep-merges maps but replaces arrays. We store values as maps (keyed by
 name) so GitOps overrides can patch individual entries. These helpers convert
 maps back to the array format Kubernetes expects.
 
+The key is normally the entry's `name`. It cannot always be: a container may
+mount ONE volume several times with different subPaths (the standard way to
+project individual ConfigMap keys onto individual files), and those mounts all
+share a name. Such entries are keyed '<name>:<subPath>' and carry an explicit
+`name` field, so the real name is `$spec.name | default $key` — never the bare
+key, which would emit a mount referencing a volume that does not exist.
+
 Usage:  {{- include "universal-chart.mapToList" .Values.ports | nindent 4 }}
 */}}
 {{- define "universal-chart.mapToList" -}}
 {{- range $name, $spec := . }}
-- name: {{ $name }}
+- name: {{ $spec.name | default $name }}
   {{- toYaml (omit $spec "name") | nindent 2 }}
 {{- end }}
 {{- end }}
@@ -211,7 +236,10 @@ Usage: {{ include "universal-chart.validateVolumeMounts" (dict
 {{- $validVolumes := merge (dict) (.volumeClaimTemplates | default dict) (.volumes | default dict) }}
 {{- $label := .label | default "the workload" }}
 
-{{- range $mountName, $_ := (.volumeMounts | default dict) }}
+{{- range $mountKey, $mountSpec := (.volumeMounts | default dict) }}
+{{- /* Composite key for a volume mounted more than once — the real volume
+       name is on the entry itself. See universal-chart.mapToList above. */}}
+{{- $mountName := ($mountSpec.name | default $mountKey) }}
 {{- if not (hasKey $validVolumes $mountName) }}
 {{- fail (printf "Error: volumeMount %q is defined on %s's main container, but volume %q is missing. Declare it explicitly (e.g. volumes.%s.emptyDir: {} if it's meant to be transient) — this chart never injects a fallback volume for you." $mountName $label $mountName $mountName) }}
 {{- end }}

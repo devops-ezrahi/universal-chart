@@ -20,7 +20,11 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  backoffLimit: {{ $spec.backoffLimit | default 3 }}
+  {{- /* hasKey, not `| default` — see the matching comment in cronjob.yaml.
+         `backoffLimit: 0` means "never retry a failed Job"; `| default` treated
+         it as unset and retried. The fallback is Kubernetes' own default (6),
+         not the 3 this chart used to invent. */}}
+  backoffLimit: {{ if hasKey ($spec | default dict) "backoffLimit" }}{{ $spec.backoffLimit }}{{ else }}6{{ end }}
   {{- with $spec.activeDeadlineSeconds }}
   activeDeadlineSeconds: {{ . }}
   {{- end }}

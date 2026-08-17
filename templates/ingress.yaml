@@ -27,7 +27,7 @@ spec:
             pathType: {{ .pathType | default "Prefix" }}
             backend:
               service:
-                name: {{ include "universal-chart.fullname" $ }}
+                name: {{ $.Values.ingress.serviceName | default (include "universal-chart.primaryServiceName" $) }}
                 port:
                   name: {{ .portName | default (include "universal-chart.firstKey" $.Values.service.ports) }}
           {{- end }}

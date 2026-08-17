@@ -116,7 +116,12 @@ MAIN CONTAINER — all possible container spec fields
 =============================================================================
 */}}
 {{- define "universal-chart.mainContainer" -}}
-- name: {{ include "universal-chart.name" . }}
+{{- /* The raw manifest's own container name when the converter captured one.
+       Falls back to the release name so a hand-written values file that never
+       sets it keeps the previous behaviour. Named, not release-derived,
+       because `kubectl logs -c`, log-pipeline container selectors and the
+       `container` label on kubelet metrics all address it by name. */}}
+- name: {{ .Values.containerName | default (include "universal-chart.name" .) }}
   image: {{ include "universal-chart.image" . }}
   imagePullPolicy: {{ .Values.image.pullPolicy }}
 
@@ -185,6 +190,14 @@ MAIN CONTAINER — all possible container spec fields
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
+  {{- /* The CONTAINER's own restartPolicy, not the pod's (.Values.restartPolicy,
+         rendered by podSpec above). Distinct field, distinct key: `Always` on a
+         container restarts it in place instead of failing the pod, and on an
+         initContainer it is what makes that container a native sidecar. */}}
+  {{- with .Values.containerRestartPolicy }}
+  restartPolicy: {{ . }}
+  {{- end }}
+
   {{- with .Values.lifecycle }}
   lifecycle:
     {{- toYaml . | nindent 4 }}
@@ -227,12 +240,19 @@ Call: {{- include "universal-chart.jobPodSpec" (dict "Values" $.Values "Chart" $
 */}}
 {{- define "universal-chart.jobPodSpec" -}}
 restartPolicy: {{ .job.restartPolicy | default "OnFailure" }}
-serviceAccountName: {{ include "universal-chart.serviceAccountName" . }}
+{{- /* A Job/CronJob may run as a ServiceAccount that is not the release's own
+       — a shared backup or maintenance identity. Prefer the per-job value and
+       fall back to the release-level helper, so a job that names no SA keeps
+       the previous behaviour. */}}
+serviceAccountName: {{ .job.serviceAccountName | default (include "universal-chart.serviceAccountName" .) }}
 {{- with .Values.imagePullSecrets }}
 imagePullSecrets:
   {{- toYaml . | nindent 2 }}
 {{- end }}
-{{- with .Values.podSecurityContext }}
+{{- /* The job's OWN pod-level securityContext when it declares one. Falling back
+       to the release-level value silently re-owns the job's files: a job asking
+       for runAsUser/fsGroup 1000 would run as whatever the workload declared. */}}
+{{- with (.job.podSecurityContext | default .Values.podSecurityContext) }}
 securityContext:
   {{- toYaml . | nindent 2 }}
 {{- end }}
@@ -244,9 +264,29 @@ initContainers:
   {{- end }}
 {{- end }}
 containers:
-  - name: {{ .job.name }}
-    image: {{ if .job.image }}{{ printf "%s:%s" .job.image.repository (.job.image.tag | default .Chart.AppVersion) }}{{ else }}{{ include "universal-chart.image" . }}{{ end }}
-    imagePullPolicy: {{ .Values.image.pullPolicy }}
+  {{- /* .job.name is the jobs/cronjobs MAP KEY, not the container's name.
+         Prefer the captured container name, same as mainContainer above. */}}
+  - name: {{ .job.containerName | default .job.name }}
+    {{- /* A digest is the strongest pin and wins over a tag, mirroring
+           universal-chart.image for the main container. Without this branch a
+           digest-pinned Job silently falls back to Chart.AppVersion. */}}
+    image: {{ if .job.image }}{{ if .job.image.digest }}{{ printf "%s@%s" .job.image.repository .job.image.digest }}{{ else if contains "@" .job.image.repository }}{{ .job.image.repository }}{{ else }}{{ printf "%s:%s" .job.image.repository (.job.image.tag | default .Chart.AppVersion) }}{{ end }}{{ else }}{{ include "universal-chart.image" . }}{{ end }}
+    {{- /* The job's OWN pull policy when it declares one. Falling back to the
+           release-level value silently downgrades a CronJob that asked for
+           `Always`, so it never re-pulls a mutable tag. */}}
+    imagePullPolicy: {{ (.job.image).pullPolicy | default .Values.image.pullPolicy }}
+    {{- /* Container-level hardening. Not rendered here at all until folder 12,
+           so a job's allowPrivilegeEscalation / readOnlyRootFilesystem /
+           capabilities were dropped outright. */}}
+    {{- with .job.securityContext }}
+    securityContext:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- /* Container-level, not the pod-level `restartPolicy` at the top of this
+           helper — see the matching comment in mainContainer. */}}
+    {{- with .job.containerRestartPolicy }}
+    restartPolicy: {{ . }}
+    {{- end }}
     {{- with .job.command }}
     command:
       {{- toYaml . | nindent 6 }}

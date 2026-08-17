@@ -27,6 +27,23 @@ spec:
   {{- with $spec.externalName }}
   externalName: {{ . }}
   {{- end }}
+  {{- /* These three are rendered by service.yaml for the PRIMARY Service but
+         were absent here, so every ADDITIONAL Service silently lost them:
+         a second LoadBalancer dropped `externalTrafficPolicy: Local` (and with
+         it client source-IP preservation), and a sticky Service dropped
+         `sessionAffinity: ClientIP` (and with it the affinity itself). This
+         template is a separate copy of service.yaml's spec, so anything added
+         there has to be added here too or the two disagree. */}}
+  {{- with $spec.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+  {{- with $spec.sessionAffinity }}
+  sessionAffinity: {{ . }}
+  {{- end }}
+  {{- with $spec.sessionAffinityConfig }}
+  sessionAffinityConfig:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- if hasKey $spec "publishNotReadyAddresses" }}
   publishNotReadyAddresses: {{ $spec.publishNotReadyAddresses }}
   {{- end }}
@@ -36,6 +53,12 @@ spec:
       port: {{ $pspec.port }}
       targetPort: {{ $pspec.targetPort | default $pspec.port }}
       protocol: {{ $pspec.protocol | default "TCP" }}
+      {{- /* See the matching comment in service.yaml. This template is a second
+             copy of the same port loop, so every port field has to be added in
+             both places or the primary Service and the extra ones disagree. */}}
+      {{- with $pspec.appProtocol }}
+      appProtocol: {{ . }}
+      {{- end }}
       {{- with $pspec.nodePort }}
       nodePort: {{ . }}
       {{- end }}

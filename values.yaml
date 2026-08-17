@@ -36,9 +36,24 @@ imagePullSecrets: []
 # ---------------------------------------------------------------------------
 # Replicas & update strategy
 # ---------------------------------------------------------------------------
+# Name of the ONE container this chart manages. Defaults to the release name.
+# Set it to keep the source manifest's own container name, which is what
+# `kubectl logs -c` / `exec -c`, log-pipeline container selectors and the
+# `container` label on kubelet metrics all match on. Jobs and CronJobs have
+# their own per-entry `containerName` (defaulting to the map key).
+containerName: ""
+
 replicaCount: 1
 revisionHistoryLimit: 3
 podManagementPolicy: OrderedReady   # StatefulSet only: OrderedReady | Parallel
+
+# StatefulSet only: the GOVERNING Service, which gives each pod its stable DNS
+# name <pod>.<serviceName>.<ns>.svc. Defaults to the release fullname. Set it
+# when the governing Service is a dedicated headless one (the usual pattern for
+# clustered data systems, e.g. `redis-cache-headless`) — only a headless
+# Service publishes per-pod A records, so pointing this at a regular ClusterIP
+# Service silently breaks peer discovery and cluster formation.
+serviceName: ""
 
 strategy: {}
 # Deployment:   type: RollingUpdate | Recreate
@@ -134,6 +149,12 @@ startupProbe: {}
 containerRestartRules: []
 # - exitCode: 42
 #   action: RestartAllContainers
+
+# The MAIN CONTAINER's own restartPolicy — not the pod's, which is
+# `restartPolicy` above. "Always" restarts this container in place instead of
+# failing the pod (K8s 1.33+); on an initContainer the same value is what makes
+# it a native sidecar (1.28+). Empty means the field is omitted entirely.
+containerRestartPolicy: ""
 
 # ---------------------------------------------------------------------------
 # Lifecycle hooks
@@ -418,6 +439,17 @@ volumeClaimTemplates: {}
 #   accessModes: [ReadWriteOnce]
 #   size: 20Gi
 #   storageClassName: fast-ssd
+
+# What happens to the volumeClaimTemplates' PVCs when the StatefulSet is
+# deleted or scaled down. StatefulSet only; ignored by the other workload
+# types. Left EMPTY on purpose so the rendered StatefulSet omits the field and
+# Kubernetes applies its own default — setting `Retain` here would be safer for
+# data but would silently override the intent of every chart user who wants the
+# default, and would show up as an invented field in a raw-vs-rendered diff.
+# Set it explicitly for anything holding state you cannot re-create.
+persistentVolumeClaimRetentionPolicy: {}
+# whenDeleted: Retain   # Retain | Delete  (K8s default: Delete)
+# whenScaled: Retain    # Retain | Delete  (K8s default: Delete)
 
 # ---------------------------------------------------------------------------
 # CronJobs — MAP-BASED (keyed by cronjob name)

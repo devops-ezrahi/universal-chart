@@ -28,9 +28,11 @@
         "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
       }
     },
+    "containerName":         { "type": "string" },
     "replicaCount":          { "type": "integer", "minimum": 0 },
     "revisionHistoryLimit":  { "type": "integer", "minimum": 0 },
     "podManagementPolicy":   { "type": "string", "enum": ["OrderedReady", "Parallel"] },
+    "serviceName":           { "type": "string" },
     "imagePullSecrets":      { "type": "array" },
     "podAnnotations":        { "type": "object" },
     "podLabels":             { "type": "object" },
@@ -50,6 +52,7 @@
     "readinessProbe":        { "type": "object" },
     "startupProbe":          { "type": "object" },
     "containerRestartRules": { "type": "array" },
+    "containerRestartPolicy": { "type": "string", "enum": ["", "Always", "OnFailure", "Never"] },
     "lifecycle":             { "type": "object" },
     "volumeMounts":          { "type": "object" },
     "volumeDevices":         { "type": "array" },
@@ -115,6 +118,14 @@
     "persistentVolumes":     { "type": "object" },
     "storageClasses":        { "type": "object" },
     "volumeClaimTemplates":  { "type": "object" },
+    "persistentVolumeClaimRetentionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "whenDeleted": { "type": "string", "enum": ["Retain", "Delete"] },
+        "whenScaled":  { "type": "string", "enum": ["Retain", "Delete"] }
+      }
+    },
     "cronjobs":              { "type": "object" },
     "jobs":                  { "type": "object" },
     "serviceAccount": {
