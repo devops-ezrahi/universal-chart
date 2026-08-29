@@ -4,8 +4,13 @@ kind: VerticalPodAutoscaler
 metadata:
   name: {{ include "universal-chart.fullname" . }}
   labels:
-    {{- include "universal-chart.labels" . | nindent 4 }}
-  {{- with .Values.commonAnnotations }}
+    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.vpa.labels) | nindent 4 }}
+  {{- /* The object's OWN annotations merged over the release-wide ones.
+         Rendering commonAnnotations alone dropped every annotation the raw
+         manifest carried on this object - a lost argocd.argoproj.io/sync-wave
+         reorders the whole deploy, and a lost prometheus.io/scrape stops
+         metrics collection, both silently. */}}
+  {{- with merge (.Values.commonAnnotations | default dict) (.Values.vpa.annotations | default dict) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

@@ -4,6 +4,109 @@ A practical reference for every feature with real-world examples.
 
 ---
 
+## READ THIS FIRST — two rules that change how every example below is written
+
+> **Many of the YAML examples further down are written in an older LIST format
+> that this chart no longer accepts.** They will fail immediately with
+> `values don't meet the specifications of the schema`. The two rules here are
+> correct and current; where an example disagrees with them, the example is
+> wrong. Fixing them is tracked below.
+
+### Rule 1 — collections are MAPS keyed by name, not lists
+
+The chart indexes these by name so a values override can target one entry
+(`env.LOG_LEVEL.value`) instead of guessing an array index (`env[3].value`).
+
+```yaml
+# WRONG - schema rejects this: "got array, want object"
+env:
+  - name: LOG_LEVEL
+    value: debug
+ports:
+  - name: http
+    containerPort: 8080
+
+# RIGHT - the name becomes the map KEY
+env:
+  LOG_LEVEL:
+    value: debug
+ports:
+  http:
+    containerPort: 8080
+```
+
+Everything that works this way:
+
+| | | | |
+|---|---|---|---|
+| `env` | `ports` | `volumes` | `volumeMounts` |
+| `initContainers` | `sidecars` | `configMaps` | `secrets` |
+| `pvc` | `cronjobs` | `jobs` | `services` |
+| `routes` | `networkPolicies` | `secretStores` | `externalSecrets` |
+| `service.ports` | `storageClasses` | `persistentVolumes` | `scc` |
+| `rbac.roles` | `rbac.roleBindings` | `rbac.clusterRoles` | `rbac.clusterRoleBindings` |
+
+Genuine lists stay lists — `command`, `args`, `tolerations`, `imagePullSecrets`,
+`rbac.roles.<name>.rules`, `subjects`, `conditions`. If Kubernetes has no `name`
+field to key on, it is a list.
+
+### Rule 2 — the map key IS the object's name, rendered verbatim
+
+There is **no prefixing and no renaming**. What you write is what gets created.
+
+```yaml
+cronjobs:
+  db-migrate-cleanup:      # -> CronJob/db-migrate-cleanup, exactly
+    schedule: "0 2 * * *"
+```
+
+This matters most for CronJobs and Jobs, where the chart used to prepend the
+release name (so a key of `cleanup` became `myrelease-cleanup`). It no longer
+does. Use the full name you want the object to have.
+
+Two consequences worth knowing:
+
+- **Keys cannot collide.** `metadata.name` is unique per kind per namespace by
+  Kubernetes' own rule, so full-name keys are automatically unique.
+- **Cluster-scoped objects are global.** Two releases in different namespaces
+  that both define `rbac.clusterRoles.my-role` are fighting over ONE cluster
+  object. The converter refuses the run and tells you to deploy it once.
+
+### Values keys added recently — quick reference
+
+Each is documented in its own section; this is the index.
+
+| Key | What it does |
+|---|---|
+| `containerName` | the main container's name (default: the release name) |
+| `containerRestartPolicy` | container-level restart policy; `Always` on an initContainer makes it a native sidecar |
+| `serviceName` | a StatefulSet's governing (usually headless) Service |
+| `persistentVolumeClaimRetentionPolicy` | `Retain`/`Delete` on scale-down and delete |
+| `progressDeadlineSeconds` | how long before a Deployment rollout is marked failed |
+| `image.digest` | pin by `@sha256:` instead of a tag; wins over `tag` |
+| `labels` / `annotations` | an object's OWN metadata, merged under the chart's identity labels |
+| `service.name`, `routes.<n>.name` | render a Service/Route under its real name |
+| `service.ports.<n>.appProtocol` | L7 hint (`grpc`, `http`) for a service mesh |
+| `services.<n>.sessionAffinity` / `.externalTrafficPolicy` | now honoured on additional Services, not just the primary |
+| `serviceAccount.imagePullSecrets` | private-registry credentials on the ServiceAccount |
+| `cronjobs.<n>.jobTemplate.serviceAccountName` | run a job as a different ServiceAccount |
+| `cronjobs.<n>.jobTemplate.podSecurityContext` / `.securityContext` | per-job pod and container security context |
+| `cronjobs.<n>.jobTemplate.image.pullPolicy` | per-job pull policy |
+| `ports.<n>.unnamed: true` | the map key is bookkeeping; render the port with no `name` |
+
+### Known-stale sections
+
+These still show the old LIST format and need converting to Rule 1. The chart
+is right; the examples are not.
+
+`4. Environment Variables` · `5. Ports` · `8. Volumes & Mounts` ·
+`10. Init Containers & Sidecars` · `18. ConfigMaps` · `19. Secrets` ·
+`22. CronJobs` · `23. Jobs` · `27. NetworkPolicy` · and the `pvc` examples.
+
+Sections 22 and 23 are corrected below; the rest are not yet.
+
+---
+
 ## Table of Contents
 1. [Workload Types](#1-workload-types)
 2. [Image & Pull Secrets](#2-image--pull-secrets)
@@ -1075,24 +1178,26 @@ volumeMounts:
 
 ## 22. CronJobs
 
+The map key is the CronJob's name, rendered verbatim — see Rule 2 at the top.
+
 ```yaml
 cronjobs:
-  # Daily DB backup at 2am
-  - name: db-backup
+  # Daily DB backup at 2am. Creates CronJob/db-backup, exactly.
+  db-backup:
     schedule: "0 2 * * *"             # min hour day month weekday
     concurrencyPolicy: Forbid         # Allow | Forbid | Replace
-    successfulJobsHistoryLimit: 3
+    successfulJobsHistoryLimit: 3     # 0 is honoured - keeps NO completed pods
     failedJobsHistoryLimit: 1
-    suspend: false                    # set true to pause without deleting
-    startingDeadlineSeconds: 300      # fail if not started within 5 min of scheduled time
+    suspend: false                    # true pauses the schedule without deleting
+    startingDeadlineSeconds: 300      # fail if not started within 5 min of schedule
     jobTemplate:
       restartPolicy: OnFailure
-      backoffLimit: 3
+      backoffLimit: 3                 # 0 is honoured - never retry
       activeDeadlineSeconds: 3600     # kill the job after 1 hour
       ttlSecondsAfterFinished: 86400  # auto-delete finished job after 24h
-      command: ["/bin/sh", "-c", "pg_dump $DATABASE_URL | gzip > /backup/$(date +%Y%m%d).sql.gz"]
-      env:
-        - name: DATABASE_URL
+      command: ["/bin/sh", "-c", "pg_dump $DATABASE_URL | gzip > /backup/dump.sql.gz"]
+      env:                            # a MAP, keyed by variable name
+        DATABASE_URL:
           valueFrom:
             secretKeyRef:
               name: db-secret
@@ -1102,50 +1207,99 @@ cronjobs:
           cpu: 100m
           memory: 256Mi
 
-  # Every 5 minutes — clean expired sessions
-  - name: session-cleanup
+  # Every 5 minutes - clean expired sessions
+  session-cleanup:
     schedule: "*/5 * * * *"
     concurrencyPolicy: Replace        # replace the running job with the new one
-    suspend: false
     jobTemplate:
       restartPolicy: Never
-      ttlSecondsAfterFinished: 600    # auto-delete after 10 minutes
+      ttlSecondsAfterFinished: 600
       command: ["python", "manage.py", "clearsessions"]
 ```
 
-> `suspend: true` pauses the schedule without deleting the CronJob — useful for maintenance windows. `startingDeadlineSeconds` protects against missed-schedule pile-ups on cluster restart.
+### Per-job overrides
 
----
+Anything below is optional and falls back to the release-level value when
+omitted — so a job that declares nothing behaves exactly as the workload does.
+
+```yaml
+cronjobs:
+  nightly-report:
+    schedule: "0 3 * * *"
+    labels:                           # the CronJob object's own labels
+      team: platform
+    annotations:
+      argocd.argoproj.io/sync-wave: "2"
+    jobTemplate:
+      containerName: report           # the container's name (default: the map key)
+      serviceAccountName: backup-sa   # run as a DIFFERENT ServiceAccount
+      containerRestartPolicy: Always  # container-level; see section 31
+      podSecurityContext:             # this job's own, not the workload's
+        runAsUser: 1000
+        fsGroup: 1000
+      securityContext:                # the container's own hardening
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      image:
+        repository: registry.example.com/reporter
+        tag: "2.1.0"
+        pullPolicy: Always            # per-job; does NOT inherit the workload's
+      # digest wins over tag when both are set:
+      # digest: sha256:abc123...
+```
+
+> `suspend: true` pauses the schedule without deleting the CronJob — useful for
+> maintenance windows. `startingDeadlineSeconds` protects against
+> missed-schedule pile-ups on cluster restart.
+>
+> `backoffLimit: 0` and `successfulJobsHistoryLimit: 0` mean what they say. An
+> explicit zero is honoured, not treated as "unset".
 
 ## 23. Jobs & ArgoCD Hooks
 
-Jobs run once. Perfect for DB migrations before deploy:
+Same rule as CronJobs: the map key is the Job's name, verbatim.
 
 ```yaml
 jobs:
-  # Pre-deploy DB migration (ArgoCD PreSync hook)
-  - name: db-migrate
+  # Runs before the app rolls out, as an ArgoCD PreSync hook
+  db-migrate:
+    backoffLimit: 1                   # 0 is honoured - never retry a migration
+    activeDeadlineSeconds: 600
+    ttlSecondsAfterFinished: 3600
+    restartPolicy: Never
+    containerName: migrate            # default: the map key
+    command: ["python", "manage.py", "migrate"]
     annotations:
       argocd.argoproj.io/hook: PreSync
       argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
-    restartPolicy: OnFailure
-    backoffLimit: 3
-    ttlSecondsAfterFinished: 3600   # auto-delete after 1 hour
-    command: ["python", "manage.py", "migrate", "--noinput"]
-    envFrom:
-      - secretRef:
-          name: db-secret
+    env:
+      DATABASE_URL:
+        valueFrom:
+          secretKeyRef:
+            name: db-secret
+            key: DATABASE_URL
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
 
-  # Post-deploy smoke test (ArgoCD PostSync hook)
-  - name: smoke-test
-    annotations:
-      argocd.argoproj.io/hook: PostSync
-      argocd.argoproj.io/hook-delete-policy: HookSucceeded
+  # A one-off seed job with its own image and identity
+  seed-data:
+    backoffLimit: 2
     restartPolicy: Never
-    command: ["/bin/sh", "-c", "curl -f http://myapp/healthz && echo OK"]
+    serviceAccountName: seeder-sa
+    image:
+      repository: registry.example.com/seeder
+      tag: "1.4.0"
+      pullPolicy: Always
+    command: ["/bin/sh", "-c", "seed --once"]
 ```
 
----
+> A Job's `metadata.name` is immutable once created, and a Job's spec cannot be
+> changed in place. If you edit one, delete it first or use the ArgoCD
+> `hook-delete-policy` above so each sync creates a fresh one.
 
 ## 24. HPA
 

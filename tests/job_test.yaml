@@ -17,7 +17,7 @@ tests:
           of: Job
       - equal:
           path: metadata.name
-          value: RELEASE-NAME-migrate
+          value: migrate
 
   - it: should set backoff limit
     set:

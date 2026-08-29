@@ -1,0 +1,1662 @@
+<title>Universal Chart Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#e7e9ee; --panel:#f2f3f7; --raise:#fbfbfd; --sunk:#dde0e8;
+  --ink:#10141f; --ink2:#454e63; --ink3:#7a8298;
+  --rule:#cdd2de; --rule2:#bcc2d2;
+  --accent:#a3650a; --accent-ink:#7d4d07; --accent-soft:#f6e9d2; --accent-line:#d9a44a;
+  --ok:#1c6b47; --ok-soft:#daece2;
+  --warn:#8a5a08; --warn-soft:#f7ead1;
+  --bad:#a5301f; --bad-soft:#f6dedb;
+  --c-key:#2c3d7a; --c-str:#1c6b47; --c-num:#8a3b12; --c-bool:#7a2f8a; --c-cm:#8b93a6;
+  --shadow:0 1px 2px rgba(16,20,31,.06),0 8px 24px -12px rgba(16,20,31,.18);
+  --f-dsp:"Archivo",system-ui,sans-serif;
+  --f-ui:"IBM Plex Sans",system-ui,sans-serif;
+  --f-mo:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0d1018; --panel:#141924; --raise:#1a2030; --sunk:#0a0d14;
+  --ink:#e7eaf2; --ink2:#a6b0c6; --ink3:#6f7a92;
+  --rule:#262e3f; --rule2:#333d52;
+  --accent:#e3a545; --accent-ink:#f0bc6c; --accent-soft:#2c2317; --accent-line:#8a6526;
+  --ok:#5fc496; --ok-soft:#12291f;
+  --warn:#e0aa54; --warn-soft:#2a2214;
+  --bad:#ec7f6d; --bad-soft:#2d1815;
+  --c-key:#8fa9ee; --c-str:#7fcaa4; --c-num:#e0a878; --c-bool:#c79ada; --c-cm:#5d6678;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -14px rgba(0,0,0,.7);
+}}
+[data-theme="dark"]{
+  --ground:#0d1018; --panel:#141924; --raise:#1a2030; --sunk:#0a0d14;
+  --ink:#e7eaf2; --ink2:#a6b0c6; --ink3:#6f7a92;
+  --rule:#262e3f; --rule2:#333d52;
+  --accent:#e3a545; --accent-ink:#f0bc6c; --accent-soft:#2c2317; --accent-line:#8a6526;
+  --ok:#5fc496; --ok-soft:#12291f;
+  --warn:#e0aa54; --warn-soft:#2a2214;
+  --bad:#ec7f6d; --bad-soft:#2d1815;
+  --c-key:#8fa9ee; --c-str:#7fcaa4; --c-num:#e0a878; --c-bool:#c79ada; --c-cm:#5d6678;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -14px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-ui);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.mono{font-family:var(--f-mo)}
+
+/* ---------- shell ---------- */
+.app{display:flex;flex-direction:column;height:100dvh;min-height:0}
+.bar{display:flex;align-items:center;gap:16px;padding:0 16px;height:54px;flex:0 0 auto;
+  background:var(--panel);border-bottom:1px solid var(--rule)}
+.brand{display:flex;align-items:baseline;gap:9px;min-width:0}
+.brand b{font-family:var(--f-dsp);font-weight:700;font-size:15px;letter-spacing:-.2px;white-space:nowrap}
+.brand i{font-style:normal;font-family:var(--f-mo);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);white-space:nowrap}
+.seg{display:flex;border:1px solid var(--rule2);border-radius:7px;overflow:hidden;background:var(--raise)}
+.seg button{background:none;border:0;padding:6px 12px;font-size:12.5px;font-weight:500;color:var(--ink2);cursor:pointer;white-space:nowrap}
+.seg button+button{border-left:1px solid var(--rule)}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
+.bar .spacer{flex:1}
+.btn{background:var(--raise);border:1px solid var(--rule2);border-radius:7px;padding:6px 11px;font-size:12.5px;font-weight:500;cursor:pointer;color:var(--ink2);white-space:nowrap}
+.btn:hover{border-color:var(--accent-line);color:var(--ink)}
+.btn.pri{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-ink);font-weight:600}
+.btn.wild{border-style:dashed}
+.cols{flex:1;min-height:0;display:grid;grid-template-columns:274px minmax(0,1fr) minmax(380px,.85fr)}
+
+/* ---------- rail ---------- */
+.rail{border-right:1px solid var(--rule);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.search{padding:10px;border-bottom:1px solid var(--rule)}
+.search input{width:100%;background:var(--raise);border:1px solid var(--rule2);border-radius:7px;padding:7px 10px;font-size:13px}
+.search input::placeholder{color:var(--ink3)}
+.railscroll{overflow-y:auto;flex:1;padding-bottom:24px}
+.grp{padding:14px 12px 4px 12px;font-family:var(--f-mo);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3);display:flex;justify-content:space-between;align-items:center}
+.grp span{color:var(--accent);font-weight:600}
+.item{display:grid;grid-template-columns:20px 30px 1fr;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;border-left:2px solid transparent}
+.item:hover{background:var(--raise)}
+.item[aria-current="true"]{background:var(--raise);border-left-color:var(--accent)}
+.item .tog{width:15px;height:15px;border:1.5px solid var(--rule2);border-radius:4px;background:var(--ground);display:grid;place-items:center;padding:0;cursor:pointer}
+.item .tog:hover{border-color:var(--accent)}
+.item.on .tog{background:var(--accent);border-color:var(--accent)}
+.item .tog svg{width:9px;height:9px;stroke:var(--ground);stroke-width:3;fill:none;opacity:0}
+.item.on .tog svg{opacity:1}
+.item .sec{font-family:var(--f-mo);font-size:10.5px;color:var(--ink3);text-align:right}
+.item.on .sec{color:var(--accent)}
+.item .nm{font-size:13px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item.on .nm,.item[aria-current="true"] .nm{color:var(--ink);font-weight:500}
+.empty{padding:24px 14px;color:var(--ink3);font-size:12.5px}
+
+/* ---------- plate ---------- */
+.plate{overflow-y:auto;min-height:0;background:var(--ground)}
+.plate-in{max-width:760px;padding:26px 30px 90px}
+.eyebrow{font-family:var(--f-mo);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink3);display:flex;gap:10px;align-items:center}
+.eyebrow b{color:var(--accent);font-weight:600}
+h1{font-family:var(--f-dsp);font-weight:700;font-size:30px;line-height:1.14;letter-spacing:-.6px;margin:8px 0 6px;text-wrap:balance}
+.blurb{color:var(--ink2);max-width:62ch;margin:0 0 18px}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
+.field{margin-bottom:16px}
+.field>label,.flabel{display:block;font-size:12px;font-weight:600;letter-spacing:.02em;margin-bottom:5px;color:var(--ink2)}
+.field .hint{font-size:12px;color:var(--ink3);margin-top:5px}
+.inp,textarea.inp,select.inp{width:100%;background:var(--raise);border:1px solid var(--rule2);border-radius:7px;padding:8px 10px;font-size:13.5px}
+.inp:focus{border-color:var(--accent-line)}
+textarea.inp{font-family:var(--f-mo);font-size:12.5px;line-height:1.6;resize:vertical;min-height:110px;white-space:pre;overflow-x:auto}
+select.inp{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--ink3) 50%),linear-gradient(135deg,var(--ink3) 50%,transparent 50%);background-position:calc(100% - 16px) 55%,calc(100% - 11px) 55%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:32px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.chk{display:flex;align-items:center;gap:9px;font-size:13.5px;color:var(--ink2);cursor:pointer;padding:6px 0}
+.chk input{width:16px;height:16px;accent-color:var(--accent)}
+.rows{display:flex;flex-direction:column;gap:10px}
+.row{border:1px solid var(--rule);border-radius:9px;background:var(--panel);padding:12px}
+.rowhd{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.rowhd .ix{font-family:var(--f-mo);font-size:10.5px;color:var(--ink3);letter-spacing:.1em}
+.rowhd .sp{flex:1}
+.x{background:none;border:0;color:var(--ink3);cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;border-radius:5px}
+.x:hover{color:var(--bad);background:var(--bad-soft)}
+.add{background:none;border:1px dashed var(--rule2);border-radius:8px;color:var(--ink2);padding:8px;cursor:pointer;font-size:12.5px;width:100%}
+.add:hover{border-color:var(--accent-line);color:var(--accent-ink)}
+.kvrow{display:grid;grid-template-columns:1fr 1.4fr 30px;gap:8px;margin-bottom:8px}
+.lrow{display:grid;grid-template-columns:1fr 30px;gap:8px;margin-bottom:8px}
+.note{border-left:2px solid var(--accent-line);background:var(--panel);padding:10px 14px;margin:0 0 9px;font-size:13px;color:var(--ink2);border-radius:0 7px 7px 0}
+.note b{color:var(--ink);font-weight:600}
+.note code,.blurb code,.hint code{font-family:var(--f-mo);font-size:12px;background:var(--sunk);padding:1px 5px;border-radius:4px}
+.sub{font-family:var(--f-dsp);font-size:12.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);margin:28px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--rule)}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{font-family:var(--f-mo);font-size:11.5px;border:1px solid var(--rule2);background:var(--panel);border-radius:20px;padding:3px 11px;color:var(--ink2)}
+.chip b{color:var(--ink);font-weight:600}
+.chip.mini{cursor:pointer}
+.chip.mini:hover{border-color:var(--accent-line);color:var(--accent-ink)}
+
+/* ---------- output ---------- */
+.out{border-left:1px solid var(--rule);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.tabs{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--rule);flex:0 0 auto;align-items:center}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:12px 10px;font-size:12.5px;font-weight:500;color:var(--ink3);cursor:pointer;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.tabs .sp{flex:1}
+.tabs .pill{font-family:var(--f-mo);font-size:10px;background:var(--bad-soft);color:var(--bad);border-radius:9px;padding:1px 6px;margin-left:5px}
+.files{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--rule);overflow-x:auto;flex:0 0 auto}
+.files button{background:var(--ground);border:1px solid var(--rule2);border-radius:6px;padding:4px 10px;font-family:var(--f-mo);font-size:11.5px;color:var(--ink2);cursor:pointer;white-space:nowrap}
+.files button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-ink);font-weight:600}
+.outbody{flex:1;min-height:0;overflow:auto;background:var(--sunk)}
+.code{font-family:var(--f-mo);font-size:12.3px;line-height:1.62;padding:10px 0 60px;min-width:max-content}
+.cl{display:flex;padding:0 14px 0 0}
+.cl.own{background:var(--accent-soft)}
+.cl .n{flex:0 0 46px;text-align:right;padding-right:12px;color:var(--ink3);opacity:.55;user-select:none;font-size:11px}
+.cl.own .n{opacity:1;color:var(--accent);font-weight:600}
+.cl .t{white-space:pre}
+.c-k{color:var(--c-key)}.c-s{color:var(--c-str)}.c-n{color:var(--c-num)}.c-b{color:var(--c-bool)}.c-cm{color:var(--c-cm);font-style:italic}
+.outfoot{flex:0 0 auto;border-top:1px solid var(--rule);padding:8px 10px;display:flex;gap:8px;align-items:center;font-family:var(--f-mo);font-size:11px;color:var(--ink3)}
+.pad{padding:16px}
+.res{display:flex;flex-direction:column;gap:1px}
+.resg{margin-bottom:16px}
+.resg h4{font-family:var(--f-mo);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin:0 0 8px;font-weight:500}
+.resitem{display:flex;align-items:center;gap:10px;background:var(--raise);border:1px solid var(--rule);border-radius:7px;padding:7px 10px;margin-bottom:5px}
+.resitem .k{font-family:var(--f-mo);font-size:11px;color:var(--accent-ink);background:var(--accent-soft);border-radius:4px;padding:1px 6px;white-space:nowrap}
+.resitem .nm{font-family:var(--f-mo);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.resitem .sc{margin-left:auto;font-size:10.5px;font-family:var(--f-mo);color:var(--ink3);white-space:nowrap}
+.ck{display:flex;gap:10px;padding:11px 12px;border-radius:8px;margin-bottom:8px;font-size:13px;align-items:flex-start}
+.ck .d{font-family:var(--f-mo);font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;flex:0 0 auto;padding-top:1px}
+.ck.bad{background:var(--bad-soft)}.ck.bad .d{color:var(--bad)}
+.ck.warn{background:var(--warn-soft)}.ck.warn .d{color:var(--warn)}
+.ck.ok{background:var(--ok-soft)}.ck.ok .d{color:var(--ok)}
+.ck p{margin:0;color:var(--ink2)}
+.ck b{color:var(--ink)}
+
+/* ---------- fleet ---------- */
+.nschips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.nschip{display:flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--rule2);border-radius:20px;padding:4px 6px 4px 12px;font-family:var(--f-mo);font-size:12px}
+.matrix{overflow-x:auto;border:1px solid var(--rule);border-radius:9px;background:var(--panel)}
+table.mx{border-collapse:collapse;width:100%;min-width:520px}
+table.mx th,table.mx td{border-bottom:1px solid var(--rule);border-right:1px solid var(--rule);padding:0;text-align:left;vertical-align:middle}
+table.mx th{background:var(--sunk);font-family:var(--f-mo);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:500;padding:8px 10px;white-space:nowrap}
+table.mx td:first-child{font-family:var(--f-mo);font-size:12px;color:var(--ink2);padding:6px 10px;background:var(--raise);white-space:nowrap}
+table.mx td .cell{width:100%;border:0;background:none;padding:8px 10px;font-family:var(--f-mo);font-size:12.5px}
+table.mx td .cell::placeholder{color:var(--ink3);opacity:.6}
+table.mx td .cell:focus{background:var(--accent-soft);outline:none}
+table.mx tr:last-child td{border-bottom:0}
+table.mx th:last-child,table.mx td:last-child{border-right:0}
+
+@media (max-width:1180px){
+  .cols{grid-template-columns:240px minmax(0,1fr)}
+  .out{position:fixed;inset:54px 0 0 0;z-index:20;border-left:0}
+  body:not([data-pane="out"]) .out{display:none}
+  .plate-in{padding:22px 20px 80px}
+}
+@media (max-width:820px){
+  .cols{grid-template-columns:1fr}
+  .rail{position:fixed;inset:54px 0 0 0;z-index:20;border-right:0}
+  body:not([data-pane="rail"]) .rail{display:none}
+  .brand i{display:none}
+}
+@media (min-width:1181px){.mobonly{display:none!important}}
+@media (min-width:821px){#paneseg button[data-pane="rail"]{display:none}}
+@media (prefers-reduced-motion:no-preference){
+  .plate-in{animation:rise .22s ease-out}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+}
+</style>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand"><b>Universal Chart Studio</b><i>values.yaml, by section</i></div>
+    <div class="seg mobonly" id="paneseg">
+      <button data-pane="rail">Index</button>
+      <button data-pane="plate">Editor</button>
+      <button data-pane="out">Output</button>
+    </div>
+    <div class="seg" id="modeseg">
+      <button data-mode="single" aria-pressed="true">Single release</button>
+      <button data-mode="fleet" aria-pressed="false">Fleet</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="btn-presets">Presets</button>
+    <button class="btn wild" id="btn-all">Enable everything</button>
+    <button class="btn" id="btn-reset">Reset</button>
+  </header>
+  <div class="cols">
+    <nav class="rail">
+      <div class="search"><input id="q" type="search" placeholder="Search features, keys, kinds…" autocomplete="off"></div>
+      <div class="railscroll" id="rail"></div>
+    </nav>
+    <section class="plate" id="plate"></section>
+    <aside class="out">
+      <div class="tabs" id="tabs">
+        <button data-tab="files" aria-selected="true">Files</button>
+        <button data-tab="renders" aria-selected="false">Renders</button>
+        <button data-tab="checks" aria-selected="false">Checks</button>
+      </div>
+      <div class="files" id="filebar" hidden></div>
+      <div class="outbody" id="outbody"></div>
+      <div class="outfoot">
+        <span id="stat"></span><span class="spacer" style="flex:1"></span>
+        <button class="btn" id="btn-copy">Copy file</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+/* =======================================================================
+   Universal Chart Studio - a values.yaml bench built from COOKBOOK.md
+   Every feature below maps to one cookbook section and one values key.
+   ======================================================================= */
+const $=(s,r)=>(r||document).querySelector(s), $$=(s,r)=>[...(r||document).querySelectorAll(s)];
+const e=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const nz=v=>v!==undefined&&v!==null&&v!=='';
+const put=(o,k,v)=>{if(nz(v))o[k]=v;return o;};
+const putn=(o,k,v)=>{if(nz(v)&&Number.isFinite(Number(v)))o[k]=Number(v);return o;};
+const flow=a=>({__flow:a});
+const raw=t=>({__raw:String(t).replace(/\s+$/,'')});
+const clean=o=>{const r={};for(const k in o){const v=o[k];if(v===undefined||v===null||v==='')continue;
+  if(typeof v==='object'&&!Array.isArray(v)&&!v.__raw&&!v.__flow&&Object.keys(v).length===0)continue;
+  if(Array.isArray(v)&&!v.length)continue;r[k]=v;}return r;};
+const some=o=>Object.keys(clean(o)).length?clean(o):null;
+const listOf=t=>String(t||'').split('\n').map(s=>s.trim()).filter(Boolean);
+const kvOf=rr=>{const m={};(rr||[]).forEach(r=>{if(nz(r.k))m[r.k]=r.v===undefined?'':r.v;});return Object.keys(m).length?m:null;};
+const mapOf=(rr,fn,key)=>{const m={};(rr||[]).forEach(r=>{const n=r[key||'name'];if(!nz(n))return;const b=fn(r);if(b)m[n]=b;});return Object.keys(m).length?m:null;};
+
+/* ---------- YAML writer ---------- */
+function scalar(v){
+  if(typeof v==='boolean')return v?'true':'false';
+  if(typeof v==='number')return String(v);
+  const s=String(v);
+  if(s==='')return '""';
+  if(/^\s|\s$/.test(s))return JSON.stringify(s);
+  if(/^(true|false|null|yes|no|on|off|~)$/i.test(s))return JSON.stringify(s);
+  if(/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(s))return JSON.stringify(s);
+  if(/^[#&*!|>%@`'"\[\]{},?-]/.test(s))return JSON.stringify(s);
+  if(/:\s|\s#|\*/.test(s))return JSON.stringify(s);
+  return s;
+}
+function blockLines(v,ind){
+  const out=[String(v).endsWith('\n')?'|':'|-'];
+  const pad=' '.repeat(ind+2);
+  String(v).replace(/\s+$/,'').split('\n').forEach(l=>out.push(l?pad+l:''));
+  return out;
+}
+function emitNode(node,ind,out){
+  const pad=' '.repeat(ind);
+  if(Array.isArray(node)){
+    node.forEach(it=>{
+      if(it&&typeof it==='object'&&!it.__raw&&!it.__flow&&!Array.isArray(it)){
+        const c=clean(it);
+        if(!Object.keys(c).length){out.push(pad+'- {}');return;}
+        const sub=[];emitNode(c,ind+2,sub);
+        sub[0]=pad+'- '+sub[0].slice(ind+2);
+        sub.forEach(l=>out.push(l));
+      }else if(typeof it==='string'&&it.includes('\n')){
+        const b=blockLines(it,ind);
+        out.push(pad+'- '+b[0]);
+        b.slice(1).forEach(l=>out.push(l));
+      }else out.push(pad+'- '+scalar(it));
+    });
+    return out;
+  }
+  for(const k of Object.keys(node)){
+    const v=node[k];
+    if(v===undefined||v===null)continue;
+    if(v&&v.__raw!==undefined){
+      out.push(pad+k+':');
+      String(v.__raw).split('\n').forEach(l=>out.push(l?' '.repeat(ind+2)+l:''));
+    }else if(v&&v.__flow!==undefined){
+      out.push(pad+k+': ['+v.__flow.map(scalar).join(', ')+']');
+    }else if(Array.isArray(v)){
+      if(!v.length){out.push(pad+k+': []');continue;}
+      out.push(pad+k+':');emitNode(v,ind+2,out);
+    }else if(typeof v==='object'){
+      const c=clean(v);
+      if(!Object.keys(c).length){out.push(pad+k+': {}');continue;}
+      out.push(pad+k+':');emitNode(c,ind+2,out);
+    }else if(typeof v==='string'&&v.includes('\n')){
+      const b=blockLines(v,ind);
+      out.push(pad+k+': '+b[0]);
+      b.slice(1).forEach(l=>out.push(l));
+    }else out.push(pad+k+': '+scalar(v));
+  }
+  return out;
+}
+function toYaml(doc){return emitNode(clean(doc),0,[]).join('\n');}
+function deepMerge(a,b){
+  for(const k in b){const v=b[k];
+    if(v&&typeof v==='object'&&!Array.isArray(v)&&!v.__raw&&!v.__flow&&a[k]&&typeof a[k]==='object'&&!Array.isArray(a[k])) deepMerge(a[k],v);
+    else a[k]=v;}
+  return a;
+}
+function setPath(o,path,val){
+  const p=path.split('.');let c=o;
+  p.forEach((k,i)=>{if(i===p.length-1)c[k]=val;else c=(c[k]=c[k]||{});});
+  return o;
+}
+
+/* ---------- field shorthands ---------- */
+const S=(k,label,o)=>Object.assign({t:'str',k,label},o);
+const N=(k,label,o)=>Object.assign({t:'num',k,label},o);
+const B=(k,label,o)=>Object.assign({t:'bool',k,label},o);
+const SE=(k,label,opts,o)=>Object.assign({t:'sel',k,label,opts},o);
+const KV=(k,label,o)=>Object.assign({t:'kv',k,label},o);
+const TX=(k,label,o)=>Object.assign({t:'txt',k,label},o);
+const YA=(k,label,o)=>Object.assign({t:'yaml',k,label},o);
+const RW=(k,label,cols,o)=>Object.assign({t:'rows',k,label,cols},o);
+
+/* ---------- catalog: core, container, storage ---------- */
+const ACCESS=['ReadWriteOnce','ReadWriteMany','ReadOnlyMany','ReadWriteOncePod'];
+const CATS=[
+  {id:'core',name:'Core'},{id:'container',name:'Container'},{id:'storage',name:'Storage'},
+  {id:'network',name:'Networking'},{id:'config',name:'Config & Secrets'},{id:'batch',name:'Jobs'},
+  {id:'scale',name:'Scaling & Availability'},{id:'sched',name:'Scheduling & Security'},
+  {id:'ops',name:'Identity & Observability'},{id:'escape',name:'Escape Hatches'}
+];
+const FEAT=[];
+const F=o=>{FEAT.push(o);return o;};
+
+F({id:'identity',sec:'--',cat:'core',name:'Release identity',keys:['nameOverride','fullnameOverride','commonLabels','commonAnnotations'],
+  kw:'name override labels annotations fullname',
+  blurb:'Set the name every object in the release is built from, plus labels and annotations stamped onto all of them.',
+  fields:[S('nameOverride','nameOverride',{p:'nameOverride',ph:'checkout-api',hint:'Resource names become exactly this, not <em>&lt;release&gt;-&lt;chart&gt;</em>. GitOps generators should always set it.'}),
+    S('fullnameOverride','fullnameOverride',{ph:'',hint:'Wins over nameOverride. Rarely needed.'}),
+    KV('commonLabels','commonLabels'),KV('commonAnnotations','commonAnnotations')],
+  ex:{nameOverride:'checkout-api',commonLabels:[{k:'team',v:'payments'},{k:'tier',v:'backend'}],commonAnnotations:[{k:'owner',v:'payments@example.com'}]},
+  emit:v=>some({nameOverride:v.nameOverride,fullnameOverride:v.fullnameOverride,commonLabels:kvOf(v.commonLabels),commonAnnotations:kvOf(v.commonAnnotations)}),
+  renders:()=>[],
+  notes:['<b>nameOverride is the one to set.</b> Without it the chart builds names as <code>&lt;release&gt;-&lt;chart&gt;</code>, which is almost never what a converted manifest wants.']});
+
+F({id:'workload',sec:'1',cat:'core',name:'Workload type',keys:['workload'],
+  kw:'deployment statefulset daemonset none pods',
+  blurb:'Pick one. This decides which object carries your pods — or that the release owns no pods at all.',
+  fields:[SE('type','workload.type',['deployment','statefulset','daemonset','none'],{def:'deployment',p:'workload.type'})],
+  ex:{type:'statefulset'},
+  emit:v=>({workload:{type:v.type||'deployment'}}),
+  renders:v=>{const t=v.type||'deployment';return t==='none'?[]:[{kind:t[0].toUpperCase()+t.slice(1),name:relName()}];},
+  notes:['Use <code>statefulset</code> when pods need stable hostnames or per-pod storage, <code>daemonset</code> for node-level agents, <code>none</code> for a config/RBAC-only release.',
+    '<b>workload.type: none fails validation</b> if <code>hpa</code>, <code>vpa</code> or <code>pdb</code> are enabled — there are no pods to scale, resize or protect.']});
+
+F({id:'image',sec:'2',cat:'core',name:'Image & pull secrets',keys:['image','imagePullSecrets'],
+  kw:'registry tag digest pullpolicy ghcr',
+  blurb:'Where the container comes from. A digest pins harder than a tag and wins over it when both are set.',
+  fields:[S('repository','image.repository',{p:'image.repository',ph:'registry.example.com/team/backend'}),
+    S('tag','image.tag',{p:'image.tag',ph:'2.3.1',hint:'Leave empty to fall back to <code>Chart.appVersion</code>.'}),
+    S('digest','image.digest',{ph:'sha256:abc123…',hint:'Wins over <code>tag</code>.'}),
+    SE('pullPolicy','image.pullPolicy',['','Always','IfNotPresent','Never']),
+    TX('pullSecrets','imagePullSecrets',{ph:'my-registry-pull-secret',hint:'One secret name per line.'})],
+  ex:{repository:'registry.example.com/team/backend',tag:'2.3.1',pullPolicy:'IfNotPresent',pullSecrets:'my-registry-pull-secret'},
+  emit:v=>some({image:some({repository:v.repository,tag:v.tag,digest:v.digest,pullPolicy:v.pullPolicy}),
+    imagePullSecrets:listOf(v.pullSecrets).map(n=>({name:n}))}),
+  renders:()=>[],
+  notes:['A private package needs the pull secret on the pod <i>or</i> on the ServiceAccount (§28) — repo access alone does not imply registry access.']});
+
+F({id:'replicas',sec:'3',cat:'core',name:'Replicas & rollout',keys:['replicaCount','revisionHistoryLimit','progressDeadlineSeconds','minReadySeconds','podManagementPolicy','serviceName','strategy'],
+  kw:'scale rolling update recreate ondelete partition canary surge',
+  blurb:'How many pods, and how a new version replaces the old ones.',
+  fields:[N('replicaCount','replicaCount',{p:'replicaCount',ph:'3'}),
+    N('revisionHistoryLimit','revisionHistoryLimit',{ph:'3'}),
+    N('progressDeadlineSeconds','progressDeadlineSeconds',{ph:'600',hint:'Deployment only. Empty omits the field.'}),
+    N('minReadySeconds','minReadySeconds',{ph:'0'}),
+    SE('podManagementPolicy','podManagementPolicy',['','OrderedReady','Parallel'],{hint:'StatefulSet only.'}),
+    S('serviceName','serviceName',{ph:'redis-cache-headless',hint:'StatefulSet governing Service. Only a <b>headless</b> Service publishes per-pod DNS.'}),
+    YA('strategy','strategy',{rows:6,ph:'type: RollingUpdate\nrollingUpdate:\n  maxSurge: 1\n  maxUnavailable: 0'})],
+  ex:{replicaCount:3,revisionHistoryLimit:5,strategy:'type: RollingUpdate\nrollingUpdate:\n  maxSurge: 1\n  maxUnavailable: 0'},
+  emit:v=>{const o={};putn(o,'replicaCount',v.replicaCount);putn(o,'revisionHistoryLimit',v.revisionHistoryLimit);
+    putn(o,'progressDeadlineSeconds',v.progressDeadlineSeconds);putn(o,'minReadySeconds',v.minReadySeconds);
+    put(o,'podManagementPolicy',v.podManagementPolicy);put(o,'serviceName',v.serviceName);
+    if(nz(v.strategy))o.strategy=raw(v.strategy);return some(o);},
+  renders:()=>[],
+  notes:['<b>StatefulSet canary:</b> <code>rollingUpdate.partition: 2</code> updates only pods with ordinal ≥ 2. Set it back to 0 to finish the rollout.',
+    'DaemonSet takes <code>maxUnavailable</code> (one node at a time) or <code>OnDelete</code>.']});
+
+F({id:'container',sec:'--',cat:'core',name:'Container basics',keys:['containerName','command','args','workingDir','restartPolicy','terminationGracePeriodSeconds','containerRestartPolicy'],
+  kw:'command args entrypoint container name grace',
+  blurb:'The one container this chart manages: its name, its entrypoint and how long it gets to shut down.',
+  fields:[S('containerName','containerName',{ph:'backend',hint:'What <code>kubectl logs -c</code> and the <code>container</code> label on kubelet metrics match on. Defaults to the release name.'}),
+    TX('command','command',{ph:'/bin/sh\n-c\nexec /app/server',hint:'One list item per line.'}),
+    TX('args','args',{ph:'--port=8080'}),
+    S('workingDir','workingDir',{ph:'/app'}),
+    N('terminationGracePeriodSeconds','terminationGracePeriodSeconds',{ph:'30'}),
+    SE('restartPolicy','restartPolicy (pod)',['','Always','OnFailure','Never']),
+    SE('containerRestartPolicy','containerRestartPolicy',['','Always','OnFailure','Never'],{hint:'Container-level. <code>Always</code> on an initContainer is what makes it a native sidecar.'})],
+  ex:{containerName:'backend',command:'/bin/sh\n-c\nexec /app/server',terminationGracePeriodSeconds:45},
+  emit:v=>{const o={};put(o,'containerName',v.containerName);
+    if(listOf(v.command).length)o.command=listOf(v.command);
+    if(listOf(v.args).length)o.args=listOf(v.args);
+    put(o,'workingDir',v.workingDir);putn(o,'terminationGracePeriodSeconds',v.terminationGracePeriodSeconds);
+    put(o,'restartPolicy',v.restartPolicy);put(o,'containerRestartPolicy',v.containerRestartPolicy);return some(o);},
+  renders:()=>[]});
+
+/* ---------- container ---------- */
+F({id:'env',sec:'4',cat:'container',name:'Environment variables',keys:['env'],
+  kw:'env vars secretkeyref configmapkeyref fieldref downward api',
+  blurb:'A map keyed by variable name — so an override can target <code>env.LOG_LEVEL.value</code> instead of guessing an array index.',
+  fields:[RW('items','Variables',[
+    S('name','Name',{ph:'LOG_LEVEL'}),
+    SE('kind','Source',['value','secretKeyRef','configMapKeyRef','fieldRef','resourceFieldRef'],{def:'value'}),
+    S('value','Value',{ph:'debug',when:r=>(r.kind||'value')==='value'}),
+    S('ref','Secret / ConfigMap name',{ph:'db-secret',when:r=>r.kind==='secretKeyRef'||r.kind==='configMapKeyRef'}),
+    S('key','Key',{ph:'password',when:r=>r.kind==='secretKeyRef'||r.kind==='configMapKeyRef'}),
+    S('fieldPath','fieldPath',{ph:'metadata.name',when:r=>r.kind==='fieldRef'}),
+    S('resource','resource',{ph:'limits.memory',when:r=>r.kind==='resourceFieldRef'})],{add:'Add variable'})],
+  ex:{items:[{name:'NODE_ENV',kind:'value',value:'production'},
+    {name:'POD_IP',kind:'fieldRef',fieldPath:'status.podIP'},
+    {name:'DB_PASSWORD',kind:'secretKeyRef',ref:'db-secret',key:'password'}]},
+  emit:v=>some({env:mapOf(v.items,r=>{const k=r.kind||'value';
+    if(k==='value')return {value:String(r.value===undefined?'':r.value)};
+    if(k==='fieldRef')return {valueFrom:{fieldRef:{fieldPath:r.fieldPath}}};
+    if(k==='resourceFieldRef')return {valueFrom:{resourceFieldRef:{resource:r.resource}}};
+    return {valueFrom:{[k]:{name:r.ref,key:r.key}}};})}),
+  renders:()=>[],
+  notes:['Every value is rendered as a string — Kubernetes rejects a numeric env value, so <code>PORT: 8080</code> comes out quoted.']});
+
+F({id:'envfrom',sec:'4',cat:'container',name:'envFrom',keys:['envFrom'],
+  kw:'envfrom configmapref secretref bulk',
+  blurb:'Pull every key of a ConfigMap or Secret in as environment variables. Keyed by the object name.',
+  fields:[RW('items','Sources',[S('name','ConfigMap / Secret name',{ph:'backend-config'}),
+    SE('type','Kind',['configMapRef','secretRef'],{def:'configMapRef'}),B('optional','optional')],{add:'Add source'})],
+  ex:{items:[{name:'backend-config',type:'configMapRef'},{name:'backend-secret',type:'secretRef',optional:true}]},
+  emit:v=>some({envFrom:mapOf(v.items,r=>{const o={type:r.type||'configMapRef'};if(r.optional)o.optional=true;return o;})}),
+  renders:()=>[]});
+
+F({id:'ports',sec:'5',cat:'container',name:'Container ports',keys:['ports'],
+  kw:'containerport http grpc metrics protocol',
+  blurb:'Named container ports. The name is what a Service <code>targetPort</code>, a probe and a ServiceMonitor all refer back to.',
+  fields:[RW('items','Ports',[S('name','Name',{ph:'http'}),N('port','containerPort',{ph:'8080'}),
+    SE('protocol','Protocol',['','TCP','UDP','SCTP']),B('unnamed','unnamed (render with no name)')],{add:'Add port'})],
+  ex:{items:[{name:'http',port:8080,protocol:'TCP'},{name:'grpc',port:9090},{name:'metrics',port:9091}]},
+  emit:v=>some({ports:mapOf(v.items,r=>{const o={};putn(o,'containerPort',r.port);put(o,'protocol',r.protocol);
+    if(r.unnamed)o.unnamed=true;return Object.keys(o).length?o:null;})}),
+  renders:()=>[],
+  notes:['<code>unnamed: true</code> keeps the map key as bookkeeping but renders the port with no <code>name</code> — for manifests that never named theirs.']});
+
+F({id:'resources',sec:'6',cat:'container',name:'Resources & GPU',keys:['resources'],
+  kw:'cpu memory limits requests gpu nvidia oom',
+  blurb:'Requests are what the scheduler reserves. Exceeding the memory limit is an OOMKill, not a throttle.',
+  fields:[S('rcpu','requests.cpu',{p:'resources.requests.cpu',ph:'200m'}),S('rmem','requests.memory',{p:'resources.requests.memory',ph:'256Mi'}),
+    S('lcpu','limits.cpu',{p:'resources.limits.cpu',ph:'1000m'}),S('lmem','limits.memory',{p:'resources.limits.memory',ph:'1Gi'}),
+    S('gpu','nvidia.com/gpu',{ph:'1',hint:'Set on both requests and limits. Needs the device plugin on the cluster.'})],
+  ex:{rcpu:'200m',rmem:'256Mi',lcpu:'1000m',lmem:'1Gi'},
+  emit:v=>{const rq={},lm={};put(rq,'cpu',v.rcpu);put(rq,'memory',v.rmem);put(lm,'cpu',v.lcpu);put(lm,'memory',v.lmem);
+    if(nz(v.gpu)){rq['nvidia.com/gpu']=Number(v.gpu);lm['nvidia.com/gpu']=Number(v.gpu);}
+    return some({resources:some({requests:some(rq),limits:some(lm)})});},
+  renders:()=>[]});
+
+F({id:'probes',sec:'7',cat:'container',name:'Probes',keys:['livenessProbe','readinessProbe','startupProbe'],
+  kw:'liveness readiness startup healthz httpget tcpsocket exec grpc',
+  blurb:'Liveness restarts the container, readiness pulls it out of the Service, startup buys a slow app time before either applies.',
+  fields:[RW('items','Probes',[
+    SE('which','Probe',['readinessProbe','livenessProbe','startupProbe'],{def:'readinessProbe'}),
+    SE('kind','Type',['httpGet','tcpSocket','exec','grpc'],{def:'httpGet'}),
+    S('path','path',{ph:'/healthz',when:r=>(r.kind||'httpGet')==='httpGet'}),
+    S('port','port',{ph:'http',when:r=>(r.kind||'httpGet')!=='exec'}),
+    S('svc','grpc service',{ph:'liveness',when:r=>r.kind==='grpc'}),
+    TX('command','command',{ph:'/bin/sh\n-c\npg_isready -U postgres',when:r=>r.kind==='exec'}),
+    N('initialDelaySeconds','initialDelaySeconds',{ph:'10'}),N('periodSeconds','periodSeconds',{ph:'10'}),
+    N('timeoutSeconds','timeoutSeconds',{ph:'5'}),N('failureThreshold','failureThreshold',{ph:'3'})],{add:'Add probe'})],
+  ex:{items:[{which:'readinessProbe',kind:'httpGet',path:'/healthz',port:'http',initialDelaySeconds:5,periodSeconds:10},
+    {which:'livenessProbe',kind:'httpGet',path:'/healthz',port:'http',initialDelaySeconds:15,periodSeconds:20,failureThreshold:3},
+    {which:'startupProbe',kind:'httpGet',path:'/healthz',port:'http',periodSeconds:10,failureThreshold:30}]},
+  emit:v=>{const o={};(v.items||[]).forEach(r=>{const w=r.which||'readinessProbe';const p={};const k=r.kind||'httpGet';
+      if(k==='httpGet')p.httpGet=clean({path:r.path,port:isNaN(Number(r.port))?r.port:Number(r.port)});
+      else if(k==='tcpSocket')p.tcpSocket=clean({port:isNaN(Number(r.port))?r.port:Number(r.port)});
+      else if(k==='grpc')p.grpc=clean({port:Number(r.port),service:r.svc});
+      else p.exec={command:listOf(r.command)};
+      putn(p,'initialDelaySeconds',r.initialDelaySeconds);putn(p,'periodSeconds',r.periodSeconds);
+      putn(p,'timeoutSeconds',r.timeoutSeconds);putn(p,'failureThreshold',r.failureThreshold);o[w]=p;});
+    return some(o);},
+  renders:()=>[],
+  notes:['<b>A startup probe with <code>failureThreshold × periodSeconds</code> too low is a crashloop</b>, not a slow start. 30 × 10s = five minutes of grace.']});
+
+F({id:'restartrules',sec:'31',cat:'container',name:'Container restart rules',keys:['containerRestartRules'],
+  kw:'exit code segfault restartallcontainers 1.35 alpha in-place',
+  blurb:'In-place restart on a specific exit code — the pod keeps its UID, IP, network namespace and volumes.',
+  fields:[RW('items','Rules',[N('exitCode','exitCode',{ph:'139'}),SE('action','action',['RestartAllContainers'],{def:'RestartAllContainers'})],{add:'Add rule'})],
+  ex:{items:[{exitCode:139,action:'RestartAllContainers'}]},
+  emit:v=>some({containerRestartRules:(v.items||[]).filter(r=>nz(r.exitCode)).map(r=>({exitCode:Number(r.exitCode),action:r.action||'RestartAllContainers'}))}),
+  renders:()=>[],
+  notes:['<b>Requires Kubernetes 1.35+</b> with the <code>RestartAllContainersOnContainerExits</code> feature gate (alpha).',
+    'Init containers re-run in order on an in-place restart. 137 = OOMKilled/SIGKILL, 139 = SIGSEGV, 143 = SIGTERM.',
+    'This key is the <i>main</i> container’s. Sidecars and init containers carry their own <code>containerRestartRules</code> in their own spec.']});
+
+F({id:'lifecycle',sec:'--',cat:'container',name:'Lifecycle hooks',keys:['lifecycle'],
+  kw:'prestop poststart drain sleep',
+  blurb:'postStart and preStop hooks, passed through as written.',
+  fields:[YA('body','lifecycle',{rows:8,ph:'preStop:\n  exec:\n    command: ["/bin/sh","-c","sleep 15"]'})],
+  ex:{body:'preStop:\n  exec:\n    command: ["/bin/sh", "-c", "sleep 15"]'},
+  emit:v=>nz(v.body)?{lifecycle:raw(v.body)}:null,
+  renders:()=>[],
+  notes:['A <code>preStop</code> sleep is the usual fix for connections dropped mid-rollout: it holds the container open while the endpoint is removed from every kube-proxy.']});
+
+/* ---------- storage ---------- */
+F({id:'volumes',sec:'8',cat:'storage',name:'Volumes',keys:['volumes'],
+  kw:'configmap secret emptydir pvc hostpath nfs csi projected shared memory',
+  blurb:'Define the volume here, mount it in the next section. Keyed by volume name, which is what the mount refers to.',
+  fields:[RW('items','Volumes',[S('name','Name',{ph:'nginx-conf'}),
+    SE('kind','Type',['configMap','secret','emptyDir','emptyDir (memory)','persistentVolumeClaim','hostPath','nfs','custom'],{def:'configMap'}),
+    S('src','Source name',{ph:'nginx-config',when:r=>['configMap','secret','persistentVolumeClaim'].includes(r.kind||'configMap')}),
+    S('defaultMode','defaultMode',{ph:'0644',when:r=>['configMap','secret'].includes(r.kind||'configMap')}),
+    S('sizeLimit','sizeLimit',{ph:'512Mi',when:r=>String(r.kind||'').startsWith('emptyDir')}),
+    S('path','path',{ph:'/exports/myapp',when:r=>['hostPath','nfs'].includes(r.kind)}),
+    S('server','NFS server',{ph:'nfs.internal.example.com',when:r=>r.kind==='nfs'}),
+    YA('body','Volume source YAML',{rows:6,ph:'csi:\n  driver: secrets-store.csi.k8s.io\n  readOnly: true\n  volumeAttributes:\n    secretProviderClass: vault-myapp',when:r=>r.kind==='custom'})],{add:'Add volume'})],
+  ex:{items:[{name:'nginx-conf',kind:'configMap',src:'nginx-config',defaultMode:'0644'},
+    {name:'tmp-space',kind:'emptyDir'},
+    {name:'shared-mem',kind:'emptyDir (memory)',sizeLimit:'512Mi'},
+    {name:'data',kind:'persistentVolumeClaim',src:'app-data'},
+    {name:'vault-secrets',kind:'custom',body:'csi:\n  driver: secrets-store.csi.k8s.io\n  readOnly: true\n  volumeAttributes:\n    secretProviderClass: vault-myapp'}]},
+  emit:v=>some({volumes:mapOf(v.items,r=>{const k=r.kind||'configMap';
+    if(k==='configMap')return {configMap:clean({name:r.src,defaultMode:r.defaultMode?Number(r.defaultMode):undefined})};
+    if(k==='secret')return {secret:clean({secretName:r.src,defaultMode:r.defaultMode?Number(r.defaultMode):undefined})};
+    if(k==='emptyDir')return {emptyDir:nz(r.sizeLimit)?{sizeLimit:r.sizeLimit}:{}};
+    if(k==='emptyDir (memory)')return {emptyDir:clean({medium:'Memory',sizeLimit:r.sizeLimit})};
+    if(k==='persistentVolumeClaim')return {persistentVolumeClaim:{claimName:r.src}};
+    if(k==='hostPath')return {hostPath:{path:r.path}};
+    if(k==='nfs')return {nfs:clean({server:r.server,path:r.path})};
+    return nz(r.body)?raw(r.body):null;})}),
+  renders:()=>[],
+  notes:['<code>defaultMode</code> is octal in Kubernetes but a <i>number</i> in YAML — <code>0644</code> is written unquoted so it stays one.']});
+
+F({id:'mounts',sec:'8',cat:'storage',name:'Volume mounts',keys:['volumeMounts'],
+  kw:'mountpath subpath readonly',
+  blurb:'Where each volume lands in the container. <code>subPath</code> mounts a single key instead of the whole volume.',
+  fields:[RW('items','Mounts',[S('name','Volume name',{ph:'nginx-conf'}),S('mountPath','mountPath',{ph:'/etc/nginx/conf.d'}),
+    S('subPath','subPath',{ph:'nginx.conf'}),B('readOnly','readOnly')],{add:'Add mount'})],
+  ex:{items:[{name:'nginx-conf',mountPath:'/etc/nginx/conf.d',readOnly:true},{name:'data',mountPath:'/var/data'},{name:'shared-mem',mountPath:'/dev/shm'}]},
+  emit:v=>some({volumeMounts:mapOf(v.items,r=>{const o={};put(o,'mountPath',r.mountPath);put(o,'subPath',r.subPath);
+    if(r.readOnly)o.readOnly=true;return Object.keys(o).length?o:null;})}),
+  renders:()=>[],
+  notes:['Mounting a whole ConfigMap over <code>/etc/nginx</code> hides everything already in that directory. Use <code>subPath</code> to drop in one file.']});
+
+F({id:'pvc',sec:'18',cat:'storage',name:'PersistentVolumeClaims',keys:['pvc'],
+  kw:'pvc storage claim size accessmodes block snapshot',
+  blurb:'Standalone claims created as their own objects — the Deployment pattern. One PVC shared by every replica.',
+  fields:[RW('items','Claims',[S('name','Name',{ph:'app-data'}),S('size','size',{ph:'50Gi'}),
+    SE('accessMode','accessMode',ACCESS,{def:'ReadWriteOnce'}),S('storageClassName','storageClassName',{ph:'fast-ssd'}),
+    SE('volumeMode','volumeMode',['','Filesystem','Block']),S('volumeName','volumeName (bind to one PV)',{ph:''})],{add:'Add PVC'})],
+  ex:{items:[{name:'app-data',size:'50Gi',accessMode:'ReadWriteOnce',storageClassName:'fast-ssd'},
+    {name:'app-logs',size:'10Gi',accessMode:'ReadWriteOnce'}]},
+  emit:v=>some({pvc:mapOf(v.items,r=>{const o={accessModes:flow([r.accessMode||'ReadWriteOnce'])};
+    put(o,'size',r.size);put(o,'storageClassName',r.storageClassName);put(o,'volumeMode',r.volumeMode);put(o,'volumeName',r.volumeName);return o;})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'PersistentVolumeClaim',name:r.name})),
+  notes:['<b>ReadWriteOnce with more than one replica means the second pod never schedules.</b> Use ReadWriteMany (NFS/CephFS) or a StatefulSet with volumeClaimTemplates.']});
+
+F({id:'vct',sec:'21',cat:'storage',name:'volumeClaimTemplates',keys:['volumeClaimTemplates','persistentVolumeClaimRetentionPolicy'],
+  kw:'statefulset per replica pvc retention retain delete',
+  blurb:'StatefulSet only: one PVC set per replica, named <code>&lt;template&gt;-&lt;pod&gt;</code>. This is how databases get storage.',
+  fields:[RW('items','Templates',[S('name','Name',{ph:'data'}),S('size','size',{ph:'100Gi'}),
+    SE('accessMode','accessMode',ACCESS,{def:'ReadWriteOnce'}),S('storageClassName','storageClassName',{ph:'fast-ssd'})],{add:'Add template'}),
+    SE('whenDeleted','retention: whenDeleted',['','Retain','Delete']),SE('whenScaled','retention: whenScaled',['','Retain','Delete'])],
+  ex:{items:[{name:'data',size:'100Gi',accessMode:'ReadWriteOnce',storageClassName:'fast-ssd'},{name:'wal',size:'20Gi',accessMode:'ReadWriteOnce'}],whenDeleted:'Retain',whenScaled:'Retain'},
+  emit:v=>some({volumeClaimTemplates:mapOf(v.items,r=>{const o={accessModes:flow([r.accessMode||'ReadWriteOnce'])};
+      put(o,'size',r.size);put(o,'storageClassName',r.storageClassName);return o;}),
+    persistentVolumeClaimRetentionPolicy:some({whenDeleted:v.whenDeleted,whenScaled:v.whenScaled})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'PVC (per pod)',name:r.name+'-'+relName()+'-0 …'})),
+  notes:['<b>Kubernetes’ own default is Delete on both</b> — scale a StatefulSet down and the data goes with it. Set <code>Retain</code> for anything you cannot re-create.',
+    'The chart leaves the retention policy empty on purpose, so the rendered StatefulSet omits the field rather than inventing one.']});
+
+F({id:'pv',sec:'19',cat:'storage',name:'PersistentVolumes',keys:['persistentVolumes'],
+  kw:'static provisioning local nfs node affinity reclaim',
+  blurb:'Static provisioning — you supply the storage yourself instead of asking a StorageClass for it. Cluster-scoped.',
+  fields:[RW('items','Volumes',[S('name','Name',{ph:'local-ssd-node1'}),S('capacity','capacity',{ph:'200Gi'}),
+    SE('accessMode','accessMode',ACCESS,{def:'ReadWriteOnce'}),SE('reclaimPolicy','reclaimPolicy',['','Retain','Delete','Recycle']),
+    S('storageClassName','storageClassName',{ph:'local-storage'}),
+    YA('body','Source + nodeAffinity',{rows:8,ph:'local:\n  path: /mnt/ssd\nnodeAffinity:\n  required:\n    nodeSelectorTerms:\n      - matchExpressions:\n          - key: kubernetes.io/hostname\n            operator: In\n            values: [worker-node-1]'})],{add:'Add PV'})],
+  ex:{items:[{name:'local-ssd-node1',capacity:'200Gi',accessMode:'ReadWriteOnce',reclaimPolicy:'Retain',storageClassName:'local-storage',
+    body:'local:\n  path: /mnt/ssd\nnodeAffinity:\n  required:\n    nodeSelectorTerms:\n      - matchExpressions:\n          - key: kubernetes.io/hostname\n            operator: In\n            values: [worker-node-1]'}]},
+  emit:v=>some({persistentVolumes:mapOf(v.items,r=>{const t=[];
+    if(nz(r.capacity))t.push('capacity: '+r.capacity);
+    t.push('accessModes: ['+(r.accessMode||'ReadWriteOnce')+']');
+    if(nz(r.reclaimPolicy))t.push('reclaimPolicy: '+r.reclaimPolicy);
+    if(nz(r.storageClassName))t.push('storageClassName: '+r.storageClassName);
+    if(nz(r.body))t.push(String(r.body).replace(/\s+$/,''));
+    return raw(t.join('\n'));})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'PersistentVolume',name:r.name,scope:'cluster'})),
+  cluster:true,
+  notes:['<b>Cluster-scoped.</b> Two releases in different namespaces defining the same PV name are fighting over one object — deploy it once, from a shared release.']});
+
+F({id:'storageclass',sec:'20',cat:'storage',name:'StorageClasses',keys:['storageClasses'],
+  kw:'provisioner ebs gp3 cephfs expansion binding mode',
+  blurb:'What a PVC asks for by name. Cluster-scoped, so this belongs in a platform release, not in every microservice.',
+  fields:[RW('items','Classes',[S('name','Name',{ph:'fast-ssd'}),S('provisioner','provisioner',{ph:'ebs.csi.aws.com'}),
+    SE('reclaimPolicy','reclaimPolicy',['','Delete','Retain']),SE('volumeBindingMode','volumeBindingMode',['','Immediate','WaitForFirstConsumer']),
+    B('allowVolumeExpansion','allowVolumeExpansion'),
+    TX('parameters','parameters',{ph:'type=gp3\niops=16000\nencrypted=true',hint:'One <code>key=value</code> per line.'})],{add:'Add class'})],
+  ex:{items:[{name:'fast-ssd',provisioner:'ebs.csi.aws.com',reclaimPolicy:'Delete',volumeBindingMode:'WaitForFirstConsumer',
+    allowVolumeExpansion:true,parameters:'type=gp3\niops=16000\nthroughput=1000\nencrypted=true'}]},
+  emit:v=>some({storageClasses:mapOf(v.items,r=>{const o={};put(o,'provisioner',r.provisioner);put(o,'reclaimPolicy',r.reclaimPolicy);
+    put(o,'volumeBindingMode',r.volumeBindingMode);if(r.allowVolumeExpansion)o.allowVolumeExpansion=true;
+    const p={};listOf(r.parameters).forEach(l=>{const i=l.indexOf('=');if(i>0)p[l.slice(0,i).trim()]=l.slice(i+1).trim();});
+    if(Object.keys(p).length)o.parameters=p;return some(o);})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'StorageClass',name:r.name,scope:'cluster'})),
+  cluster:true,
+  notes:['<code>WaitForFirstConsumer</code> delays provisioning until a pod is scheduled, so the volume lands in the same zone as the pod. On a multi-AZ cluster, <code>Immediate</code> is how you get a pod that can never schedule.']});
+
+/* ---------- catalog: networking, config, jobs ---------- */
+const parsePorts=t=>{const m={};listOf(t).forEach(l=>{const [n,rest]=l.split('=');if(!n||!rest)return;
+  const [p,tp]=rest.split(':');const o={port:Number(p)};if(nz(tp))o.targetPort=isNaN(Number(tp))?tp:Number(tp);m[n.trim()]=o;});
+  return Object.keys(m).length?m:null;};
+const parseKV=t=>{const m={};listOf(t).forEach(l=>{const i=l.indexOf('=');if(i>0)m[l.slice(0,i).trim()]=l.slice(i+1).trim();});
+  return Object.keys(m).length?m:null;};
+
+F({id:'service',sec:'13',cat:'network',name:'Service',keys:['service'],
+  kw:'clusterip nodeport loadbalancer externalname headless sticky session',
+  blurb:'The primary Service in front of these pods. <code>clusterIP: None</code> makes it headless, which is what gives StatefulSet pods per-pod DNS.',
+  fields:[B('enabled','enabled',{def:true}),
+    SE('type','type',['ClusterIP','NodePort','LoadBalancer','ExternalName'],{def:'ClusterIP',p:'service.type'}),
+    S('name','name',{ph:'',hint:'Render the Service under a real name instead of the release fullname.'}),
+    TX('ports','ports',{ph:'http=80:http\ngrpc=9090:grpc\nmetrics=9091:metrics',hint:'<code>name=port:targetPort</code>, one per line. targetPort may be a container port name.'}),
+    S('clusterIP','clusterIP',{ph:'None'}),S('externalName','externalName',{ph:'my.database.example.com'}),
+    SE('sessionAffinity','sessionAffinity',['','None','ClientIP']),
+    SE('externalTrafficPolicy','externalTrafficPolicy',['','Cluster','Local']),
+    B('publishNotReadyAddresses','publishNotReadyAddresses'),
+    KV('annotations','annotations')],
+  ex:{enabled:true,type:'ClusterIP',ports:'http=80:http\nmetrics=9091:metrics'},
+  emit:v=>{const o={};o.enabled=v.enabled!==false;put(o,'type',v.type);put(o,'name',v.name);
+    const p=parsePorts(v.ports);if(p)o.ports=p;
+    put(o,'clusterIP',v.clusterIP);put(o,'externalName',v.externalName);put(o,'sessionAffinity',v.sessionAffinity);
+    put(o,'externalTrafficPolicy',v.externalTrafficPolicy);if(v.publishNotReadyAddresses)o.publishNotReadyAddresses=true;
+    const a=kvOf(v.annotations);if(a)o.annotations=a;return {service:o};},
+  renders:v=>v.enabled===false?[]:[{kind:'Service',name:v.name||relName()}],
+  notes:['<b>ExternalName drops the selector automatically</b> — Kubernetes rejects a Service that has both.',
+    'A headless Service for a clustered database usually also wants <code>publishNotReadyAddresses: true</code>, or peers can never find each other during formation.']});
+
+F({id:'services',sec:'36',cat:'network',name:'Extra Services',keys:['services'],
+  kw:'second service admin headless multiple',
+  blurb:'Additional Service objects beyond the primary one — an admin-only port, a headless peer-discovery Service, a shim pointing at someone else’s pods.',
+  fields:[RW('items','Services',[S('name','Name',{ph:'admin'}),
+    SE('type','type',['','ClusterIP','NodePort','LoadBalancer']),
+    TX('ports','ports',{ph:'admin-http=8081:8081'}),
+    S('clusterIP','clusterIP',{ph:'None'}),B('publishNotReadyAddresses','publishNotReadyAddresses'),
+    TX('selector','selector',{ph:'app=legacy-app',hint:'Leave empty to select this release’s own pods.'})],{add:'Add Service'})],
+  ex:{items:[{name:'admin',type:'ClusterIP',ports:'admin-http=8081:8081'},
+    {name:'headless',clusterIP:'None',publishNotReadyAddresses:true,ports:'peer=7000'}]},
+  emit:v=>some({services:mapOf(v.items,r=>{const o={enabled:true};put(o,'type',r.type);
+    const p=parsePorts(r.ports);if(p)o.ports=p;put(o,'clusterIP',r.clusterIP);
+    if(r.publishNotReadyAddresses)o.publishNotReadyAddresses=true;
+    const s=parseKV(r.selector);if(s)o.selector=s;return o;})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'Service',name:r.name})),
+  notes:['<b>Every entry needs its own <code>enabled: true</code></b> — unlike the primary Service, an entry that omits it is simply not rendered. The Studio writes it for you.',
+    'The map key is the object name verbatim, so it has to be unique in the namespace.']});
+
+F({id:'ingress',sec:'14',cat:'network',name:'Ingress',keys:['ingress'],
+  kw:'ingress host path tls cert-manager nginx className',
+  blurb:'Standard Kubernetes Ingress. Each path points at a <i>named</i> Service port via <code>portName</code>.',
+  fields:[B('enabled','enabled',{def:true}),S('className','className',{ph:'nginx',p:'ingress.className'}),
+    KV('annotations','annotations'),
+    RW('hosts','Hosts & paths',[S('host','host',{ph:'api.example.com'}),S('path','path',{ph:'/'}),
+      SE('pathType','pathType',['Prefix','Exact','ImplementationSpecific'],{def:'Prefix'}),S('portName','portName',{ph:'http'})],{add:'Add path'}),
+    RW('tls','TLS',[S('secretName','secretName',{ph:'api-tls'}),S('hosts','hosts',{ph:'api.example.com, admin.example.com'})],{add:'Add TLS entry'})],
+  ex:{enabled:true,className:'nginx',annotations:[{k:'cert-manager.io/cluster-issuer',v:'letsencrypt-prod'},{k:'nginx.ingress.kubernetes.io/proxy-body-size',v:'100m'}],
+    hosts:[{host:'api.example.com',path:'/v1',pathType:'Prefix',portName:'http'},{host:'api.example.com',path:'/v2',pathType:'Prefix',portName:'http'}],
+    tls:[{secretName:'api-tls',hosts:'api.example.com'}]},
+  emit:v=>{const o={enabled:v.enabled!==false};put(o,'className',v.className);
+    const a=kvOf(v.annotations);if(a)o.annotations=a;
+    const byHost=[];(v.hosts||[]).forEach(r=>{if(!nz(r.host))return;
+      let h=byHost.find(x=>x.host===r.host);if(!h){h={host:r.host,paths:[]};byHost.push(h);}
+      h.paths.push(clean({path:r.path||'/',pathType:r.pathType||'Prefix',portName:r.portName}));});
+    if(byHost.length)o.hosts=byHost;
+    const tls=(v.tls||[]).filter(r=>nz(r.secretName)).map(r=>clean({secretName:r.secretName,
+      hosts:flow(String(r.hosts||'').split(',').map(s=>s.trim()).filter(Boolean))}));
+    if(tls.length)o.tls=tls;return {ingress:o};},
+  renders:v=>v.enabled===false?[]:[{kind:'Ingress',name:relName()}],
+  notes:['Paths on the same host are grouped into one rule automatically — add them as separate lines here.']});
+
+F({id:'route',sec:'15',cat:'network',name:'OpenShift Route',keys:['route'],
+  kw:'openshift route edge passthrough reencrypt tls termination',
+  blurb:'The OpenShift equivalent of an Ingress. Leave <code>host</code> empty and the router assigns one.',
+  fields:[B('enabled','enabled',{def:true}),S('host','host',{ph:'myapp.apps.cluster.example.com'}),
+    S('path','path',{ph:'/'}),S('targetPort','targetPort',{ph:'http'}),
+    SE('termination','tls.termination',['edge','passthrough','reencrypt'],{def:'edge'}),
+    SE('insecure','tls.insecureEdgeTerminationPolicy',['','Redirect','Allow','None'],{def:'Redirect'}),
+    KV('annotations','annotations')],
+  ex:{enabled:true,host:'myapp.apps.cluster.example.com',targetPort:'http',termination:'edge',insecure:'Redirect'},
+  emit:v=>{const o={enabled:v.enabled!==false};put(o,'host',v.host);put(o,'path',v.path);put(o,'targetPort',v.targetPort);
+    const t={};put(t,'termination',v.termination);put(t,'insecureEdgeTerminationPolicy',v.insecure);
+    if(Object.keys(t).length)o.tls=t;const a=kvOf(v.annotations);if(a)o.annotations=a;return {route:o};},
+  renders:v=>v.enabled===false?[]:[{kind:'Route',name:relName()}],
+  notes:['<b>An empty host is omitted from the manifest</b>, not rendered as <code>host: ""</code> — which OpenShift would reject.',
+    '<code>passthrough</code> means the pod terminates TLS itself; there is no certificate on the Route.']});
+
+F({id:'routes',sec:'37',cat:'network',name:'Extra Routes',keys:['routes'],
+  kw:'openshift multiple routes admin console legacy path',
+  blurb:'More hostnames or paths in front of the same pods — or in front of a different Service entirely.',
+  fields:[RW('items','Routes',[S('name','Name',{ph:'admin-console'}),S('host','host',{ph:'admin.apps.cluster.example.com'}),
+    S('path','path',{ph:''}),S('targetPort','targetPort',{ph:'admin-http'}),S('serviceName','serviceName',{ph:'admin'}),
+    SE('termination','termination',['','edge','passthrough','reencrypt'])],{add:'Add Route'})],
+  ex:{items:[{name:'admin-console',host:'admin.apps.cluster.example.com',targetPort:'admin-http',serviceName:'admin',termination:'passthrough'},
+    {name:'legacy-path',host:'myapp.apps.cluster.example.com',path:'/legacy',targetPort:'http'}]},
+  emit:v=>some({routes:mapOf(v.items,r=>{const o={enabled:true};put(o,'host',r.host);put(o,'path',r.path);
+    put(o,'targetPort',r.targetPort);put(o,'serviceName',r.serviceName);
+    if(nz(r.termination))o.tls={termination:r.termination};return o;})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'Route',name:r.name})),
+  notes:['<code>serviceName</code> defaults to this release’s own Service; <code>targetPort</code> defaults to the first port on it. <code>wildcardPolicy</code> defaults to <code>None</code>.']});
+
+F({id:'netpol',sec:'27',cat:'network',name:'NetworkPolicies',keys:['networkPolicies'],
+  kw:'networkpolicy ingress egress deny allow dns podselector',
+  blurb:'Pod-level firewall rules. Keyed by policy name; the body is passed through as written.',
+  fields:[RW('items','Policies',[S('name','Name',{ph:'backend-allow-from-frontend'}),
+    YA('body','Policy spec',{rows:10,ph:'podSelector:\n  matchLabels:\n    app.kubernetes.io/name: backend\npolicyTypes: [Ingress]\ningress:\n  - from:\n      - podSelector:\n          matchLabels:\n            app.kubernetes.io/name: frontend\n    ports:\n      - protocol: TCP\n        port: 8080'})],{add:'Add policy'})],
+  ex:{items:[{name:'backend-allow-from-frontend',body:'podSelector:\n  matchLabels:\n    app.kubernetes.io/name: backend\npolicyTypes: [Ingress]\ningress:\n  - from:\n      - podSelector:\n          matchLabels:\n            app.kubernetes.io/name: frontend\n    ports:\n      - protocol: TCP\n        port: 8080'},
+    {name:'backend-egress',body:'podSelector: {}\npolicyTypes: [Egress]\negress:\n  - ports:\n      - port: 53\n        protocol: UDP\n  - to:\n      - podSelector:\n          matchLabels:\n            app.kubernetes.io/name: postgres\n    ports:\n      - port: 5432'}]},
+  emit:v=>some({networkPolicies:mapOf(v.items,r=>nz(r.body)?raw(r.body):null)}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'NetworkPolicy',name:r.name})),
+  notes:['<b>An egress policy that forgets UDP 53 breaks DNS for the whole pod</b>, which looks like every dependency being down at once.']});
+
+/* ---------- config & secrets ---------- */
+F({id:'configmaps',sec:'16',cat:'config',name:'ConfigMaps',keys:['configMaps'],
+  kw:'configmap data file nginx conf binarydata',
+  blurb:'Real ConfigMap objects. Key-value settings, whole config files, or both in the same object.',
+  fields:[RW('items','ConfigMaps',[S('name','Name',{ph:'app-config'}),
+    TX('data','data (key=value)',{ph:'LOG_LEVEL=info\nMAX_CONNECTIONS=100'}),
+    S('fileName','file key',{ph:'nginx.conf'}),
+    YA('fileBody','file contents',{rows:8,ph:'server {\n  listen 80;\n  location / { proxy_pass http://backend; }\n}'})],{add:'Add ConfigMap'})],
+  ex:{items:[{name:'app-config',data:'LOG_LEVEL=info\nMAX_CONNECTIONS=100\nFEATURE_FLAG_X=true'},
+    {name:'nginx-config',fileName:'nginx.conf',fileBody:'worker_processes auto;\nevents { worker_connections 1024; }\nhttp {\n  server {\n    listen 80;\n    location /health { return 200; }\n    location / { proxy_pass http://localhost:8080; }\n  }\n}'}]},
+  emit:v=>some({configMaps:mapOf(v.items,r=>{const d=parseKV(r.data)||{};
+    if(nz(r.fileName)&&nz(r.fileBody))d[r.fileName]=String(r.fileBody).replace(/\s*$/,'')+'\n';
+    return Object.keys(d).length?{data:d}:null;})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'ConfigMap',name:r.name})),
+  notes:['Every value is a string. <code>MAX_CONNECTIONS=100</code> is written as <code>"100"</code> — Kubernetes rejects a bare number here.',
+    'Changing a ConfigMap does <b>not</b> restart pods by default. See <a href="#" data-goto="checksums">Checksums</a> (§32).']});
+
+F({id:'secrets',sec:'17',cat:'config',name:'Secrets',keys:['secrets'],
+  kw:'secret stringdata tls dockerconfigjson base64',
+  blurb:'Real Secret objects. <code>stringData</code> takes plain text and Kubernetes base64s it for you.',
+  fields:[RW('items','Secrets',[S('name','Name',{ph:'db-secret'}),
+    S('type','type',{ph:'Opaque | kubernetes.io/tls | kubernetes.io/dockerconfigjson'}),
+    TX('stringData','stringData (key=value)',{ph:'DB_PASSWORD=super-secret'}),
+    TX('data','data (key=base64)',{ph:'STRIPE_KEY=c3RyaXBlLXNlY3JldA=='})],{add:'Add Secret'})],
+  ex:{items:[{name:'db-secret',stringData:'DATABASE_URL=postgres://user:pass@postgres:5432/mydb\nDB_PASSWORD=super-secret-password'}]},
+  emit:v=>some({secrets:mapOf(v.items,r=>{const o={};put(o,'type',r.type);
+    const sd=parseKV(r.stringData);if(sd)o.stringData=sd;const d=parseKV(r.data);if(d)o.data=d;
+    return Object.keys(o).length?o:null;})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'Secret',name:r.name})),
+  notes:['<b>These values live in your values file.</b> For anything that belongs in a secrets manager, use External Secrets (§38) instead — the chart renders the CRs and ESO produces the Secret.']});
+
+F({id:'secretstores',sec:'38',cat:'config',name:'SecretStores',keys:['secretStores','clusterSecretStores','externalSecretsApiVersion'],
+  kw:'eso external secrets vault store provider aws azure gcp',
+  blurb:'Where a namespace pulls secrets from. Skip this entirely if your platform team already manages a shared store.',
+  fields:[RW('items','Stores',[S('name','Name',{ph:'vault-backend'}),
+    SE('scope','Scope',['SecretStore','ClusterSecretStore'],{def:'SecretStore'}),
+    YA('body','provider',{rows:10,ph:'vault:\n  server: https://vault.example.com:8200\n  path: secret\n  version: v2\n  auth:\n    kubernetes:\n      mountPath: kubernetes\n      role: my-role\n      serviceAccountRef:\n        name: my-app'})],{add:'Add store'}),
+    S('apiVersion','externalSecretsApiVersion',{ph:'external-secrets.io/v1',hint:'Override once at the top level for an older ESO on <code>v1beta1</code>.'})],
+  ex:{items:[{name:'vault-backend',scope:'SecretStore',body:'vault:\n  server: https://vault.example.com:8200\n  path: secret\n  version: v2\n  auth:\n    kubernetes:\n      mountPath: kubernetes\n      role: my-role\n      serviceAccountRef:\n        name: my-app'}]},
+  emit:v=>{const ns={},cs={};(v.items||[]).forEach(r=>{if(!nz(r.name)||!nz(r.body))return;
+      const t={provider:raw(r.body)};(r.scope==='ClusterSecretStore'?cs:ns)[r.name]=t;});
+    return some({externalSecretsApiVersion:v.apiVersion,
+      secretStores:Object.keys(ns).length?ns:null,clusterSecretStores:Object.keys(cs).length?cs:null});},
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:r.scope||'SecretStore',name:r.name,scope:r.scope==='ClusterSecretStore'?'cluster':''})),
+  cluster:true,
+  notes:['<b>The ESO CRDs must already be installed.</b> This chart renders the custom resources; it does not install the operator.',
+    '<b>ClusterSecretStore is cluster-scoped</b> — one owner only. Declaring it per microservice means every release fights over the same object.']});
+
+F({id:'externalsecrets',sec:'38',cat:'config',name:'ExternalSecrets',keys:['externalSecrets'],
+  kw:'externalsecret vault sync refreshinterval datafrom remoteref',
+  blurb:'Sync remote keys into a real Kubernetes Secret. Everything downstream — <code>env</code>, <code>envFrom</code>, <code>volumes</code> — then treats it like any other Secret.',
+  fields:[RW('items','ExternalSecrets',[S('name','Name',{ph:'db-credentials'}),
+    S('store','secretStoreRef.name',{ph:'vault-backend'}),
+    SE('storeKind','secretStoreRef.kind',['SecretStore','ClusterSecretStore'],{def:'SecretStore'}),
+    S('refreshInterval','refreshInterval',{ph:'1h'}),S('target','target.name',{ph:'',hint:'Defaults to the map key.'}),
+    TX('data','data',{ph:'password=secret/data/myapp/db#password\nusername=secret/data/myapp/db#username',
+      hint:'<code>secretKey=remoteKey#property</code>, one per line.'}),
+    S('dataFrom','dataFrom.extract.key',{ph:'secret/data/myapp/all',hint:'Pull a whole remote secret instead of listing keys.'})],{add:'Add ExternalSecret'})],
+  ex:{items:[{name:'db-credentials',store:'vault-backend',storeKind:'SecretStore',refreshInterval:'1h',
+    data:'password=secret/data/myapp/db#password'}]},
+  emit:v=>some({externalSecrets:mapOf(v.items,r=>{const o={};
+    if(nz(r.store))o.secretStoreRef=clean({name:r.store,kind:r.storeKind});
+    put(o,'refreshInterval',r.refreshInterval);
+    if(nz(r.target))o.target={name:r.target};
+    const d=listOf(r.data).map(l=>{const [sk,rest]=l.split('=');if(!rest)return null;
+      const [key,prop]=rest.split('#');return {secretKey:sk.trim(),remoteRef:clean({key:key.trim(),property:prop&&prop.trim()})};}).filter(Boolean);
+    if(d.length)o.data=d;
+    if(nz(r.dataFrom))o.dataFrom=[{extract:{key:r.dataFrom}}];
+    return Object.keys(o).length?o:null;})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).flatMap(r=>[{kind:'ExternalSecret',name:r.name},{kind:'Secret',name:(r.target||r.name)+'  (by ESO)'}]),
+  notes:['<b>ESO will not adopt a Secret it did not create</b> unless that Secret carries <code>reconcile.external-secrets.io/managed: "true"</code>. Migrating an existing Secret means labelling it first, or the ExternalSecret sits in error while the stale copy stays put.']});
+
+F({id:'checksums',sec:'32',cat:'config',name:'Checksums',keys:['checksums'],
+  kw:'checksum restart rollout configmap change reloader',
+  blurb:'Opt-in: hash the ConfigMaps and Secrets into a pod annotation so a config change rolls the pods.',
+  fields:[B('enabled','checksums.enabled')],
+  ex:{enabled:true},
+  emit:v=>({checksums:{enabled:!!v.enabled}}),
+  renders:()=>[],
+  notes:['<b>Enable</b> when the app reads config only at startup. <b>Leave off</b> for databases and StatefulSets, for apps that hot-reload, and anywhere Stakater Reloader is already running — otherwise you get a double restart.']});
+
+/* ---------- jobs ---------- */
+const jobEnv=t=>{const m={};listOf(t).forEach(l=>{
+    const s=l.indexOf('@secret:');
+    if(s>0){const name=l.slice(0,s).trim();const rest=l.slice(s+8);const [sec,key]=rest.split('/');
+      m[name]={valueFrom:{secretKeyRef:{name:(sec||'').trim(),key:(key||'').trim()}}};return;}
+    const i=l.indexOf('=');if(i>0)m[l.slice(0,i).trim()]={value:l.slice(i+1).trim()};});
+  return Object.keys(m).length?m:null;};
+
+F({id:'cronjobs',sec:'22',cat:'batch',name:'CronJobs',keys:['cronjobs'],
+  kw:'cron schedule backup cleanup suspend concurrency history',
+  blurb:'The map key is the CronJob’s name, rendered verbatim — no release-name prefix. Use the full name you want the object to have.',
+  fields:[RW('items','CronJobs',[S('name','Name',{ph:'db-backup'}),S('schedule','schedule',{ph:'0 2 * * *'}),
+    SE('concurrencyPolicy','concurrencyPolicy',['','Allow','Forbid','Replace']),
+    B('suspend','suspend'),
+    N('successfulJobsHistoryLimit','successfulJobsHistoryLimit',{ph:'3'}),N('failedJobsHistoryLimit','failedJobsHistoryLimit',{ph:'1'}),
+    N('startingDeadlineSeconds','startingDeadlineSeconds',{ph:'300'}),
+    SE('restartPolicy','jobTemplate.restartPolicy',['','OnFailure','Never']),
+    N('backoffLimit','jobTemplate.backoffLimit',{ph:'3'}),
+    N('activeDeadlineSeconds','jobTemplate.activeDeadlineSeconds',{ph:'3600'}),
+    N('ttl','jobTemplate.ttlSecondsAfterFinished',{ph:'86400'}),
+    S('containerName','jobTemplate.containerName',{ph:''}),
+    S('serviceAccountName','jobTemplate.serviceAccountName',{ph:'backup-sa'}),
+    TX('command','jobTemplate.command',{ph:'/bin/sh\n-c\npg_dump $DATABASE_URL | gzip > /backup/dump.sql.gz'}),
+    TX('env','jobTemplate.env',{ph:'DATABASE_URL@secret:db-secret/DATABASE_URL\nLOG_LEVEL=info',
+      hint:'<code>NAME=value</code> or <code>NAME@secret:secretName/key</code>.'}),
+    S('imageRepo','jobTemplate.image.repository',{ph:''}),S('imageTag','jobTemplate.image.tag',{ph:''}),
+    SE('imagePull','jobTemplate.image.pullPolicy',['','Always','IfNotPresent','Never'])],{add:'Add CronJob'})],
+  ex:{items:[{name:'db-backup',schedule:'0 2 * * *',concurrencyPolicy:'Forbid',successfulJobsHistoryLimit:3,failedJobsHistoryLimit:1,
+    startingDeadlineSeconds:300,restartPolicy:'OnFailure',backoffLimit:3,activeDeadlineSeconds:3600,ttl:86400,
+    command:'/bin/sh\n-c\npg_dump $DATABASE_URL | gzip > /backup/dump.sql.gz',env:'DATABASE_URL@secret:db-secret/DATABASE_URL'},
+    {name:'session-cleanup',schedule:'*/5 * * * *',concurrencyPolicy:'Replace',restartPolicy:'Never',ttl:600,
+    command:'python\nmanage.py\nclearsessions'}]},
+  emit:v=>some({cronjobs:mapOf(v.items,r=>{const o={};put(o,'schedule',r.schedule);put(o,'concurrencyPolicy',r.concurrencyPolicy);
+    if(r.suspend)o.suspend=true;
+    putn(o,'successfulJobsHistoryLimit',r.successfulJobsHistoryLimit);putn(o,'failedJobsHistoryLimit',r.failedJobsHistoryLimit);
+    putn(o,'startingDeadlineSeconds',r.startingDeadlineSeconds);
+    const jt={};put(jt,'restartPolicy',r.restartPolicy);putn(jt,'backoffLimit',r.backoffLimit);
+    putn(jt,'activeDeadlineSeconds',r.activeDeadlineSeconds);putn(jt,'ttlSecondsAfterFinished',r.ttl);
+    put(jt,'containerName',r.containerName);put(jt,'serviceAccountName',r.serviceAccountName);
+    if(listOf(r.command).length)jt.command=listOf(r.command);
+    const en=jobEnv(r.env);if(en)jt.env=en;
+    const im=clean({repository:r.imageRepo,tag:r.imageTag,pullPolicy:r.imagePull});
+    if(Object.keys(im).length)jt.image=im;
+    if(Object.keys(jt).length)o.jobTemplate=jt;
+    return Object.keys(o).length?o:null;})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'CronJob',name:r.name})),
+  notes:['<b>The name is verbatim.</b> The chart used to prepend the release name; it no longer does.',
+    '<code>backoffLimit: 0</code> and <code>successfulJobsHistoryLimit: 0</code> mean what they say — an explicit zero is honoured, not treated as unset.',
+    '<code>jobTemplate.image.pullPolicy</code> does <b>not</b> inherit the workload’s.']});
+
+F({id:'jobs',sec:'23',cat:'batch',name:'Jobs & ArgoCD hooks',keys:['jobs'],
+  kw:'job migrate seed presync hook argocd oneoff',
+  blurb:'One-off Jobs, optionally wired as ArgoCD sync hooks so a migration runs before the app rolls.',
+  fields:[RW('items','Jobs',[S('name','Name',{ph:'db-migrate'}),
+    SE('restartPolicy','restartPolicy',['','Never','OnFailure'],{def:'Never'}),
+    N('backoffLimit','backoffLimit',{ph:'1'}),N('activeDeadlineSeconds','activeDeadlineSeconds',{ph:'600'}),
+    N('ttl','ttlSecondsAfterFinished',{ph:'3600'}),
+    S('containerName','containerName',{ph:'migrate'}),S('serviceAccountName','serviceAccountName',{ph:''}),
+    TX('command','command',{ph:'python\nmanage.py\nmigrate'}),
+    TX('env','env',{ph:'DATABASE_URL@secret:db-secret/DATABASE_URL'}),
+    S('imageRepo','image.repository',{ph:''}),S('imageTag','image.tag',{ph:''}),
+    SE('hook','argocd hook',['','PreSync','Sync','PostSync','SyncFail','Skip']),
+    SE('hookDelete','hook-delete-policy',['','BeforeHookCreation','HookSucceeded','HookFailed'])],{add:'Add Job'})],
+  ex:{items:[{name:'db-migrate',restartPolicy:'Never',backoffLimit:1,activeDeadlineSeconds:600,ttl:3600,containerName:'migrate',
+    command:'python\nmanage.py\nmigrate',env:'DATABASE_URL@secret:db-secret/DATABASE_URL',hook:'PreSync',hookDelete:'BeforeHookCreation'}]},
+  emit:v=>some({jobs:mapOf(v.items,r=>{const o={};put(o,'restartPolicy',r.restartPolicy);
+    putn(o,'backoffLimit',r.backoffLimit);putn(o,'activeDeadlineSeconds',r.activeDeadlineSeconds);
+    putn(o,'ttlSecondsAfterFinished',r.ttl);put(o,'containerName',r.containerName);put(o,'serviceAccountName',r.serviceAccountName);
+    if(listOf(r.command).length)o.command=listOf(r.command);
+    const en=jobEnv(r.env);if(en)o.env=en;
+    const im=clean({repository:r.imageRepo,tag:r.imageTag});if(Object.keys(im).length)o.image=im;
+    const an={};if(nz(r.hook))an['argocd.argoproj.io/hook']=r.hook;
+    if(nz(r.hookDelete))an['argocd.argoproj.io/hook-delete-policy']=r.hookDelete;
+    if(Object.keys(an).length)o.annotations=an;
+    return Object.keys(o).length?o:null;})}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'Job',name:r.name})),
+  notes:['<b>A Job’s spec is immutable.</b> Edit one and the next apply fails unless the old Job is deleted first — which is exactly what <code>hook-delete-policy: BeforeHookCreation</code> does on every sync.']});
+
+/* ---------- catalog: scaling, scheduling & security, ops, escape hatches ---------- */
+F({id:'hpa',sec:'24',cat:'scale',name:'HorizontalPodAutoscaler',keys:['hpa'],
+  kw:'hpa autoscale cpu memory metrics behavior scaleup scaledown',
+  blurb:'Scale pod count on CPU, memory or a custom metric. When HPA is on, <code>replicaCount</code> stops being the source of truth.',
+  fields:[B('enabled','enabled',{def:true}),N('minReplicas','minReplicas',{ph:'2',p:'hpa.minReplicas'}),
+    N('maxReplicas','maxReplicas',{ph:'20',p:'hpa.maxReplicas'}),
+    N('cpu','CPU target %',{ph:'70'}),S('mem','Memory averageValue',{ph:'512Mi'}),
+    YA('metrics','Extra metrics',{rows:8,ph:'- type: Pods\n  pods:\n    metric:\n      name: queue_messages_pending\n    target:\n      type: AverageValue\n      averageValue: 100'}),
+    YA('behavior','behavior',{rows:8,ph:'scaleUp:\n  stabilizationWindowSeconds: 30\n  policies:\n    - type: Pods\n      value: 4\n      periodSeconds: 60\nscaleDown:\n  stabilizationWindowSeconds: 300'})],
+  ex:{enabled:true,minReplicas:2,maxReplicas:20,cpu:70,
+    behavior:'scaleUp:\n  stabilizationWindowSeconds: 30\n  policies:\n    - type: Pods\n      value: 4\n      periodSeconds: 60\nscaleDown:\n  stabilizationWindowSeconds: 300\n  policies:\n    - type: Percent\n      value: 25\n      periodSeconds: 60'},
+  emit:v=>{const o={enabled:v.enabled!==false};putn(o,'minReplicas',v.minReplicas);putn(o,'maxReplicas',v.maxReplicas);
+    const m=[];
+    if(nz(v.cpu))m.push({type:'Resource',resource:{name:'cpu',target:{type:'Utilization',averageUtilization:Number(v.cpu)}}});
+    if(nz(v.mem))m.push({type:'Resource',resource:{name:'memory',target:{type:'AverageValue',averageValue:v.mem}}});
+    if(m.length)o.metrics=m;
+    if(nz(v.metrics))o.metrics=raw((m.length?emitNode(m,0,[]).join('\n')+'\n':'')+String(v.metrics).replace(/\s+$/,''));
+    if(nz(v.behavior))o.behavior=raw(v.behavior);
+    return {hpa:o};},
+  renders:v=>v.enabled===false?[]:[{kind:'HorizontalPodAutoscaler',name:relName()}],
+  notes:['<b>Leave <code>replicaCount</code> out once HPA is on.</b> Setting both means every sync resets the replica count to the values-file number and the HPA immediately scales it back.',
+    'A CPU-target HPA needs <code>resources.requests.cpu</code> — utilisation is a percentage <i>of the request</i>, and with no request there is nothing to be a percentage of.']});
+
+F({id:'vpa',sec:'25',cat:'scale',name:'VerticalPodAutoscaler',keys:['vpa'],
+  kw:'vpa rightsizing recommend updatemode auto',
+  blurb:'Let Kubernetes learn and re-set this pod’s CPU and memory instead of guessing them yourself.',
+  fields:[B('enabled','enabled',{def:true}),SE('updateMode','updateMode',['Off','Initial','Recreate','Auto'],{def:'Auto'}),
+    S('containerName','containerPolicies.containerName',{ph:'*'}),
+    S('minCpu','minAllowed.cpu',{ph:'50m'}),S('minMem','minAllowed.memory',{ph:'64Mi'}),
+    S('maxCpu','maxAllowed.cpu',{ph:'4'}),S('maxMem','maxAllowed.memory',{ph:'4Gi'})],
+  ex:{enabled:true,updateMode:'Auto',containerName:'*',minCpu:'50m',minMem:'64Mi',maxCpu:'4',maxMem:'4Gi'},
+  emit:v=>{const o={enabled:v.enabled!==false};put(o,'updateMode',v.updateMode);
+    const cp=clean({containerName:v.containerName,minAllowed:some({cpu:v.minCpu,memory:v.minMem}),
+      maxAllowed:some({cpu:v.maxCpu,memory:v.maxMem}),controlledResources:flow(['cpu','memory'])});
+    if(Object.keys(cp).length>1)o.resourcePolicy={containerPolicies:[cp]};
+    return {vpa:o};},
+  renders:v=>v.enabled===false?[]:[{kind:'VerticalPodAutoscaler',name:relName()}],
+  notes:['<b>Do not run VPA and a CPU-target HPA on the same workload.</b> VPA raises the request, which lowers measured utilisation, which makes the HPA scale in — they fight.',
+    '<code>updateMode: Off</code> only produces recommendations. That is the safe way to start.']});
+
+F({id:'pdb',sec:'26',cat:'scale',name:'PodDisruptionBudget',keys:['pdb'],
+  kw:'pdb drain disruption minavailable maxunavailable upgrade',
+  blurb:'How much of this app a node drain is allowed to take down at once. Set one, not both.',
+  fields:[B('enabled','enabled',{def:true}),S('minAvailable','minAvailable',{ph:'2  or  50%'}),
+    S('maxUnavailable','maxUnavailable',{ph:'1'})],
+  ex:{enabled:true,minAvailable:'2'},
+  emit:v=>{const o={enabled:v.enabled!==false};
+    if(nz(v.minAvailable))o.minAvailable=/^\d+$/.test(v.minAvailable)?Number(v.minAvailable):v.minAvailable;
+    if(nz(v.maxUnavailable))o.maxUnavailable=/^\d+$/.test(v.maxUnavailable)?Number(v.maxUnavailable):v.maxUnavailable;
+    return {pdb:o};},
+  renders:v=>v.enabled===false?[]:[{kind:'PodDisruptionBudget',name:relName()}],
+  notes:['<b><code>minAvailable</code> equal to <code>replicaCount</code> blocks every drain forever.</b> The node never finishes cordoning and the cluster upgrade stalls.']});
+
+/* ---------- scheduling & security ---------- */
+F({id:'scheduling',sec:'11',cat:'sched',name:'Scheduling',keys:['nodeSelector','tolerations','topologySpreadConstraints','priorityClassName','runtimeClassName','schedulerName'],
+  kw:'nodeselector taint toleration spread zone priority gpu',
+  blurb:'Which nodes these pods are allowed on, and how evenly they spread once they are.',
+  fields:[KV('nodeSelector','nodeSelector'),
+    YA('tolerations','tolerations',{rows:7,ph:'- key: nvidia.com/gpu\n  operator: Equal\n  value: "true"\n  effect: NoSchedule'}),
+    YA('topology','topologySpreadConstraints',{rows:8,ph:'- maxSkew: 1\n  topologyKey: kubernetes.io/hostname\n  whenUnsatisfiable: DoNotSchedule\n  labelSelector:\n    matchLabels:\n      app.kubernetes.io/name: myapp'}),
+    S('priorityClassName','priorityClassName',{ph:'high-priority'}),
+    S('runtimeClassName','runtimeClassName',{ph:'gvisor'}),S('schedulerName','schedulerName',{ph:''})],
+  ex:{nodeSelector:[{k:'kubernetes.io/os',v:'linux'},{k:'disk',v:'ssd'}],
+    tolerations:'- key: nvidia.com/gpu\n  operator: Equal\n  value: "true"\n  effect: NoSchedule',
+    topology:'- maxSkew: 1\n  topologyKey: topology.kubernetes.io/zone\n  whenUnsatisfiable: ScheduleAnyway\n  labelSelector:\n    matchLabels:\n      app.kubernetes.io/name: myapp'},
+  emit:v=>{const o={};const ns=kvOf(v.nodeSelector);if(ns)o.nodeSelector=ns;
+    if(nz(v.tolerations))o.tolerations=raw(v.tolerations);
+    if(nz(v.topology))o.topologySpreadConstraints=raw(v.topology);
+    put(o,'priorityClassName',v.priorityClassName);put(o,'runtimeClassName',v.runtimeClassName);put(o,'schedulerName',v.schedulerName);
+    return some(o);},
+  renders:()=>[],
+  notes:['<code>whenUnsatisfiable: DoNotSchedule</code> keeps pods Pending rather than breaking the spread. <code>ScheduleAnyway</code> is a preference, not a rule.']});
+
+F({id:'affinity',sec:'33',cat:'sched',name:'Affinity & anti-affinity',keys:['affinity'],
+  kw:'affinity antiaffinity spread node zone required preferred statefulset',
+  blurb:'Keep replicas off the same node, or pin them to a set of nodes. Same key for every workload type.',
+  fields:[YA('body','affinity',{rows:14,ph:'podAntiAffinity:\n  preferredDuringSchedulingIgnoredDuringExecution:\n    - weight: 100\n      podAffinityTerm:\n        labelSelector:\n          matchLabels:\n            app.kubernetes.io/name: myapp\n        topologyKey: kubernetes.io/hostname'})],
+  presets:[
+    {label:'Soft anti-affinity (recommended)',v:{body:'podAntiAffinity:\n  preferredDuringSchedulingIgnoredDuringExecution:\n    - weight: 100\n      podAffinityTerm:\n        labelSelector:\n          matchLabels:\n            app.kubernetes.io/name: myapp\n        topologyKey: kubernetes.io/hostname'}},
+    {label:'Hard anti-affinity',v:{body:'podAntiAffinity:\n  requiredDuringSchedulingIgnoredDuringExecution:\n    - labelSelector:\n        matchLabels:\n          app.kubernetes.io/name: myapp\n      topologyKey: kubernetes.io/hostname'}},
+    {label:'Pin to zones',v:{body:'nodeAffinity:\n  requiredDuringSchedulingIgnoredDuringExecution:\n    nodeSelectorTerms:\n      - matchExpressions:\n          - key: topology.kubernetes.io/zone\n            operator: In\n            values: [us-east-1a, us-east-1b]'}}],
+  ex:{body:'podAntiAffinity:\n  preferredDuringSchedulingIgnoredDuringExecution:\n    - weight: 100\n      podAffinityTerm:\n        labelSelector:\n          matchLabels:\n            app.kubernetes.io/name: myapp\n        topologyKey: kubernetes.io/hostname'},
+  emit:v=>nz(v.body)?{affinity:raw(v.body)}:null,
+  renders:()=>[],
+  notes:['<b>Hard anti-affinity with more replicas than nodes leaves the extras Pending forever.</b> Soft is the right default for most StatefulSets.',
+    'Match on <code>app.kubernetes.io/name</code> — that is exactly what this chart sets as the selector label, and its value is your <code>nameOverride</code>.']});
+
+F({id:'security',sec:'12',cat:'sched',name:'Security contexts',keys:['podSecurityContext','securityContext'],
+  kw:'runasnonroot readonly rootfs capabilities seccomp fsgroup restricted openshift',
+  blurb:'Pod-level settings apply to every container; container-level applies to the main one. Both are what an admission policy checks.',
+  fields:[B('runAsNonRoot','pod: runAsNonRoot'),N('runAsUser','pod: runAsUser',{ph:'1000'}),
+    N('runAsGroup','pod: runAsGroup',{ph:'3000'}),N('fsGroup','pod: fsGroup',{ph:'2000'}),
+    SE('seccomp','pod: seccompProfile.type',['','RuntimeDefault','Localhost','Unconfined']),
+    B('allowPrivilegeEscalation','container: allowPrivilegeEscalation'),
+    B('readOnlyRootFilesystem','container: readOnlyRootFilesystem'),
+    S('drop','container: capabilities.drop',{ph:'ALL'}),S('add','container: capabilities.add',{ph:'NET_BIND_SERVICE'}),
+    B('cRunAsNonRoot','container: runAsNonRoot')],
+  presets:[{label:'OpenShift restricted-v2',v:{seccomp:'RuntimeDefault',allowPrivilegeEscalation:false,drop:'ALL',cRunAsNonRoot:true}},
+    {label:'Hardened non-root',v:{runAsNonRoot:true,runAsUser:1000,runAsGroup:3000,fsGroup:2000,seccomp:'RuntimeDefault',
+      allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,drop:'ALL'}}],
+  ex:{runAsNonRoot:true,runAsUser:1000,runAsGroup:3000,fsGroup:2000,seccomp:'RuntimeDefault',
+    allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,drop:'ALL'},
+  emit:v=>{const p={};if(v.runAsNonRoot)p.runAsNonRoot=true;
+    putn(p,'runAsUser',v.runAsUser);putn(p,'runAsGroup',v.runAsGroup);putn(p,'fsGroup',v.fsGroup);
+    if(nz(v.seccomp))p.seccompProfile={type:v.seccomp};
+    const c={};if(v.allowPrivilegeEscalation===false||v.allowPrivilegeEscalation===true)c.allowPrivilegeEscalation=!!v.allowPrivilegeEscalation;
+    if(v.readOnlyRootFilesystem)c.readOnlyRootFilesystem=true;
+    if(v.cRunAsNonRoot)c.runAsNonRoot=true;
+    const caps={};if(nz(v.drop))caps.drop=flow(String(v.drop).split(',').map(s=>s.trim()).filter(Boolean));
+    if(nz(v.add))caps.add=flow(String(v.add).split(',').map(s=>s.trim()).filter(Boolean));
+    if(Object.keys(caps).length)c.capabilities=caps;
+    return some({podSecurityContext:some(p),securityContext:some(c)});},
+  renders:()=>[],
+  notes:['<code>readOnlyRootFilesystem: true</code> needs an <code>emptyDir</code> mounted at <code>/tmp</code> for most runtimes, or the app fails on its first temp file.',
+    '<b>OpenShift assigns the UID</b> from the namespace range. Hardcoding <code>runAsUser</code> there is how a pod gets rejected by the SCC it was supposed to match.']});
+
+F({id:'scc',sec:'34',cat:'sched',name:'SecurityContextConstraints',keys:['scc'],
+  kw:'openshift scc privileged restricted runasany serviceaccount',
+  blurb:'OpenShift’s admission policy object. Keyed by SCC name; the body is passed through as written. Cluster-scoped.',
+  fields:[RW('items','SCCs',[S('name','Name',{ph:'restricted-custom'}),
+    YA('body','SCC body',{rows:12,ph:'allowPrivilegedContainer: false\nallowPrivilegeEscalation: false\nrequiredDropCapabilities: [ALL]\nrunAsUser:\n  type: MustRunAsRange\nseLinuxContext:\n  type: MustRunAs\nfsGroup:\n  type: MustRunAs\nsupplementalGroups:\n  type: RunAsAny\nvolumes: [configMap, downwardAPI, emptyDir, persistentVolumeClaim, projected, secret]\nusers:\n  - system:serviceaccount:my-namespace:my-sa'})],{add:'Add SCC'})],
+  ex:{items:[{name:'restricted-custom',body:'allowPrivilegedContainer: false\nallowPrivilegeEscalation: false\nrequiredDropCapabilities: [ALL]\nrunAsUser:\n  type: MustRunAsRange\nseLinuxContext:\n  type: MustRunAs\nfsGroup:\n  type: MustRunAs\nsupplementalGroups:\n  type: RunAsAny\nvolumes: [configMap, downwardAPI, emptyDir, persistentVolumeClaim, projected, secret]\nusers:\n  - system:serviceaccount:my-namespace:my-sa'}]},
+  emit:v=>some({scc:mapOf(v.items,r=>nz(r.body)?raw(r.body):null)}),
+  renders:v=>(v.items||[]).filter(r=>nz(r.name)).map(r=>({kind:'SecurityContextConstraints',name:r.name,scope:'cluster'})),
+  cluster:true,
+  notes:['Strategy types: <code>MustRunAsRange</code> (project default), <code>MustRunAs</code>, <code>MustRunAsNonRoot</code>, <code>RunAsAny</code>.',
+    '<b>Cluster-scoped.</b> Grant it to a ServiceAccount through <code>users:</code>, and own it from one release only.']});
+
+F({id:'hostns',sec:'--',cat:'sched',name:'Host namespaces & DNS',keys:['hostNetwork','hostIPC','hostPID','shareProcessNamespace','dnsPolicy','dnsConfig','hostAliases'],
+  kw:'hostnetwork hostpid hostipc dnspolicy hostaliases shareprocess',
+  blurb:'The node-level switches. Node agents need them; almost nothing else does.',
+  fields:[B('hostNetwork','hostNetwork'),B('hostPID','hostPID'),B('hostIPC','hostIPC'),
+    B('shareProcessNamespace','shareProcessNamespace'),
+    SE('dnsPolicy','dnsPolicy',['','ClusterFirst','ClusterFirstWithHostNet','Default','None']),
+    YA('dnsConfig','dnsConfig',{rows:5,ph:'nameservers:\n  - 10.0.0.10\nsearches:\n  - internal.example.com'}),
+    YA('hostAliases','hostAliases',{rows:5,ph:'- ip: 10.0.0.5\n  hostnames:\n    - legacy.internal'})],
+  ex:{hostNetwork:true,dnsPolicy:'ClusterFirstWithHostNet'},
+  emit:v=>{const o={};['hostNetwork','hostPID','hostIPC','shareProcessNamespace'].forEach(k=>{if(v[k])o[k]=true;});
+    put(o,'dnsPolicy',v.dnsPolicy);if(nz(v.dnsConfig))o.dnsConfig=raw(v.dnsConfig);
+    if(nz(v.hostAliases))o.hostAliases=raw(v.hostAliases);return some(o);},
+  renders:()=>[],
+  notes:['<b><code>hostNetwork: true</code> without <code>dnsPolicy: ClusterFirstWithHostNet</code> gives the pod the node’s resolver</b>, so every in-cluster Service name stops resolving.']});
+
+/* ---------- identity & observability ---------- */
+F({id:'serviceaccount',sec:'28',cat:'ops',name:'ServiceAccount',keys:['serviceAccount'],
+  kw:'serviceaccount irsa workload identity automount imagepullsecrets',
+  blurb:'The pod’s identity in the cluster — and, through annotations, in the cloud account behind it.',
+  fields:[B('create','create',{def:true}),S('name','name',{ph:'myapp-sa'}),
+    B('automountServiceAccountToken','automountServiceAccountToken',{def:true}),
+    KV('annotations','annotations'),KV('labels','labels'),TX('imagePullSecrets','imagePullSecrets',{ph:'ghcr-pull'})],
+  ex:{create:true,name:'myapp-sa',automountServiceAccountToken:true,
+    annotations:[{k:'eks.amazonaws.com/role-arn',v:'arn:aws:iam::123456789:role/myapp-role'}]},
+  emit:v=>{const o={create:v.create!==false};put(o,'name',v.name);
+    if(v.automountServiceAccountToken===false)o.automountServiceAccountToken=false;
+    const a=kvOf(v.annotations);if(a)o.annotations=a;
+    const lb=kvOf(v.labels);if(lb)o.labels=lb;
+    const ps=listOf(v.imagePullSecrets).map(n=>({name:n}));if(ps.length)o.imagePullSecrets=ps;
+    return {serviceAccount:o};},
+  renders:v=>v.create===false?[]:[{kind:'ServiceAccount',name:v.name||relName()}],
+  notes:['<b>This chart models exactly one ServiceAccount per release.</b> A CronJob or Job that names a different <code>serviceAccountName</code> — the cookbook’s own <code>backup-sa</code> and <code>seeder-sa</code> examples do — needs that account created somewhere else: <a href="#" data-goto="extradeploy">extraDeploy</a>, or another release. Helm renders the reference without complaint; the pod is what fails.',
+    '<b>Turn <code>automountServiceAccountToken</code> off</b> for anything that never talks to the API server — it is a token sitting in every pod otherwise.']});
+
+F({id:'rbac',sec:'28',cat:'ops',name:'RBAC',keys:['rbac'],
+  kw:'role rolebinding clusterrole clusterrolebinding rules verbs subjects',
+  blurb:'Roles and bindings, keyed by name. Roles land in the release namespace automatically; ClusterRoles are global.',
+  fields:[
+    RW('roles','Roles',[S('name','Name',{ph:'myapp-role'}),
+      YA('rules','rules',{rows:6,ph:'- apiGroups: [""]\n  resources: ["configmaps", "secrets"]\n  verbs: ["get", "list", "watch"]'})],{add:'Add Role'}),
+    RW('roleBindings','RoleBindings',[S('name','Name',{ph:'myapp-rolebinding'}),S('roleRef','roleRef',{ph:'myapp-role'}),
+      TX('subjects','subjects',{ph:'ServiceAccount=myapp-sa',hint:'<code>Kind=name</code> or <code>Kind=name:namespace</code>, one per line.'})],{add:'Add RoleBinding'}),
+    RW('clusterRoles','ClusterRoles',[S('name','Name',{ph:'myapp-cluster-reader'}),
+      YA('rules','rules',{rows:5,ph:'- apiGroups: [""]\n  resources: ["nodes", "namespaces"]\n  verbs: ["get", "list", "watch"]'})],{add:'Add ClusterRole'}),
+    RW('clusterRoleBindings','ClusterRoleBindings',[S('name','Name',{ph:'myapp-cluster-rb'}),S('roleRef','roleRef',{ph:'myapp-cluster-reader'}),
+      TX('subjects','subjects',{ph:'ServiceAccount=myapp-sa:myapp-dev'})],{add:'Add ClusterRoleBinding'})],
+  ex:{roles:[{name:'myapp-role',rules:'- apiGroups: [""]\n  resources: ["configmaps", "secrets"]\n  verbs: ["get", "list", "watch"]'}],
+    roleBindings:[{name:'myapp-rolebinding',roleRef:'myapp-role',subjects:'ServiceAccount=myapp-sa'}]},
+  emit:v=>{const subs=t=>listOf(t).map(l=>{const i=l.indexOf('=');if(i<0)return null;
+      const kind=l.slice(0,i).trim();const [n,ns]=l.slice(i+1).split(':');
+      return clean({kind,name:(n||'').trim(),namespace:ns&&ns.trim()});}).filter(Boolean);
+    const rr=k=>mapOf(v[k],r=>nz(r.rules)?{rules:raw(r.rules)}:null);
+    const bb=k=>mapOf(v[k],r=>{const o={};put(o,'roleRef',r.roleRef);const s=subs(r.subjects);if(s.length)o.subjects=s;
+      return Object.keys(o).length?o:null;});
+    return some({rbac:some({roles:rr('roles'),roleBindings:bb('roleBindings'),
+      clusterRoles:rr('clusterRoles'),clusterRoleBindings:bb('clusterRoleBindings')})});},
+  renders:v=>[...(v.roles||[]).filter(r=>nz(r.name)).map(r=>({kind:'Role',name:r.name})),
+    ...(v.roleBindings||[]).filter(r=>nz(r.name)).map(r=>({kind:'RoleBinding',name:r.name})),
+    ...(v.clusterRoles||[]).filter(r=>nz(r.name)).map(r=>({kind:'ClusterRole',name:r.name,scope:'cluster'})),
+    ...(v.clusterRoleBindings||[]).filter(r=>nz(r.name)).map(r=>({kind:'ClusterRoleBinding',name:r.name,scope:'cluster'}))],
+  cluster:true,
+  notes:['<code>roleRef</code> is just the name of a Role in the same values file — the chart wires up the apiGroup and kind.',
+    '<b>ClusterRoles and ClusterRoleBindings are cluster-scoped.</b> Two namespaces deploying the same name are one object, last write wins.']});
+
+F({id:'servicemonitor',sec:'29',cat:'ops',name:'ServiceMonitor',keys:['serviceMonitor'],
+  kw:'prometheus scrape metrics relabel interval operator',
+  blurb:'Tells a Prometheus Operator to scrape this Service. The <code>port</code> is a <i>Service</i> port name, not a number.',
+  fields:[B('enabled','enabled',{def:true}),S('namespace','namespace',{ph:'monitoring'}),
+    KV('labels','labels'),S('port','port',{ph:'metrics'}),S('path','path',{ph:'/metrics'}),
+    S('interval','interval',{ph:'30s',p:'serviceMonitor.interval'}),S('scrapeTimeout','scrapeTimeout',{ph:'10s'}),
+    SE('scheme','scheme',['','http','https']),
+    YA('tlsConfig','tlsConfig',{rows:4,ph:'insecureSkipVerify: true'}),
+    YA('relabelings','relabelings',{rows:5,ph:'- sourceLabels: [__meta_kubernetes_pod_name]\n  targetLabel: pod'}),
+    YA('metricRelabelings','metricRelabelings',{rows:5,ph:'- sourceLabels: [__name__]\n  regex: go_.*\n  action: drop'})],
+  ex:{enabled:true,namespace:'monitoring',port:'metrics',path:'/metrics',interval:'30s',scrapeTimeout:'10s',scheme:'http',
+    labels:[{k:'release',v:'prometheus'}]},
+  emit:v=>{const o={enabled:v.enabled!==false};put(o,'namespace',v.namespace);
+    const l=kvOf(v.labels);if(l)o.labels=l;
+    put(o,'port',v.port);put(o,'path',v.path);put(o,'interval',v.interval);put(o,'scrapeTimeout',v.scrapeTimeout);put(o,'scheme',v.scheme);
+    if(nz(v.tlsConfig))o.tlsConfig=raw(v.tlsConfig);
+    if(nz(v.relabelings))o.relabelings=raw(v.relabelings);
+    if(nz(v.metricRelabelings))o.metricRelabelings=raw(v.metricRelabelings);
+    return {serviceMonitor:o};},
+  renders:v=>v.enabled===false?[]:[{kind:'ServiceMonitor',name:relName()}],
+  notes:['<b>The <code>labels</code> must match your Prometheus Operator’s <code>serviceMonitorSelector</code></b> — usually <code>release: prometheus</code>. Without it the object exists and is never picked up, which looks exactly like a broken exporter.',
+    'The port has to exist on the <i>Service</i>, so expose the metrics container port through <a href="#" data-goto="service">Service</a> too.']});
+
+/* ---------- escape hatches ---------- */
+F({id:'extradeploy',sec:'30',cat:'escape',name:'extraDeploy',keys:['extraDeploy'],
+  kw:'raw yaml crd prometheusrule kyverno imagestream template',
+  blurb:'Any object the chart does not model, rendered through Helm’s templating — so <code>{{ .Release.Name }}</code> works.',
+  fields:[RW('items','Manifests',[S('label','What is it? (comment only)',{ph:'PrometheusRule'}),
+    YA('body','Manifest',{rows:14,ph:'apiVersion: monitoring.coreos.com/v1\nkind: PrometheusRule\nmetadata:\n  name: {{ .Release.Name }}-alerts\nspec:\n  groups:\n    - name: {{ .Release.Name }}.rules\n      rules:\n        - alert: HighErrorRate\n          expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05\n          for: 5m'})],{add:'Add manifest'})],
+  ex:{items:[{label:'Feature flags ConfigMap',body:'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-feature-flags\n  namespace: {{ .Release.Namespace }}\ndata:\n  FEATURE_NEW_UI: "true"\n  FEATURE_BETA: "false"'}]},
+  emit:v=>{const a=(v.items||[]).filter(r=>nz(r.body)).map(r=>String(r.body).replace(/\s+$/,'')+'\n');
+    return a.length?{extraDeploy:a}:null;},
+  renders:v=>(v.items||[]).filter(r=>nz(r.body)).map(r=>{
+    const k=(String(r.body).match(/^kind:\s*(\S+)/m)||[])[1]||'?';
+    const n=(String(r.body).match(/^\s{2}name:\s*(.+)$/m)||[])[1]||'';
+    return {kind:k,name:n.trim()||r.label||''};}),
+  notes:['<b>This is the escape hatch, not the front door.</b> Anything here skips the chart’s labels, checksums and validation — reach for a modelled key first.']});
+
+/* ---------- state ---------- */
+const BYID={};FEAT.forEach(f=>BYID[f.id]=f);
+const clone=o=>JSON.parse(JSON.stringify(o===undefined?null:o));
+const state={mode:'single',sel:'workload',tab:'files',file:0,view:'feature',
+  f:{},fleet:{ns:[{name:'dev'},{name:'staging'},{name:'prod'}],rows:[],release:'checkout-api'}};
+
+function fv(id){const s=state.f[id];return s&&s.v?s.v:{};}
+function on(id){return !!(state.f[id]&&state.f[id].on);}
+function ensure(id){if(!BYID[id])return {on:false,v:{}};if(!state.f[id])state.f[id]={on:false,v:defaults(id)};return state.f[id];}
+function defaults(id){const v={};if(!BYID[id])return v;(BYID[id].fields||[]).forEach(f=>{if(f.def!==undefined)v[f.k]=f.def;
+  if(f.t==='rows')v[f.k]=[];if(f.t==='kv')v[f.k]=[];});return v;}
+function setOn(id,val){ensure(id).on=val;save();}
+function relName(){return (on('identity')&&fv('identity').nameOverride)||'<release>';}
+
+function save(){try{localStorage.setItem('ucstudio.v1',JSON.stringify({f:state.f,fleet:state.fleet,mode:state.mode}));}catch(x){}}
+function load(){try{const r=JSON.parse(localStorage.getItem('ucstudio.v1'));
+  if(r&&r.f){state.f=r.f;if(r.fleet)state.fleet=r.fleet;if(r.mode)state.mode=r.mode;return true;}}catch(x){}return false;}
+
+/* ---------- build ---------- */
+function buildDoc(){
+  const doc={},owners={};
+  FEAT.forEach(f=>{if(!on(f.id))return;
+    let frag=null;try{frag=f.emit(fv(f.id));}catch(x){frag=null;}
+    if(!frag)return;
+    Object.keys(frag).forEach(k=>{(owners[k]=owners[k]||[]).push(f.id);});
+    deepMerge(doc,frag);});
+  return {doc,owners};
+}
+function orderKeys(doc){
+  const order=[];FEAT.forEach(f=>(f.keys||[]).forEach(k=>{if(order.indexOf(k)<0)order.push(k);}));
+  const out={};order.forEach(k=>{if(k in doc)out[k]=doc[k];});
+  Object.keys(doc).forEach(k=>{if(!(k in out))out[k]=doc[k];});
+  return out;
+}
+function serialize(doc,owners){
+  const ord=orderKeys(doc),text=[],marks=[];
+  Object.keys(ord).forEach(k=>{
+    const start=text.length;
+    emitNode({[k]:ord[k]},0,text);
+    marks.push({from:start,to:text.length-1,ids:owners[k]||[]});
+    text.push('');
+  });
+  while(text.length&&text[text.length-1]==='')text.pop();
+  return {text:text.join('\n'),marks};
+}
+
+/* ---------- fleet ---------- */
+function overridePaths(){
+  const out=[];
+  FEAT.forEach(f=>{if(!on(f.id))return;
+    (f.fields||[]).forEach(fd=>{if(fd.p)out.push({path:fd.p,label:f.name});});});
+  ['replicaCount','image.tag','image.repository','ingress.className','service.type',
+   'hpa.minReplicas','hpa.maxReplicas','resources.requests.cpu','resources.requests.memory',
+   'resources.limits.cpu','resources.limits.memory','nameOverride'].forEach(p=>{
+    if(!out.find(x=>x.path===p))out.push({path:p,label:'common'});});
+  return out;
+}
+function coerce(s){
+  if(s==='true')return true;if(s==='false')return false;
+  if(/^-?\d+$/.test(s))return Number(s);
+  return s;
+}
+function fleetFiles(){
+  const {doc,owners}=buildDoc();
+  const base=serialize(doc,owners);
+  const files=[{name:'values.yaml',text:base.text,marks:base.marks,sub:'base — everything shared'}];
+  state.fleet.ns.forEach(n=>{
+    if(!nz(n.name))return;
+    const o={};let count=0;
+    state.fleet.rows.forEach(r=>{
+      if(!nz(r.path))return;
+      const val=(r.vals||{})[n.name];
+      if(!nz(val))return;
+      setPath(o,r.path,coerce(String(val)));count++;});
+    let txt=Object.keys(o).length?toYaml(o):'';
+    if(nz(n.extra))txt=(txt?txt+'\n':'')+String(n.extra).replace(/\s+$/,'');
+    const head='# '+n.name+' — overrides only. Everything else comes from values.yaml.';
+    files.push({name:'values-'+n.name+'.yaml',text:head+'\n'+(txt||'{}'),marks:[],
+      sub:count+' override'+(count===1?'':'s')});
+  });
+  const rel=state.fleet.release||'myapp';
+  const cmds=['#!/usr/bin/env bash','set -euo pipefail','','CHART=./Universal-chart',''];
+  state.fleet.ns.forEach(n=>{if(!nz(n.name))return;
+    cmds.push('helm upgrade --install '+(n.release||rel)+' "$CHART" \\');
+    cmds.push('  --namespace '+n.name+' --create-namespace \\');
+    cmds.push('  -f values.yaml -f values-'+n.name+'.yaml');
+    cmds.push('');});
+  const cl=FEAT.filter(f=>f.cluster&&on(f.id)).flatMap(f=>{try{return f.renders(fv(f.id));}catch(x){return [];}})
+    .filter(r=>r.scope==='cluster');
+  if(cl.length){
+    cmds.push('# Cluster-scoped objects below are owned by ONE release, not one per namespace.');
+    cl.forEach(r=>cmds.push('#   '+r.kind+'/'+r.name));
+    cmds.push('# Move them into a single shared release and drop them from the per-namespace ones.');
+  }
+  files.push({name:'deploy.sh',text:cmds.join('\n'),marks:[],sub:state.fleet.ns.filter(n=>nz(n.name)).length+' namespaces'});
+  return files;
+}
+function currentFiles(){
+  if(state.mode==='fleet')return fleetFiles();
+  const {doc,owners}=buildDoc();
+  const s=serialize(doc,owners);
+  return [{name:'values.yaml',text:s.text||'# nothing enabled yet — pick a feature from the index',marks:s.marks,sub:''}];
+}
+
+/* ---------- renders & checks ---------- */
+function allRenders(){
+  const out=[];
+  FEAT.forEach(f=>{if(!on(f.id))return;
+    let r=[];try{r=f.renders(fv(f.id))||[];}catch(x){r=[];}
+    r.forEach(x=>out.push(Object.assign({from:f.id},x)));});
+  return out;
+}
+function checks(){
+  const out=[],wt=on('workload')?(fv('workload').type||'deployment'):'deployment';
+  const enabled=id=>on(id)&&fv(id).enabled!==false;
+  if(wt==='none'){
+    ['hpa','vpa','pdb'].forEach(k=>{if(enabled(k))
+      out.push({l:'bad',t:'<b>'+k+'.enabled with workload.type: none</b> fails the chart’s own validation — there are no pods to scale, resize or protect. Disable it or pick a real workload type.'});});
+    if(on('service')&&fv('service').enabled!==false)
+      out.push({l:'warn',t:'A Service with <code>workload.type: none</code> selects nothing. Set <code>service.enabled: false</code> unless you supply your own <code>selector</code>.'});
+  }
+  if(enabled('ingress')&&enabled('route'))
+    out.push({l:'bad',t:'<b><code>ingress.enabled</code> and <code>route.enabled</code> cannot both be true.</b> The chart fails the render — pick the Kubernetes Ingress or the OpenShift Route, not both.'});
+  if(enabled('hpa')&&wt==='daemonset')
+    out.push({l:'bad',t:'<b>HPA is not supported for a DaemonSet.</b> Pod count is one per node by definition; the chart fails the render.'});
+  const svcP=Object.keys(parsePorts(fv('service').ports)||{});
+  if(enabled('ingress')&&!svcP.length&&(fv('ingress').hosts||[]).some(r=>nz(r.host)&&!nz(r.portName)))
+    out.push({l:'bad',t:'<b>An Ingress path with no <code>portName</code> and no Service ports</b> leaves the backend port blank — the chart fails the render. Name a port on the Service, or set <code>portName</code>.'});
+  if(enabled('route')&&!nz(fv('route').targetPort)&&!svcP.length)
+    out.push({l:'bad',t:'<b><code>route.targetPort</code> is unset and the Service has no ports.</b> The Route target port would be blank; the chart fails the render.'});
+  if(enabled('hpa')&&on('replicas')&&nz(fv('replicas').replicaCount))
+    out.push({l:'warn',t:'<b>Both <code>replicaCount</code> and HPA are set.</b> Every sync writes the replica count back and the HPA scales it away again. Drop <code>replicaCount</code>.'});
+  if(enabled('hpa')&&nz(fv('hpa').cpu)&&!(on('resources')&&nz(fv('resources').rcpu)))
+    out.push({l:'warn',t:'A CPU-target HPA needs <code>resources.requests.cpu</code> — utilisation is a percentage of the request.'});
+  if(enabled('hpa')&&nz(fv('hpa').cpu)&&enabled('vpa'))
+    out.push({l:'bad',t:'<b>CPU-target HPA and VPA on the same workload fight each other.</b> Use HPA for pod count, VPA for a single pod’s size — not both on CPU.'});
+  if(on('vct')&&wt!=='statefulset')
+    out.push({l:'bad',t:'<code>volumeClaimTemplates</code> is StatefulSet-only. With <code>workload.type: '+wt+'</code> it renders nothing.'});
+  if(on('vct')&&!nz(fv('vct').whenDeleted))
+    out.push({l:'warn',t:'No <code>persistentVolumeClaimRetentionPolicy</code>. Kubernetes defaults to <b>Delete</b>, so deleting the StatefulSet deletes the data.'});
+  if(wt==='statefulset'&&on('service')&&fv('service').clusterIP!=='None'&&!on('services'))
+    out.push({l:'warn',t:'A StatefulSet with no headless Service has no per-pod DNS. Set <code>service.clusterIP: None</code>, or add a headless entry under Extra Services.'});
+  if(on('pdb')&&on('replicas')&&nz(fv('pdb').minAvailable)&&String(fv('pdb').minAvailable)===String(fv('replicas').replicaCount))
+    out.push({l:'bad',t:'<b><code>pdb.minAvailable</code> equals <code>replicaCount</code></b> — no pod can ever be evicted and node drains hang forever.'});
+  const pvcRWO=(fv('pvc').items||[]).filter(r=>nz(r.name)&&(r.accessMode||'ReadWriteOnce')==='ReadWriteOnce');
+  if(on('pvc')&&pvcRWO.length&&Number(fv('replicas').replicaCount||1)>1&&wt==='deployment')
+    out.push({l:'bad',t:'<b>A ReadWriteOnce PVC shared by '+fv('replicas').replicaCount+' replicas.</b> The second pod stays Pending. Use ReadWriteMany, or a StatefulSet with volumeClaimTemplates.'});
+  if(on('security')&&fv('security').readOnlyRootFilesystem){
+    const hasTmp=(fv('mounts').items||[]).some(r=>String(r.mountPath||'').startsWith('/tmp'));
+    if(!hasTmp)out.push({l:'warn',t:'<code>readOnlyRootFilesystem: true</code> with nothing mounted at <code>/tmp</code>. Most runtimes fail on their first temp file — add an <code>emptyDir</code>.'});
+  }
+  if(on('hostns')&&fv('hostns').hostNetwork&&fv('hostns').dnsPolicy!=='ClusterFirstWithHostNet')
+    out.push({l:'bad',t:'<b><code>hostNetwork: true</code> without <code>dnsPolicy: ClusterFirstWithHostNet</code></b> — the pod uses the node’s resolver and no Service name resolves.'});
+  if(on('servicemonitor')&&fv('servicemonitor').enabled!==false&&!kvOf(fv('servicemonitor').labels))
+    out.push({l:'warn',t:'ServiceMonitor with no <code>labels</code>. Prometheus Operator selects on them — usually <code>release: prometheus</code> — so an unlabelled one is silently never scraped.'});
+  const smPort=fv('servicemonitor').port,svcPorts=Object.keys(parsePorts(fv('service').ports)||{});
+  if(on('servicemonitor')&&nz(smPort)&&on('service')&&svcPorts.length&&svcPorts.indexOf(smPort)<0)
+    out.push({l:'warn',t:'ServiceMonitor scrapes port <code>'+e(smPort)+'</code>, which is not one of the Service ports ('+svcPorts.map(p=>'<code>'+e(p)+'</code>').join(', ')+').'});
+  const mounted=(fv('mounts').items||[]).map(r=>r.name).filter(nz);
+  const defined=(fv('volumes').items||[]).map(r=>r.name).filter(nz)
+    .concat((fv('vct').items||[]).map(r=>r.name).filter(nz));
+  mounted.forEach(m=>{if(defined.indexOf(m)<0&&on('mounts'))
+    out.push({l:'bad',t:'Mount <code>'+e(m)+'</code> has no matching volume or volumeClaimTemplate. The pod will not start.'});});
+  const wanted=[...(fv('cronjobs').items||[]).map(r=>r.serviceAccountName),
+    ...(fv('jobs').items||[]).map(r=>r.serviceAccountName)].filter(nz);
+  if(wanted.length){
+    const made=[];
+    if(on('serviceaccount')&&fv('serviceaccount').create!==false)made.push(fv('serviceaccount').name||relName());
+    (fv('extradeploy').items||[]).forEach(r=>{const b=String(r.body||'');
+      if(/^kind:\s*ServiceAccount\s*$/m.test(b)){const n=(b.match(/^\s{2}name:\s*(.+)$/m)||[])[1];if(n)made.push(n.trim());}});
+    const dangling=[...new Set(wanted.filter(n=>made.indexOf(n)<0))];
+    if(dangling.length)out.push({l:'warn',t:'<b>'+dangling.map(n=>'<code>'+e(n)+'</code>').join(', ')+
+      ' is named as a <code>serviceAccountName</code> but nothing in this release creates it.</b> The chart models exactly one ServiceAccount — anything else has to come from <a href="#" data-goto="extradeploy">extraDeploy</a> or another release. Helm renders this happily; the pod fails to schedule.'});
+  }
+  const clusterScoped=allRenders().filter(r=>r.scope==='cluster');
+  if(clusterScoped.length&&state.mode==='fleet')
+    out.push({l:'warn',t:'<b>'+clusterScoped.length+' cluster-scoped object'+(clusterScoped.length===1?'':'s')+' in a multi-namespace build.</b> '+
+      clusterScoped.map(r=>'<code>'+e(r.kind)+'/'+e(r.name)+'</code>').join(', ')+' — every namespace would own the same object. Move them into one shared release.'});
+  else if(clusterScoped.length)
+    out.push({l:'warn',t:'Cluster-scoped: '+clusterScoped.map(r=>'<code>'+e(r.kind)+'/'+e(r.name)+'</code>').join(', ')+'. Only one release in the cluster may own these.'});
+  if(!on('image')&&on('workload')&&wt!=='none')
+    out.push({l:'bad',t:'No <code>image.repository</code>. The schema requires it for any workload that runs pods.'});
+  if(!out.length)out.push({l:'ok',t:'Nothing to flag. Every cross-check the cookbook documents passes on this build.'});
+  return out;
+}
+
+/* ---------- build presets ---------- */
+const PRESETS=[
+  {id:'web',name:'Web API',blurb:'Deployment behind a Service and an Ingress, autoscaled, with probes and a disruption budget.',
+   ids:['identity','workload','image','replicas','ports','env','resources','probes','service','ingress','hpa','pdb','serviceaccount','servicemonitor','security'],
+   tweak:{workload:{type:'deployment'},replicas:{replicaCount:''},service:{enabled:true,type:'ClusterIP',ports:'http=80:http\nmetrics=9091:metrics'}}},
+  {id:'db',name:'Postgres StatefulSet',blurb:'Stable identity, one PVC set per replica, a headless Service and retention set to Retain.',
+   ids:['identity','workload','image','replicas','ports','env','resources','probes','vct','mounts','service','pdb','affinity','security'],
+   tweak:{identity:{nameOverride:'postgres'},workload:{type:'statefulset'},replicas:{replicaCount:3,serviceName:'postgres-headless'},
+     image:{repository:'postgres',tag:'16.4',pullPolicy:'IfNotPresent'},
+     ports:{items:[{name:'postgres',port:5432}]},
+     service:{enabled:true,type:'ClusterIP',clusterIP:'None',publishNotReadyAddresses:true,ports:'postgres=5432:postgres'},
+     probes:{items:[{which:'readinessProbe',kind:'exec',command:'/bin/sh\n-c\npg_isready -U postgres',periodSeconds:10}]},
+     mounts:{items:[{name:'data',mountPath:'/var/lib/postgresql/data'},{name:'wal',mountPath:'/var/lib/postgresql/pg_wal'}]},
+     pdb:{enabled:true,maxUnavailable:'1',minAvailable:''}}},
+  {id:'none',name:'Config / RBAC only',blurb:'A release that owns no pods — shared ConfigMaps, a ServiceAccount and its Role.',
+   ids:['identity','workload','service','serviceaccount','rbac','configmaps'],
+   tweak:{identity:{nameOverride:'platform-shared'},workload:{type:'none'},service:{enabled:false},
+     serviceaccount:{create:true,name:'ci-writer'}}},
+  {id:'ocp',name:'OpenShift app',blurb:'Route instead of Ingress, restricted-v2 security context, and an SCC bound to the ServiceAccount.',
+   ids:['identity','workload','image','ports','service','route','routes','scc','security','serviceaccount'],
+   tweak:{security:{seccomp:'RuntimeDefault',allowPrivilegeEscalation:false,drop:'ALL',cRunAsNonRoot:true}}},
+  {id:'eso',name:'Vault-backed secrets',blurb:'A SecretStore and ExternalSecret, with the synced Secret wired into the container’s env.',
+   ids:['identity','workload','image','secretstores','externalsecrets','env'],
+   tweak:{env:{items:[{name:'DB_PASSWORD',kind:'secretKeyRef',ref:'db-credentials',key:'password'}]}}},
+  {id:'batch',name:'Scheduled work',blurb:'A nightly CronJob and a PreSync migration Job, both named verbatim.',
+   ids:['identity','workload','image','cronjobs','jobs','secrets']}
+];
+function applyPreset(p){
+  state.f={};
+  p.ids.forEach(id=>{const f=BYID[id];if(!f)return;
+    const v=Object.assign(defaults(id),clone(f.ex||{}),clone((p.tweak||{})[id]||{}));
+    state.f[id]={on:true,v};});
+  state.sel=p.ids[1]||p.ids[0];state.view='feature';save();
+}
+function enableAll(){
+  FEAT.forEach(f=>{state.f[f.id]={on:true,v:Object.assign(defaults(f.id),clone(f.ex||{}))};});
+  const w=state.f.workload;if(w)w.v.type='deployment';
+  state.view='feature';save();
+}
+
+/* ---------- field editors ---------- */
+function ctl(fid,fd,val,pre){
+  const a='data-f="'+fid+'" '+(pre||'')+' data-k="'+fd.k+'"';
+  const ph=fd.ph?' placeholder="'+e(fd.ph)+'"':'';
+  if(fd.t==='bool')return '<label class="chk"><input type="checkbox" '+a+(val?' checked':'')+'> '+fd.label+'</label>';
+  if(fd.t==='sel')return '<select class="inp" '+a+'>'+fd.opts.map(o=>
+      '<option value="'+e(o)+'"'+(String(val||'')===o?' selected':'')+'>'+(o===''?'—':e(o))+'</option>').join('')+'</select>';
+  if(fd.t==='yaml'||fd.t==='txt')return '<textarea class="inp" rows="'+(fd.rows||4)+'" '+a+ph+'>'+e(val==null?'':val)+'</textarea>';
+  return '<input class="inp" type="'+(fd.t==='num'?'number':'text')+'" '+a+ph+' value="'+e(val==null?'':val)+'">';
+}
+function fieldHTML(fid,fd,v){
+  const val=v[fd.k];
+  if(fd.t==='bool')return '<div class="field">'+ctl(fid,fd,val)+(fd.hint?'<div class="hint">'+fd.hint+'</div>':'')+'</div>';
+  if(fd.t==='kv'){
+    const arr=Array.isArray(val)?val:[];
+    return '<div class="field"><label>'+e(fd.label)+'</label>'+
+      arr.map((p,i)=>'<div class="kvrow">'+
+        '<input class="inp" data-f="'+fid+'" data-k="'+fd.k+'" data-kvi="'+i+'" data-part="k" placeholder="key" value="'+e(p.k||'')+'">'+
+        '<input class="inp" data-f="'+fid+'" data-k="'+fd.k+'" data-kvi="'+i+'" data-part="v" placeholder="value" value="'+e(p.v||'')+'">'+
+        '<button class="x" data-act="kvdel" data-f="'+fid+'" data-k="'+fd.k+'" data-kvi="'+i+'" title="Remove">&times;</button></div>').join('')+
+      '<button class="add" data-act="kvadd" data-f="'+fid+'" data-k="'+fd.k+'">+ Add pair</button>'+
+      (fd.hint?'<div class="hint">'+fd.hint+'</div>':'')+'</div>';
+  }
+  if(fd.t==='rows'){
+    const arr=Array.isArray(val)?val:[];
+    return '<div class="field"><label>'+e(fd.label)+'</label><div class="rows">'+
+      arr.map((r,i)=>{
+        const cols=fd.cols.filter(c=>!c.when||c.when(r));
+        return '<div class="row"><div class="rowhd"><span class="ix">'+String(i+1).padStart(2,'0')+'</span>'+
+          '<span class="sp"></span><button class="x" data-act="rowdel" data-f="'+fid+'" data-k="'+fd.k+'" data-ri="'+i+'" title="Remove">&times;</button></div>'+
+          '<div class="grid2">'+cols.map(c=>'<div'+(c.t==='yaml'||c.t==='txt'?' style="grid-column:1/-1"':'')+'>'+
+            (c.t==='bool'?'':'<span class="flabel">'+e(c.label)+'</span>')+
+            ctl(fid,c,r[c.k],'data-ri="'+i+'" data-fk="'+fd.k+'"')+
+            (c.hint?'<div class="hint">'+c.hint+'</div>':'')+'</div>').join('')+'</div></div>';
+      }).join('')+
+      '</div><button class="add" data-act="rowadd" data-f="'+fid+'" data-k="'+fd.k+'" style="margin-top:10px">+ '+e(fd.add||'Add')+'</button></div>';
+  }
+  return '<div class="field"><label>'+e(fd.label)+'</label>'+ctl(fid,fd,val)+(fd.hint?'<div class="hint">'+fd.hint+'</div>':'')+'</div>';
+}
+
+/* ---------- rail ---------- */
+function renderRail(){
+  const q=($('#q').value||'').toLowerCase().trim();
+  const host=$('#rail');let h='';
+  if(state.mode==='fleet'){
+    h+='<div class="grp">Fleet</div>'+
+      '<div class="item'+(state.view==='fleet'?'':'')+'" data-goto="__fleet" aria-current="'+(state.view==='fleet')+'">'+
+      '<span></span><span class="sec">ns</span><span class="nm">Namespaces &amp; overrides</span></div>';
+  }
+  CATS.forEach(c=>{
+    const fs=FEAT.filter(f=>f.cat===c.id&&(!q||(f.name+' '+f.kw+' '+(f.keys||[]).join(' ')+' §'+f.sec).toLowerCase().includes(q)));
+    if(!fs.length)return;
+    const n=fs.filter(f=>on(f.id)).length;
+    h+='<div class="grp">'+e(c.name)+(n?'<span>'+n+'</span>':'')+'</div>';
+    fs.forEach(f=>{
+      h+='<div class="item'+(on(f.id)?' on':'')+'" data-goto="'+f.id+'" aria-current="'+(state.view==='feature'&&state.sel===f.id)+'">'+
+        '<button class="tog" data-act="toggle" data-id="'+f.id+'" title="'+(on(f.id)?'Remove from values':'Add to values')+'" aria-label="'+(on(f.id)?'Remove ':'Add ')+e(f.name)+'">'+
+        '<svg viewBox="0 0 12 12"><polyline points="1,6 4.5,9.5 11,2.5"/></svg></button>'+
+        '<span class="sec">'+(f.sec==='--'?'·':'§'+f.sec)+'</span><span class="nm">'+e(f.name)+'</span></div>';
+    });
+  });
+  if(!h)h='<div class="empty">Nothing matches “'+e(q)+'”.</div>';
+  host.innerHTML=h;
+}
+
+/* ---------- plate ---------- */
+function renderPlate(){
+  const host=$('#plate');
+  if(state.view==='presets')return void(host.innerHTML=presetsHTML());
+  if(state.view==='fleet')return void(host.innerHTML=fleetHTML());
+  const f=BYID[state.sel]||FEAT[0];const v=fv(f.id);const isOn=on(f.id);
+  let h='<div class="plate-in"><div class="eyebrow">'+
+    (f.sec==='--'?'<b>chart key</b>':'<b>Cookbook §'+f.sec+'</b>')+
+    '<span>'+e((CATS.find(c=>c.id===f.cat)||{}).name)+'</span>'+
+    '<span>'+ (f.keys||[]).map(k=>e(k)).join(' · ') +'</span></div>'+
+    '<h1>'+e(f.name)+'</h1><p class="blurb">'+f.blurb+'</p>'+
+    '<div class="acts">'+
+      '<button class="btn '+(isOn?'':'pri')+'" data-act="toggle" data-id="'+f.id+'">'+(isOn?'Remove from values.yaml':'Add to values.yaml')+'</button>'+
+      (f.ex?'<button class="btn" data-act="example" data-id="'+f.id+'">Fill with the cookbook example</button>':'')+
+      (isOn?'<button class="btn" data-act="clear" data-id="'+f.id+'">Clear fields</button>':'')+
+    '</div>';
+  if(f.presets)h+='<div class="chips" style="margin:-10px 0 22px">'+f.presets.map((p,i)=>
+    '<button class="chip mini" data-act="fpreset" data-id="'+f.id+'" data-i="'+i+'">'+e(p.label)+'</button>').join('')+'</div>';
+  h+=(f.fields||[]).map(fd=>fieldHTML(f.id,fd,v)).join('');
+  let rs=[];try{rs=isOn?(f.renders(v)||[]):[];}catch(x){}
+  if(rs.length)h+='<div class="sub">Renders</div><div class="chips">'+rs.map(r=>
+    '<span class="chip"><b>'+e(r.kind)+'</b> '+e(r.name)+(r.scope==='cluster'?' · cluster-scoped':'')+'</span>').join('')+'</div>';
+  if(f.notes&&f.notes.length)h+='<div class="sub">From the cookbook</div>'+f.notes.map(n=>'<p class="note">'+n+'</p>').join('');
+  h+='</div>';
+  host.innerHTML=h;
+}
+function presetsHTML(){
+  return '<div class="plate-in"><div class="eyebrow"><b>Start here</b><span>six shapes this chart is usually asked for</span></div>'+
+    '<h1>Presets</h1><p class="blurb">Each one enables a set of features and fills them with the cookbook’s own example values. Applying a preset replaces whatever is in the build now.</p>'+
+    PRESETS.map(p=>'<div class="row" style="margin-bottom:12px"><div style="display:flex;gap:12px;align-items:flex-start">'+
+      '<div style="flex:1"><b style="font-family:var(--f-dsp);font-size:16px">'+e(p.name)+'</b>'+
+      '<p style="margin:4px 0 8px;color:var(--ink2);font-size:13px">'+e(p.blurb)+'</p>'+
+      '<div class="chips">'+p.ids.map(i=>'<span class="chip">'+e((BYID[i]||{}).name||i)+'</span>').join('')+'</div></div>'+
+      '<button class="btn pri" data-act="preset" data-id="'+p.id+'">Apply</button></div></div>').join('')+
+    '</div>';
+}
+function fleetHTML(){
+  const ns=state.fleet.ns,paths=overridePaths();
+  let h='<div class="plate-in"><div class="eyebrow"><b>Fleet</b><span>one base, one minimal file per namespace</span></div>'+
+    '<h1>Namespaces &amp; overrides</h1>'+
+    '<p class="blurb">Build the shared values once in the index on the left. Here you only name what <i>differs</i> per namespace — the generated <code>values-&lt;ns&gt;.yaml</code> files carry nothing else, so a new environment is three lines, not a copied file.</p>'+
+    '<div class="field"><label>Default release name</label><input class="inp" data-fleet="release" value="'+e(state.fleet.release||'')+'" placeholder="checkout-api"></div>'+
+    '<div class="sub">Namespaces</div><div class="nschips">'+
+    ns.map((n,i)=>'<span class="nschip"><input class="inp" style="width:110px;padding:2px 6px;border:0;background:none;font-family:var(--f-mo)" data-fleet="ns" data-i="'+i+'" data-part="name" value="'+e(n.name||'')+'">'+
+      '<button class="x" data-act="nsdel" data-i="'+i+'" title="Remove">&times;</button></span>').join('')+
+    '<button class="add" style="width:auto;padding:6px 14px" data-act="nsadd">+ Namespace</button>'+
+    '<button class="add" style="width:auto;padding:6px 14px" data-act="nsscaffold">Scaffold dev / staging / prod</button></div>'+
+    '<div class="sub">What differs</div>'+
+    '<p class="blurb" style="margin-top:-4px">Blank means “inherit the base”. That is the whole point — leave everything you can blank.</p>'+
+    '<div class="matrix"><table class="mx"><thead><tr><th>values path</th>'+
+      ns.filter(n=>nz(n.name)).map(n=>'<th>'+e(n.name)+'</th>').join('')+'<th></th></tr></thead><tbody>'+
+    (state.fleet.rows.length?state.fleet.rows.map((r,i)=>'<tr><td>'+e(r.path)+'</td>'+
+      ns.filter(n=>nz(n.name)).map(n=>'<td><input class="cell" data-fleet="cell" data-i="'+i+'" data-ns="'+e(n.name)+'" placeholder="inherit" value="'+e(((r.vals||{})[n.name])||'')+'"></td>').join('')+
+      '<td style="width:34px"><button class="x" data-act="mxdel" data-i="'+i+'">&times;</button></td></tr>').join('')
+      :'<tr><td colspan="'+(ns.filter(n=>nz(n.name)).length+2)+'" style="padding:14px;color:var(--ink3)">No per-namespace differences yet — every namespace gets the base values as-is.</td></tr>')+
+    '</tbody></table></div>'+
+    '<div class="field" style="margin-top:14px"><label>Add an override row</label>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><select class="inp" id="mxpath" style="flex:1;min-width:220px">'+
+      paths.map(p=>'<option value="'+e(p.path)+'">'+e(p.path)+'</option>').join('')+
+      '<option value="__custom">custom path…</option></select>'+
+    '<button class="btn pri" data-act="mxadd">Add row</button></div>'+
+    '<div class="hint">Paths come from the features you have enabled, plus the ones that vary in almost every deployment.</div></div>'+
+    '<div class="sub">Anything else, per namespace</div>'+
+    ns.filter(n=>nz(n.name)).map((n,i)=>'<div class="field"><label>'+e(n.name)+' — extra YAML appended to values-'+e(n.name)+'.yaml</label>'+
+      '<textarea class="inp" rows="4" data-fleet="extra" data-name="'+e(n.name)+'" placeholder="ingress:&#10;  hosts:&#10;    - host: api.'+e(n.name)+'.example.com&#10;      paths:&#10;        - path: /&#10;          pathType: Prefix&#10;          portName: http">'+e(n.extra||'')+'</textarea>'+
+      '<div class="hint">Helm replaces lists wholesale, so a list-valued key has to be restated in full here rather than patched.</div></div>').join('')+
+    '<p class="note"><b>Order matters.</b> <code>-f values.yaml -f values-&lt;ns&gt;.yaml</code> — the later file wins, key by key. Maps deep-merge; lists are replaced entirely.</p>'+
+    '<p class="note"><b>Cluster-scoped objects are not per-namespace.</b> StorageClasses, PersistentVolumes, SCCs, ClusterRoles and ClusterSecretStores are one object for the whole cluster. Deploying them from every namespace means the releases fight; the Checks tab lists any this build would duplicate.</p>'+
+    '</div>';
+  return h;
+}
+
+/* ---------- output ---------- */
+function hl(l){
+  if(/^\s*#/.test(l))return '<span class="c-cm">'+e(l)+'</span>';
+  const m=l.match(/^(\s*(?:- )?)([A-Za-z0-9_.\/-]+)(:)(.*)$/);
+  if(!m)return e(l);
+  return e(m[1])+'<span class="c-k">'+e(m[2])+'</span>:'+hlv(m[4]);
+}
+function hlv(s){
+  if(!s.trim())return e(s);
+  const t=s.trim();
+  if(/^(true|false)$/.test(t))return ' <span class="c-b">'+e(t)+'</span>';
+  if(/^-?[\d.]+$/.test(t))return ' <span class="c-n">'+e(t)+'</span>';
+  return ' <span class="c-s">'+e(t)+'</span>';
+}
+function renderOut(){
+  const files=currentFiles();
+  if(state.file>=files.length)state.file=0;
+  const bar=$('#filebar');
+  if(files.length>1){bar.hidden=false;
+    bar.innerHTML=files.map((f,i)=>'<button data-act="file" data-i="'+i+'" aria-pressed="'+(i===state.file)+'">'+e(f.name)+
+      (f.sub?'<span style="opacity:.6"> · '+e(f.sub)+'</span>':'')+'</button>').join('');
+  }else{bar.hidden=true;bar.innerHTML='';}
+  const body=$('#outbody');
+  const cks=checks(),bad=cks.filter(c=>c.l==='bad').length;
+  $$('#tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===state.tab));
+  const tb=$('#tabs button[data-tab="checks"]');
+  tb.innerHTML='Checks'+(bad?'<span class="pill">'+bad+'</span>':'');
+  if(state.tab==='files'){
+    const f=files[state.file];const ls=f.text.split('\n');
+    const own=n=>(f.marks||[]).some(m=>n>=m.from&&n<=m.to&&m.ids.indexOf(state.sel)>=0);
+    body.innerHTML='<div class="code">'+ls.map((l,i)=>
+      '<div class="cl'+(own(i)?' own':'')+'"><span class="n">'+(i+1)+'</span><span class="t">'+hl(l)+'</span></div>').join('')+'</div>';
+    $('#stat').textContent=f.name+' · '+ls.length+' lines · '+f.text.length+' bytes';
+  }else if(state.tab==='renders'){
+    const rs=allRenders();const by={};rs.forEach(r=>(by[r.kind]=by[r.kind]||[]).push(r));
+    body.innerHTML='<div class="pad">'+(rs.length?Object.keys(by).sort().map(k=>
+      '<div class="resg"><h4>'+e(k)+' · '+by[k].length+'</h4>'+by[k].map(r=>
+        '<div class="resitem"><span class="k">'+e(r.kind)+'</span><span class="nm">'+e(r.name)+'</span>'+
+        (r.scope==='cluster'?'<span class="sc">cluster-scoped</span>':'')+'</div>').join('')+'</div>').join('')
+      :'<p style="color:var(--ink3)">Nothing rendered yet. Add a feature from the index.</p>')+'</div>';
+    $('#stat').textContent=rs.length+' object'+(rs.length===1?'':'s');
+  }else{
+    body.innerHTML='<div class="pad">'+cks.map(c=>'<div class="ck '+c.l+'"><span class="d">'+
+      (c.l==='bad'?'blocks':c.l==='warn'?'check':'clear')+'</span><p>'+c.t+'</p></div>').join('')+'</div>';
+    $('#stat').textContent=cks.length+' check'+(cks.length===1?'':'s');
+  }
+}
+function renderAll(){renderRail();renderPlate();renderOut();}
+
+/* ---------- input plumbing ---------- */
+function readEl(el){
+  if(el.type==='checkbox')return el.checked;
+  return el.value;
+}
+function applyInput(el){
+  if(el.dataset.fleet)return applyFleet(el);
+  const fid=el.dataset.f;if(!fid)return;
+  const st=ensure(fid),v=st.v,val=readEl(el);
+  if(el.dataset.fk!==undefined){
+    const fk=el.dataset.fk,i=+el.dataset.ri;
+    v[fk]=Array.isArray(v[fk])?v[fk]:[];
+    v[fk][i]=v[fk][i]||{};
+    v[fk][i][el.dataset.k]=val;
+  }else if(el.dataset.kvi!==undefined){
+    const k=el.dataset.k,i=+el.dataset.kvi;
+    v[k]=Array.isArray(v[k])?v[k]:[];
+    v[k][i]=v[k][i]||{k:'',v:''};
+    v[k][i][el.dataset.part]=val;
+  }else v[el.dataset.k]=val;
+  if(!st.on)st.on=true;
+  save();
+}
+function applyFleet(el){
+  const w=el.dataset.fleet;
+  if(w==='release')state.fleet.release=el.value;
+  else if(w==='ns'){const n=state.fleet.ns[+el.dataset.i];if(n)n.name=el.value.trim();}
+  else if(w==='extra'){const n=state.fleet.ns.find(x=>x.name===el.dataset.name);if(n)n.extra=el.value;}
+  else if(w==='cell'){const r=state.fleet.rows[+el.dataset.i];if(r){r.vals=r.vals||{};r.vals[el.dataset.ns]=el.value;}}
+  save();
+}
+document.addEventListener('input',ev=>{
+  const el=ev.target;
+  if(el.id==='q')return renderRail();
+  if(el.dataset.f||el.dataset.fleet){applyInput(el);renderRail();renderOut();}
+});
+document.addEventListener('change',ev=>{
+  const el=ev.target;
+  if(el.id==='q')return;
+  if(el.dataset.f||el.dataset.fleet){applyInput(el);renderAll();}
+});
+
+/* ---------- clicks ---------- */
+document.addEventListener('click',ev=>{
+  const a=ev.target.closest('[data-act]'),g=ev.target.closest('[data-goto]');
+  if(a){
+    ev.preventDefault();ev.stopPropagation();
+    /* row and key-value buttons address their feature with data-f; the
+       feature-level buttons use data-id. Reading only one of them left every
+       Add/Remove throwing on an undefined id, which killed the handler before
+       it could re-render — the button looked dead. */
+    const id=a.dataset.id||a.dataset.f,k=a.dataset.k,i=+a.dataset.i;
+    switch(a.dataset.act){
+      case 'toggle':{const st=ensure(id);st.on=!st.on;
+        if(st.on&&BYID[id].ex&&!Object.keys(clean(st.v)).length)st.v=Object.assign(defaults(id),clone(BYID[id].ex));
+        state.sel=id;state.view='feature';save();break;}
+      case 'example':{const st=ensure(id);st.v=Object.assign(defaults(id),clone(BYID[id].ex||{}));st.on=true;save();break;}
+      case 'clear':{const st=ensure(id);st.v=defaults(id);save();break;}
+      case 'fpreset':{const st=ensure(id);Object.assign(st.v,clone(BYID[id].presets[i].v));st.on=true;save();break;}
+      case 'preset':{const p=PRESETS.find(x=>x.id===id);if(p)applyPreset(p);break;}
+      case 'rowadd':{const st=ensure(id);st.v[k]=Array.isArray(st.v[k])?st.v[k]:[];
+        const fd=(BYID[id].fields||[]).find(x=>x.k===k),row={};
+        (fd.cols||[]).forEach(c=>{if(c.def!==undefined)row[c.k]=c.def;});
+        st.v[k].push(row);st.on=true;save();break;}
+      case 'rowdel':{const st=ensure(id);(st.v[k]||[]).splice(+a.dataset.ri,1);save();break;}
+      case 'kvadd':{const st=ensure(id);st.v[k]=Array.isArray(st.v[k])?st.v[k]:[];st.v[k].push({k:'',v:''});st.on=true;save();break;}
+      case 'kvdel':{const st=ensure(id);(st.v[k]||[]).splice(+a.dataset.kvi,1);save();break;}
+      case 'file':{state.file=i;renderOut();return;}
+      case 'nsadd':{state.fleet.ns.push({name:'ns'+(state.fleet.ns.length+1)});save();break;}
+      case 'nsdel':{state.fleet.ns.splice(i,1);save();break;}
+      case 'nsscaffold':{state.fleet.ns=[{name:'dev'},{name:'staging'},{name:'prod'}];
+        state.fleet.rows=[
+          {path:'replicaCount',vals:{dev:'1',staging:'2',prod:'4'}},
+          {path:'image.tag',vals:{dev:'main',staging:'rc',prod:''}},
+          {path:'resources.requests.cpu',vals:{dev:'50m',staging:'100m',prod:'500m'}},
+          {path:'resources.requests.memory',vals:{dev:'64Mi',staging:'128Mi',prod:'512Mi'}}];
+        save();break;}
+      case 'mxadd':{const sel=$('#mxpath');let p=sel.value;
+        if(p==='__custom'){p=prompt('values path, dotted (e.g. ingress.className)');if(!p)return;}
+        if(!state.fleet.rows.find(r=>r.path===p))state.fleet.rows.push({path:p,vals:{}});
+        save();break;}
+      case 'mxdel':{state.fleet.rows.splice(i,1);save();break;}
+    }
+    return renderAll();
+  }
+  if(g){
+    ev.preventDefault();
+    if(g.dataset.goto==='__fleet')state.view='fleet';
+    else{state.sel=g.dataset.goto;state.view='feature';}
+    if(innerWidth<=820)document.body.dataset.pane='plate';
+    renderAll();
+    $('.plate').scrollTop=0;
+  }
+});
+
+/* ---------- chrome ---------- */
+$('#tabs').addEventListener('click',ev=>{const b=ev.target.closest('button[data-tab]');
+  if(!b)return;state.tab=b.dataset.tab;renderOut();});
+$('#modeseg').addEventListener('click',ev=>{const b=ev.target.closest('button[data-mode]');if(!b)return;
+  state.mode=b.dataset.mode;state.file=0;
+  $$('#modeseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.mode===state.mode));
+  if(state.mode==='fleet')state.view='fleet';else if(state.view==='fleet')state.view='feature';
+  save();renderAll();});
+$('#paneseg').addEventListener('click',ev=>{const b=ev.target.closest('button[data-pane]');if(!b)return;
+  document.body.dataset.pane=b.dataset.pane;
+  $$('#paneseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.pane===b.dataset.pane));});
+$('#btn-presets').addEventListener('click',()=>{state.view='presets';renderAll();$('.plate').scrollTop=0;});
+$('#btn-all').addEventListener('click',()=>{enableAll();renderAll();});
+$('#btn-reset').addEventListener('click',()=>{state.f={};state.fleet.rows=[];state.view='feature';save();renderAll();});
+$('#btn-copy').addEventListener('click',async()=>{
+  const f=currentFiles()[state.file];const b=$('#btn-copy');
+  try{await navigator.clipboard.writeText(f.text);}
+  catch(x){const ta=document.createElement('textarea');ta.value=f.text;document.body.appendChild(ta);
+    ta.select();try{document.execCommand('copy');}catch(y){}ta.remove();}
+  b.textContent='Copied '+f.name;setTimeout(()=>{b.textContent='Copy file';},1400);});
+
+/* ---------- go ---------- */
+document.body.dataset.pane='plate';
+$$('#paneseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.pane==='plate'));
+if(!load())applyPreset(PRESETS[0]);
+$$('#modeseg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.mode===state.mode));
+if(state.mode==='fleet')state.view='fleet';
+renderAll();
+</script>

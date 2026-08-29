@@ -5,10 +5,7 @@ kind: ConfigMap
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "universal-chart.labels" $ | nindent 4 }}
-    {{- with $spec.labels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
+    {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
   {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
   annotations:
     {{- toYaml . | nindent 4 }}

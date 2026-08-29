@@ -11,10 +11,7 @@ kind: Service
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "universal-chart.labels" $ | nindent 4 }}
-    {{- with $spec.labels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
+    {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
   {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -46,6 +43,14 @@ spec:
   {{- end }}
   {{- if hasKey $spec "publishNotReadyAddresses" }}
   publishNotReadyAddresses: {{ $spec.publishNotReadyAddresses }}
+  {{- end }}
+  {{- /* See the matching comment in service.yaml: hasKey rather than `with`,
+         because the default is true and it is the explicit `false` that
+         matters. Extra Services need this as much as the primary — the two
+         real LoadBalancers the report names are a data-receiver and an
+         externally-exposed ZooKeeper, exactly the shape that lands here. */}}
+  {{- if hasKey $spec "allocateLoadBalancerNodePorts" }}
+  allocateLoadBalancerNodePorts: {{ $spec.allocateLoadBalancerNodePorts }}
   {{- end }}
   ports:
     {{- range $pname, $pspec := $spec.ports }}

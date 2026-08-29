@@ -11,10 +11,7 @@ kind: Job
 metadata:
   name: {{ include "universal-chart.subresourceName" (dict "root" $ "name" $name) | trunc 63 | trimSuffix "-" }}
   labels:
-    {{- include "universal-chart.labels" $ | nindent 4 }}
-    {{- with $spec.labels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
+    {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
   {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -31,10 +28,25 @@ spec:
   {{- with $spec.ttlSecondsAfterFinished }}
   ttlSecondsAfterFinished: {{ . }}
   {{- end }}
+  {{- /* See the matching comment in cronjob.yaml: hasKey, because 0 is legal
+         and meaningful for both of these. */}}
+  {{- if hasKey ($spec | default dict) "parallelism" }}
+  parallelism: {{ $spec.parallelism }}
+  {{- end }}
+  {{- if hasKey ($spec | default dict) "completions" }}
+  completions: {{ $spec.completions }}
+  {{- end }}
   template:
     metadata:
       labels:
         {{- include "universal-chart.selectorLabels" $ | nindent 8 }}
+        {{- with $spec.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $spec.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- include "universal-chart.jobPodSpec" (dict "Values" $.Values "Chart" $.Chart "Release" $.Release "job" (merge $spec (dict "name" $name))) | nindent 6 }}
 {{- end }}

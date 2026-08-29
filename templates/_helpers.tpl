@@ -59,13 +59,21 @@ intact: two differently-named CronJobs in one release still get distinct
 prefixed names. Same idea as Helm's own fullname helper avoiding
 "release-release".
 */}}
+{{/*
+STRICT NAMING: the map key IS the object's name, rendered verbatim.
+
+This used to return "<fullname>-<key>", pairing with a converter that stripped
+the same prefix on the way in. The round trip worked for names that happened to
+carry the release prefix and mangled every name that did not — and two raw names
+differing only by that prefix collapsed onto one key, silently losing an object.
+
+A cronjobs/jobs key is now the full `metadata.name` from the raw manifest, which
+is unique per kind per namespace by API rule, so it needs no prefix to stay
+unique and no disambiguation to stay distinct. A hand-written values file gets
+exactly the name it wrote.
+*/}}
 {{- define "universal-chart.subresourceName" -}}
-{{- $full := include "universal-chart.fullname" .root -}}
-{{- if eq .name $full -}}
-{{- $full -}}
-{{- else -}}
-{{- printf "%s-%s" $full .name -}}
-{{- end -}}
+{{- .name -}}
 {{- end }}
 
 {{- define "universal-chart.cronJobName" -}}
@@ -84,6 +92,32 @@ selectorLabels (used for selector.matchLabels and pod template labels
 everywhere), so a stray `commonLabels.app.kubernetes.io/name` can't drift
 metadata away from the (deliberately static) selector.
 */}}
+{{/*
+One object's OWN metadata.labels, merged with the chart's identity labels.
+
+Every template used to render `universal-chart.labels` alone, so a raw
+manifest's own labels — team, environment, part-of, argocd.argoproj.io/* —
+were dropped from every object the chart renders. That was the single
+highest-count defect in the fidelity report (~3,087 labels).
+
+Two details are load-bearing:
+
+  * ONE merged map, not two `labels:` blocks. The few templates that did carry
+    the object's labels emitted a second block under the same key, which is a
+    duplicate YAML key: some parsers reject it, and Helm silently keeps the
+    last, which means a values file could overwrite `app.kubernetes.io/name`.
+  * The chart's identity labels WIN. `merge` leaves the destination's keys
+    intact, so an object's own labels can only ADD — the same rule
+    universal-chart.labels already applies to commonLabels, and what keeps
+    metadata permanently consistent with selectorLabels.
+
+Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
+*/}}
+{{- define "universal-chart.objectLabels" -}}
+{{- $core := fromYaml (include "universal-chart.labels" .root) }}
+{{- toYaml (merge $core (.own | default dict)) }}
+{{- end }}
+
 {{- define "universal-chart.labels" -}}
 {{- $core := dict "app.kubernetes.io/name" (include "universal-chart.name" .) "app.kubernetes.io/instance" .Release.Name "helm.sh/chart" (printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-") "app.kubernetes.io/managed-by" .Release.Service }}
 {{- if .Chart.AppVersion }}
@@ -169,8 +203,29 @@ Usage:  {{- include "universal-chart.mapToList" .Values.ports | nindent 4 }}
 */}}
 {{- define "universal-chart.mapToList" -}}
 {{- range $name, $spec := . }}
+{{- /* `unnamed: true` means the map key is bookkeeping, not a real name: a
+       container port the raw manifest left unnamed still needs a key here, but
+       emitting `name: port-8080` would give the object a name it never had, and
+       a Service targetPort or probe that resolves ports BY name would then
+       match something that did not exist before. */}}
+{{- if $spec.unnamed }}
+- {{- toYaml (omit $spec "unnamed" "name") | nindent 2 }}
+{{- else }}
 - name: {{ $spec.name | default $name }}
-  {{- toYaml (omit $spec "name") | nindent 2 }}
+  {{- /* An entry whose body is empty renders `- name: X` followed by a bare
+         `{}`, which is malformed for an env var (no value, no valueFrom) and
+         for a port. An empty body almost always means the source had
+         `value: ""` and the empty scalar became an empty map on the way in, so
+         `value: ""` is the faithful reading — an env var explicitly set to the
+         empty string is NOT the same as an absent one, and dropping the entry
+         would change behaviour rather than preserve it. */}}
+  {{- $body := omit $spec "name" }}
+  {{- if $body }}
+  {{- toYaml $body | nindent 2 }}
+  {{- else }}
+  value: ""
+  {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 

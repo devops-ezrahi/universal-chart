@@ -31,6 +31,8 @@
     "containerName":         { "type": "string" },
     "replicaCount":          { "type": "integer", "minimum": 0 },
     "revisionHistoryLimit":  { "type": "integer", "minimum": 0 },
+    "progressDeadlineSeconds": { "oneOf": [ { "type": "integer", "minimum": 1 }, { "type": "string", "maxLength": 0 } ] },
+    "minReadySeconds": { "oneOf": [ { "type": "integer", "minimum": 0 }, { "type": "string", "maxLength": 0 } ] },
     "podManagementPolicy":   { "type": "string", "enum": ["OrderedReady", "Parallel"] },
     "serviceName":           { "type": "string" },
     "imagePullSecrets":      { "type": "array" },
@@ -83,7 +85,8 @@
         "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"] },
         "ports": { "type": "object" },
         "annotations": { "type": "object" },
-        "labels": { "type": "object" }
+        "labels": { "type": "object" },
+        "allocateLoadBalancerNodePorts": { "type": "boolean" }
       }
     },
     "ingress": {

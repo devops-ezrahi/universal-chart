@@ -5,10 +5,11 @@ metadata:
   name: {{ include "universal-chart.fullname" . }}
   namespace: {{ .Values.serviceMonitor.namespace | default .Release.Namespace }}
   labels:
-    {{- include "universal-chart.labels" . | nindent 4 }}
-    {{- with .Values.serviceMonitor.labels }}
+    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.serviceMonitor.labels) | nindent 4 }}
+  {{- with merge (.Values.commonAnnotations | default dict) (.Values.serviceMonitor.annotations | default dict) }}
+  annotations:
     {{- toYaml . | nindent 4 }}
-    {{- end }}
+  {{- end }}
 spec:
   selector:
     matchLabels:

@@ -4,10 +4,7 @@ kind: Service
 metadata:
   name: {{ include "universal-chart.primaryServiceName" . }}
   labels:
-    {{- include "universal-chart.labels" . | nindent 4 }}
-    {{- with .Values.service.labels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
+    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.service.labels) | nindent 4 }}
   {{- with merge (.Values.commonAnnotations | default dict) (.Values.service.annotations | default dict) }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -39,6 +36,13 @@ spec:
   {{- end }}
   {{- if hasKey .Values.service "publishNotReadyAddresses" }}
   publishNotReadyAddresses: {{ .Values.service.publishNotReadyAddresses }}
+  {{- end }}
+  {{- /* hasKey, not `with`: the Kubernetes default is TRUE, so an explicit
+         `false` is the value that actually changes behaviour and `with` would
+         skip precisely that one. Same reasoning as publishNotReadyAddresses
+         directly above. */}}
+  {{- if hasKey .Values.service "allocateLoadBalancerNodePorts" }}
+  allocateLoadBalancerNodePorts: {{ .Values.service.allocateLoadBalancerNodePorts }}
   {{- end }}
   {{- with .Values.service.externalIPs }}
   externalIPs:

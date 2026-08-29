@@ -4,7 +4,7 @@ kind: Ingress
 metadata:
   name: {{ include "universal-chart.fullname" . }}
   labels:
-    {{- include "universal-chart.labels" . | nindent 4 }}
+    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.ingress.labels) | nindent 4 }}
   {{- with merge (.Values.commonAnnotations | default dict) (.Values.ingress.annotations | default dict) }}
   annotations:
     {{- toYaml . | nindent 4 }}

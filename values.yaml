@@ -45,6 +45,18 @@ containerName: ""
 
 replicaCount: 1
 revisionHistoryLimit: 3
+
+# Deployment only: seconds Kubernetes waits before marking a rollout failed.
+# Empty means the field is omitted and Kubernetes applies its own default (600).
+progressDeadlineSeconds: ""
+
+# Deployment only: seconds a newly-Ready pod must stay Ready before the rollout
+# moves on. Empty means the field is omitted and Kubernetes applies its own
+# default, which is 0 — i.e. no soak at all. Unlike progressDeadlineSeconds
+# there is no benign default here: if the source declared a value, losing it
+# genuinely changes rollout behaviour, so the converter carries whatever it
+# finds and the template renders it only when set.
+minReadySeconds: ""
 podManagementPolicy: OrderedReady   # StatefulSet only: OrderedReady | Parallel
 
 # StatefulSet only: the GOVERNING Service, which gives each pod its stable DNS

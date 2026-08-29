@@ -31,8 +31,28 @@ hostIPC: true
 {{- if .Values.hostPID }}
 hostPID: true
 {{- end }}
+{{- /* Rendered only when TRUE, unlike enableServiceLinks below, and the
+       asymmetry is deliberate. This field's Kubernetes default is false, so an
+       explicit `false` changes nothing; and unlike enableServiceLinks it has a
+       declared default in values.yaml, so `hasKey` is always true and would
+       stamp `shareProcessNamespace: false` onto every pod the chart renders —
+       inventing a field on workloads whose source never mentioned it. The
+       `false` diff is suppressed in the checker instead
+       (_is_benign_default_loss), which is the one place the distinction can be
+       made without changing the chart's public values API. */}}
 {{- if .Values.shareProcessNamespace }}
 shareProcessNamespace: true
+{{- end }}
+{{- /* hasKey, not `if` — and the difference is load-bearing here in a way it is
+       not for the three booleans above. Their Kubernetes default is FALSE, so
+       rendering them only when true loses nothing. enableServiceLinks defaults
+       to TRUE, so an explicit `false` is a deliberate opt-out and `if` would
+       drop exactly the value that means something: the pods would come back
+       with the {SVCNAME}_SERVICE_HOST/_PORT variables the source manifest
+       switched off, and an injected name can silently override an application's
+       own env var. */}}
+{{- if hasKey .Values "enableServiceLinks" }}
+enableServiceLinks: {{ .Values.enableServiceLinks }}
 {{- end }}
 {{- with .Values.dnsPolicy }}
 dnsPolicy: {{ . }}

@@ -106,7 +106,7 @@ tests:
       - hasDocuments:
           count: 2
 
-  - it: should prepend fullname to cronjob name
+  - it: should use the cronjobs map key verbatim as the object name
     set:
       cronjobs:
         backup:
@@ -116,4 +116,4 @@ tests:
     asserts:
       - equal:
           path: metadata.name
-          value: RELEASE-NAME-backup
+          value: backup

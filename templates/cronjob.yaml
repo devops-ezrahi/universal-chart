@@ -1,17 +1,22 @@
 {{- range $name, $spec := .Values.cronjobs }}
+{{- /* jobTemplate is optional: a CronJob whose only required field is its
+       schedule is valid, and dereferencing a nil jobTemplate here crashed the
+       whole render with "nil pointer evaluating interface {}.volumeMounts" —
+       so the smallest correct CronJob was the one that could not be written. */}}
+{{- $jt := $spec.jobTemplate | default dict }}
 {{- include "universal-chart.validateVolumeMounts" (dict
       "label" (printf "cronjob %s" $name)
-      "volumeMounts" $spec.jobTemplate.volumeMounts
-      "volumes" $spec.jobTemplate.volumes
-      "initContainers" $spec.jobTemplate.initContainers
-      "sidecars" $spec.jobTemplate.sidecars) }}
+      "volumeMounts" $jt.volumeMounts
+      "volumes" $jt.volumes
+      "initContainers" $jt.initContainers
+      "sidecars" $jt.sidecars) }}
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: {{ include "universal-chart.cronJobName" (dict "root" $ "name" $name) }}
   labels:
-    {{- include "universal-chart.labels" $ | nindent 4 }}
+    {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
   {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -35,18 +40,33 @@ spec:
   {{- end }}
   jobTemplate:
     spec:
-      {{- $jt := $spec.jobTemplate | default dict }}
       backoffLimit: {{ if hasKey $jt "backoffLimit" }}{{ $jt.backoffLimit }}{{ else }}6{{ end }}
-      {{- with $spec.jobTemplate.activeDeadlineSeconds }}
+      {{- with $jt.activeDeadlineSeconds }}
       activeDeadlineSeconds: {{ . }}
       {{- end }}
-      {{- with $spec.jobTemplate.ttlSecondsAfterFinished }}
+      {{- with $jt.ttlSecondsAfterFinished }}
       ttlSecondsAfterFinished: {{ . }}
+      {{- end }}
+      {{- /* hasKey rather than `with`: `parallelism: 0` is a legal way to
+             suspend a Job and `with` would skip it, which is the same trap
+             `backoffLimit: 0` is guarded against a few lines up. */}}
+      {{- if hasKey $jt "parallelism" }}
+      parallelism: {{ $jt.parallelism }}
+      {{- end }}
+      {{- if hasKey $jt "completions" }}
+      completions: {{ $jt.completions }}
       {{- end }}
       template:
         metadata:
           labels:
             {{- include "universal-chart.selectorLabels" $ | nindent 12 }}
+            {{- with $jt.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $jt.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
         spec:
-          {{- include "universal-chart.jobPodSpec" (dict "Values" $.Values "Chart" $.Chart "Release" $.Release "job" (merge $spec.jobTemplate (dict "name" $name))) | nindent 10 }}
+          {{- include "universal-chart.jobPodSpec" (dict "Values" $.Values "Chart" $.Chart "Release" $.Release "job" (merge $jt (dict "name" $name))) | nindent 10 }}
 {{- end }}

@@ -5,8 +5,13 @@ kind: Deployment
 metadata:
   name: {{ include "universal-chart.fullname" . }}
   labels:
-    {{- include "universal-chart.labels" . | nindent 4 }}
-  {{- with .Values.commonAnnotations }}
+    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.labels) | nindent 4 }}
+  {{- /* The object's OWN annotations merged over the release-wide ones.
+         Rendering commonAnnotations alone dropped every annotation the raw
+         manifest carried on this object - a lost argocd.argoproj.io/sync-wave
+         reorders the whole deploy, and a lost prometheus.io/scrape stops
+         metrics collection, both silently. */}}
+  {{- with merge (.Values.commonAnnotations | default dict) (.Values.annotations | default dict) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -15,6 +20,21 @@ spec:
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  {{- /* Omitted when unset rather than defaulted to 600: rendering a number the
+         values file never declared would show up on every raw-vs-rendered diff
+         as an invented field, and Kubernetes applies the same 600 anyway. */}}
+  {{- with .Values.progressDeadlineSeconds }}
+  progressDeadlineSeconds: {{ . }}
+  {{- end }}
+  {{- /* Soak time after each pod reports Ready before the rollout continues.
+         The Kubernetes default is 0, so unlike progressDeadlineSeconds there is
+         no harmless default to fall back on: an explicit 10 that goes missing
+         means a rolling update advances the instant a pod reports Ready, and on
+         a gateway that is exactly the workload where a too-fast rollout drops
+         connections. Omitted when unset for the same reason as above. */}}
+  {{- with .Values.minReadySeconds }}
+  minReadySeconds: {{ . }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "universal-chart.selectorLabels" . | nindent 6 }}
