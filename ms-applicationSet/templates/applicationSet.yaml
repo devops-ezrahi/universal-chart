@@ -1,0 +1,104 @@
+{{- $ns := required "namespace is required" .Values.namespace -}}
+{{- $repo := required "originRepoURL is required" .Values.originRepoURL -}}
+{{- $branch := required "originBranch is required" .Values.originBranch -}}
+{{- $prefix := "" -}}
+{{- if .Values.originPath }}{{- $prefix = printf "%s/" .Values.originPath -}}{{- end -}}
+{{/*
+  One ApplicationSet for ONE namespace. Its git "files" generator enumerates
+  <namespace>/values/*.yaml in the values repo - that flat directory IS the list
+  of releases, so adding a microservice is adding a file, nothing else.
+
+  Every generated Application layers the SAME three value files, lowest -> highest:
+    <namespace>/defaults.yaml      namespace- identical across every microservice here
+    base/<file>                    app      - comprehensive, environment-agnostic, SHARED across namespaces
+    <namespace>/values/<file>      instance - image tag + literal env + this namespace's tweaks
+  The filename is the same in base/ and values/, which is what keeps the chain
+  self-consistent for a given release.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ $ns | quote }}
+  labels:
+    namespace: {{ $ns | quote }}
+    managed-by: ms-applicationSet
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: {{ $repo | quote }}
+        revision: {{ $branch | quote }}
+        files:
+          - path: '{{ $prefix }}{{ $ns }}/values/*.yaml'
+  template:
+    metadata:
+      name: '{{ printf "{{ .path.filename | trimSuffix \".yaml\" }}" }}-{{ $ns | splitList "-" | last }}'
+      labels:
+        namespace: {{ $ns | quote }}
+        managed-by: ms-applicationSet
+      annotations:
+        argocd.argoproj.io/sync-wave: "0"
+    spec:
+      project: {{ .Values.project | quote }}
+      destination:
+        server: {{ .Values.destinationServer | quote }}
+        namespace: {{ $ns | quote }}
+      sources:
+        - repoURL: {{ .Values.chartRepoURL | quote }}
+          targetRevision: {{ .Values.chartRevision | quote }}
+          path: {{ .Values.chartPath | quote }}
+          helm:
+            valueFiles:
+              - '$Values/{{ $prefix }}{{ $ns }}/defaults.yaml'
+              - '$Values/{{ $prefix }}base/{{ printf "{{ .path.filename }}" }}'
+              - '$Values/{{ $prefix }}{{ $ns }}/values/{{ printf "{{ .path.filename }}" }}'
+        - repoURL: {{ $repo | quote }}
+          targetRevision: {{ $branch | quote }}
+          ref: Values
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+      # OpenShift/Kubernetes admission mutates these on the LIVE object; Helm's
+      # desired manifest never sets them, so without this every Application
+      # flips OutOfSync -> Synced on each reconcile and selfHeal fights the
+      # cluster's own admission controllers. StatefulSet volumeClaimTemplates is
+      # immutable post-creation, so a diff there can never be applied at all.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jqPathExpressions:
+            - .spec.template.spec.securityContext.runAsUser
+            - .spec.template.spec.securityContext.runAsGroup
+            - .spec.template.spec.securityContext.fsGroup
+            - .spec.template.spec.securityContext.seLinuxOptions
+            - .spec.template.spec.containers[]?.securityContext.runAsUser
+            - .spec.template.spec.containers[]?.securityContext.capabilities
+        - group: apps
+          kind: StatefulSet
+          jqPathExpressions:
+            - .spec.template.spec.securityContext.runAsUser
+            - .spec.template.spec.securityContext.runAsGroup
+            - .spec.template.spec.securityContext.fsGroup
+            - .spec.template.spec.securityContext.seLinuxOptions
+            - .spec.template.spec.containers[]?.securityContext.runAsUser
+            - .spec.template.spec.containers[]?.securityContext.capabilities
+            - .spec.volumeClaimTemplates
+        - group: apps
+          kind: DaemonSet
+          jqPathExpressions:
+            - .spec.template.spec.securityContext.runAsUser
+            - .spec.template.spec.securityContext.runAsGroup
+            - .spec.template.spec.securityContext.fsGroup
+            - .spec.template.spec.securityContext.seLinuxOptions
+            - .spec.template.spec.containers[]?.securityContext.runAsUser
+            - .spec.template.spec.containers[]?.securityContext.capabilities
+        - group: ""
+          kind: ServiceAccount
+          jsonPointers:
+            - /secrets
+            - /imagePullSecrets

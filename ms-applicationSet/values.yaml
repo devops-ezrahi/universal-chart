@@ -1,0 +1,18 @@
+# The three required values are supplied per-namespace by the values repo's
+# root-applicationSet.yaml (helm parameters), not set here.
+namespace: ""          # REQUIRED - the namespace directory in the values repo == the k8s namespace
+originRepoURL: ""      # REQUIRED - the values (gitops) repo holding base/ and <namespace>/
+originBranch: ""       # REQUIRED - revision of that repo
+
+# Subpath inside originRepoURL where the values tree actually lives, for when it
+# is folded into a larger repo instead of being that repo's root. Empty (the
+# default) means the repo root IS the values tree.
+originPath: ""
+
+project: default
+destinationServer: https://kubernetes.default.svc
+
+# The Universal Chart itself - what each generated Application renders.
+chartRepoURL: https://github.com/devops-ezrahi/universal-chart.git
+chartRevision: main
+chartPath: "."

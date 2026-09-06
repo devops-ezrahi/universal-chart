@@ -51,6 +51,12 @@ universal-chart/
 ├── values.schema.json                # JSON Schema validation for values
 ├── COOKBOOK.md                       # Detailed recipes for every feature
 │
+├── ms-applicationSet/                # SEPARATE chart: one ArgoCD ApplicationSet
+│   ├── Chart.yaml                    # per namespace, fanning out over that
+│   ├── values.yaml                   # namespace's values/*.yaml in a gitops repo
+│   └── templates/                    # and deploying each with THIS chart.
+│       └── applicationSet.yaml       # See "Multi-namespace GitOps" below.
+│
 ├── templates/                        # Helm templates
 │   ├── _helpers.tpl                  # Name / label / checksum helpers
 │   ├── _pod-spec.tpl                 # Shared pod spec (DRY across workloads)
@@ -761,6 +767,53 @@ spec:
 ```
 
 See `examples/3-apps-usage.yaml` for a full ArgoCD ApplicationSet example that auto-generates one Application per environment directory.
+
+### Multi-namespace GitOps — the `ms-applicationSet` chart
+
+For the larger case — many microservices across many namespaces, in a values
+repo shaped like this:
+
+```
+<values repo>/
+  base/<release>.yaml            # comprehensive, environment-agnostic, shared across namespaces
+  <namespace>/
+    defaults.yaml                # what every release in this namespace has in common
+    values/<release>.yaml        # image tag + literal env + this namespace's tweaks
+  root-application.yaml          # the one object applied by hand
+  root-applicationSet.yaml       # one Application per namespace directory
+```
+
+`ms-applicationSet/` is a small standalone chart in this repo, deployed **once
+per namespace directory** by that repo's `root-applicationSet.yaml`. It renders
+one ArgoCD `ApplicationSet` whose git *files* generator globs
+`<namespace>/values/*.yaml` and creates one Application per match, each
+rendering this chart with three value files layered lowest → highest:
+
+```
+$Values/<namespace>/defaults.yaml
+$Values/base/{{ .path.filename }}
+$Values/<namespace>/values/{{ .path.filename }}
+```
+
+Adding a microservice is adding a file; adding a namespace is adding a
+directory. Neither needs a new manifest.
+
+```bash
+helm template appset ms-applicationSet \
+  --set namespace=payments-dev \
+  --set originRepoURL=ssh://git@example.com/gitops/values.git \
+  --set originBranch=main
+```
+
+`namespace`, `originRepoURL` and `originBranch` are required; `originPath`,
+`project`, `destinationServer`, `chartRepoURL`, `chartRevision` and `chartPath`
+have defaults in its `values.yaml`. The generated ApplicationSets carry
+`ignoreDifferences` for the pod-security fields OpenShift admission mutates on
+the live object, so Applications do not flip OutOfSync every reconcile.
+
+Values repos in this shape are produced by
+[gitops-factory](https://github.com/devops-ezrahi/gitops-factory), which
+converts raw per-namespace manifest dumps into exactly this layout.
 
 ---
 
