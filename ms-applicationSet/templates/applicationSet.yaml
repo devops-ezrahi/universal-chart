@@ -9,9 +9,10 @@
   of releases, so adding a microservice is adding a file, nothing else.
 
   Every generated Application layers the SAME three value files, lowest -> highest:
-    <namespace>/defaults.yaml      namespace- identical across every microservice here
-    base/<file>                    app      - comprehensive, environment-agnostic, SHARED across namespaces
-    <namespace>/values/<file>      instance - image tag + literal env + this namespace's tweaks
+    base/<file>                    app       - comprehensive, environment-agnostic, SHARED across namespaces
+    <namespace>/defaults.yaml      namespace - set once for every microservice here (a monorepo tag, an env label);
+                                               over base, so a namespace default reaches every release
+    <namespace>/values/<file>      instance  - this microservice's own tweaks in this namespace
   The filename is the same in base/ and values/, which is what keeps the chain
   self-consistent for a given release.
 */}}
@@ -50,8 +51,8 @@ spec:
           path: {{ .Values.chartPath | quote }}
           helm:
             valueFiles:
-              - '$Values/{{ $prefix }}{{ $ns }}/defaults.yaml'
               - '$Values/{{ $prefix }}base/{{ printf "{{ .path.filename }}" }}'
+              - '$Values/{{ $prefix }}{{ $ns }}/defaults.yaml'
               - '$Values/{{ $prefix }}{{ $ns }}/values/{{ printf "{{ .path.filename }}" }}'
         - repoURL: {{ $repo | quote }}
           targetRevision: {{ $branch | quote }}
