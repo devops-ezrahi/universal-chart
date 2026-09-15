@@ -1,0 +1,63 @@
+# Namespace 2 of 2. SAME microservice file name (api-gateway) as shop-web/, so
+# the converter groups both onto base/api-gateway.yaml. Its sidecar set differs
+# deliberately:
+#   - oauth-proxy   : ABSENT here, present in shop-web  (must not leak into this
+#                     namespace via the shared base file)
+#   - log-shipper   : present in BOTH, byte-identical   (safe to hoist to base)
+#   - rate-limiter  : ONLY here                          (must not be lost, and
+#                     must not leak into shop-web)
+#
+# If sidecars collide on the bare container name across the shared base, one of
+# these three disappears from a rendered pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: traefik
+          image: traefik:v3.1
+          args:
+            - --configFile=/etc/traefik/traefik.yml
+          ports:
+            - name: web
+              containerPort: 8000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/traefik
+        - name: log-shipper
+          image: fluent/fluent-bit:3.0
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc
+        # SIDECAR unique to this namespace.
+        - name: rate-limiter
+          image: envoyproxy/envoy:v1.31-latest
+          ports:
+            - name: ratelimit
+              containerPort: 8081
+      volumes:
+        - name: config
+          configMap:
+            name: api-gateway-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+data:
+  traefik.yml: |
+    entryPoints:
+      web:
+        address: ":8000"

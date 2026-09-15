@@ -1,0 +1,155 @@
+error: index of all unique errors extracted from the 52 screenshots in the error_new folder — a SECOND, LATER fidelity-triage session on the same Kubernetes-to-Helm converter, in which 1,314 errors were triaged down to roughly 5-6 real defects.
+
+SOURCE OF THE DATA
+52 JPEG screenshots dated 2026-08-18 in C:\Users\User\Documents\Dev0ps\New folder\error_new\.
+A VS Code terminal session (model: qwen3.6-27B, OpenCode 1.4.3) triaging a fidelity report.
+
+Project root visible on screen: C:\repos\rakia-argocd-new\universal\gitops-factory\
+  (the same workspace also appears as "bluetor-universal-argocd-new" and "devops-argocd-new";
+   a sibling copy "gitops-factory-portable" is open in other tabs)
+
+Key files referenced throughout:
+  convert_to_universal_chart.py
+    _fidelity_ignored_path()          line 2953   <- where all suppressions go
+    ports_list_to_map()               line 645
+    _item_name()                      line 3024
+    handle_main_container() (ports)   line 835
+    _fidelity_diff()                  line 3055
+    handle_cronjob()                  lines 1800-1804
+    handle_workload() (podLabels)     line 982
+  Universal-chart\templates\configmap.yaml     (data with toYaml)
+  Universal-chart\templates\_helpers.tpl       (port rendering helpers)
+  values\report\fidelity_report.txt            (1,313 ERROR lines)
+  values\report\fidelity_report_unix.txt
+  triage\                                      (per-category sanitized files)
+  output-showcase\ERRORS_ANALYSIS\             (the PREVIOUS analysis round, with tests)
+
+Scale: rakia-fac1 = 131 raw objects vs 162 rendered. Namespaces include rakia-fac1,
+rakia-monitor, rakia-tst, devops-mahan-dev/-prd/-tst, interconn, bluetorch.
+
+HOW THIS REPORT DIFFERS FROM THE PREVIOUS ROUND (ERRORS_ANALYSIS/)
+The earlier round catalogued raw defects. THIS round is a triage: it separates genuine
+defects from Kubernetes runtime-default noise, and produces a remediation ladder. Its
+headline claim:
+
+  "After suppressing all noise, ~5 real issues remain: 12 secret rename CHANGEDs,
+   4 UTF-8 corruptions, 2 volumeMounts orderings, 1 missing port."
+
+That claim is only true if the disputed items below are resolved the way the ladder assumes.
+
+THE REMEDIATION LADDER (verbatim, start 1,314 errors)
+  Suppress ArgoCD labels (92)                      -92   -> 1,222
+  Suppress creationTimestamp (151)                -151   -> 1,071
+  Suppress sessionAffinity None (199)             -199   ->   872
+  Suppress SA secrets (46)                         -46   ->   826
+  Suppress CronJob defaults (44)                   -44   ->   782
+  Suppress checksum annotations (~10)              -10   ->   772
+  Suppress volumeClaimTemplate runtime (17)        -17   ->   755
+  Suppress announce service defaults (62)          -62   ->   693
+  Fix custom labels on Routes (~613)              -613   ->    80   <- DISPUTED, see below
+  Fix grafana.ini colon bug (1)                     -1   ->    79
+  Fix secret/ConfigMap rename (12)                 -12   ->    67
+  Suppress navlogback whitespace (3)                -3   ->    64
+  Suppress ca-bundle differences (13)              -13   ->    51
+  Suppress remaining noise (6)                      -6   ->   ~45
+
+--- FOLDER INDEX, ORDERED BY WHAT ACTUALLY NEEDS DECIDING ---
+
+TIER 0 - RESOLVE THESE BEFORE ANY OTHER WORK
+  Summary_Vs_Report_Data_Mismatch        The working summary and fidelity_report.txt describe
+                                         DIFFERENT converter runs. Eight headline error types in
+                                         the summary appear ZERO times in the report, including its
+                                         own #1 HIGH and #1 MEDIUM. Every count in every other
+                                         folder is unreliable until this is settled.
+  Carryover_Defects_Still_Present        Nine defects from the previous round are still here, and
+                                         three got WORSE — including persistentVolumeClaimRetention
+                                         Policy going 8 -> 23. That is the irreversible data-loss
+                                         defect. Verify before any migration.
+  Route_Governance_Labels_Lost           The largest single item (613-705 errors) and the report
+                                         gives THREE incompatible instructions for it: fix it,
+                                         suppress it, and "not suppressed by design". This one
+                                         decision moves the final count between ~45 and ~700.
+
+TIER 1 - CONFIRMED REAL DEFECTS
+  UTF8_Encoding_Corruption_In_ConfigMap_Data   Ľuboš -> Ä¾uboÅ¡, em-dash -> â€". Textbook mojibake;
+                                               almost certainly a missing encoding="utf-8" on a
+                                               Windows open() call. Real data corruption, ships to
+                                               the cluster. 4 errors.
+  CronJob_Pod_Template_Labels_Lost             30 errors. handle_cronjob never captures podLabels
+                                               and the template renders only 2 selector labels.
+                                               Flagged P1 with a sidecar-injection risk.
+  Missing_Container_Port_9125                  1 error, root cause explicitly UNKNOWN. An unnamed
+                                               port vanishing through ports_list_to_map/mapToList.
+                                               This is an investigation, not a known fix.
+  Deployment_MinReadySeconds_Lost              The deep-dive says "Should be preserved"; the bulk
+                                               suppression list swept it up anyway. The deep-dive
+                                               is right — K8s default is 0, not 10.
+  StatefulSet_VolumeClaimTemplate_Labels_Lost  PVCs created with no governance labels. Breaks quota
+                                               and cost allocation. Split from the benign VCT
+                                               runtime-field suppression.
+  Service_AllocateLoadBalancerNodePorts_Lost   62 benign (Redis announce) + 3 real LoadBalancers.
+                                               Do not suppress the whole path.
+  Helm_Naming_Prefix_Collisions                ~10-15. Doubled prefixes (name-name-name) indicate an
+                                               idempotence bug in the naming logic.
+  Argo_Events_Sensor_Double_Prefix             Same naming bug on Sensors. A mangled Sensor
+                                               reference means the workflow silently never fires.
+
+TIER 2 - OPEN DECISIONS, NOT YET BUGS
+  Secret_ConfigMap_Rename_Reference_Inconsistency  12 CHANGED. Listed as a "real issue" in one place
+                                                   and "internally consistent / benign" in another.
+                                                   Decide by checking reference resolution.
+  VolumeMounts_Dict_Key_Ordering_Drift             2. Suppress or normalize. Fixing the checker's
+                                                   dict comparison is the better answer.
+  Extra_And_Relocated_Objects                      16 extra + 15 relocated + 90 Routes/Services
+                                                   rendered by no release. One table says 0, another
+                                                   says 90. Reconcile.
+  ExternalSecret_ZeroWidth_U200C_Source_Fix        Fix at source, in the converter, or both. Conflicts
+                                                   with the standing "do not modify raw manifests" rule.
+  CronJob_Parallelism_Lost                         P8, lowest priority in the report. Optional.
+
+TIER 3 - BENIGN, VERIFY THE STATED CONDITION THEN SUPPRESS
+  K8s_Runtime_Defaults_Benign_Suppress   The master suppression task: 930+ errors. Highest leverage
+                                         item in the analysis. THREE entries in its list do not
+                                         belong and must be pulled out first.
+  CA_Bundle_Certificate_Line_Reflow      Same certs, different YAML wrapping. But verify the final
+                                         certificate is not being clipped — that would be a TLS outage.
+  StatefulSet_Checksum_Annotations_Lost  Benign only if something regenerates them. If the chart is
+                                         meant to and does not, config changes stop triggering restarts.
+  EnableServiceLinks_Lost                Benign, though the report's stated reason is factually wrong
+                                         (the K8s default is true, not false).
+  ShareProcessNamespace_Lost             Benign. Value equals the default.
+  Pod_Template_Metadata_Name_Namespace_Lost  Benign. K8s ignores pod-template name entirely.
+  Thanos_OwnerReferences_Lost            Benign only if the Thanos operator runs in the target.
+  Number_Serialization_Drift             1e+09 vs 1000000000. Check for float/int typing on
+                                         integer-valued K8s fields.
+  Grafana_Ini_Changed_False_Positive     Called both a false positive and a "colon bug". Diff the
+                                         bytes rather than trusting "visually identical".
+  Sanitizer_Drops_Unparsed_Lines         3 lines invisible in every shareable artifact. The omission
+                                         is correct by design; the blind spot is the defect.
+
+TOTAL: 26 unique errors consolidated from ~1,314 report lines, 11 sanitized categories,
+9 per-label triage files, 3 severity tables, 2 remediation ladders and 1 cross-check table.
+
+DEDUPLICATION NOTES
+  - The nine per-label triage files (error_field_lost_team / _operational / _operationalpurpose /
+    _critical / _environment / _io_instance / _io_enabled / _io_runtime_version / _io_component)
+    are ONE defect split by label name by the sanitizer. Each file's occurrences divide into
+    resource-level (Routes -> Route_Governance_Labels_Lost) and CronJob pod-template-level
+    (-> CronJob_Pod_Template_Labels_Lost).
+  - Report issues #2 (UTF-8) and #3 (em-dash) are one encoding bug; the report itself merges them
+    into a single row of count 4.
+  - Counts differ between passes throughout (per-object vs per-occurrence, and across runs). BOTH
+    numbers are preserved in each file rather than picking one. See Summary_Vs_Report_Data_Mismatch.
+
+RELATIONSHIP TO THE PREVIOUS ANALYSIS
+  The earlier round lives at ..\ERRORS_ANALYSIS\ (34 folders) and, in the repo, at
+  C:\repos\homelab\universal\gitops-factory\output-showcase\ERRORS_ANALYSIS\ where it has already
+  been worked through — every folder there has a STATUS.md and a test\ directory, plus a recovered
+  _FOUND_Global_Defaults_Subtracted_But_Never_Written folder.
+  Read that round's files before starting anything here. Nine of its defects are confirmed still
+  present (see Carryover_Defects_Still_Present) and its root-cause analysis is more detailed.
+
+  NOTE ON PATHS: the previous round's error.txt files cite C:\repos\metroair-argocdnew. This round
+  cites C:\repos\rakia-argocd-new. The copy actually present on this machine is
+  C:\repos\homelab\universal\gitops-factory. All three are the same project under different
+  names/anonymizations. Locate code by FUNCTION NAME, never by path or line number.

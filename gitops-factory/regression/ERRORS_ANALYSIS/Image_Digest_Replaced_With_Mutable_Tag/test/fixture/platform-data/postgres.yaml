@@ -1,0 +1,44 @@
+# Derived from namespaces-showcase/platform-data/postgres.yaml. The one change
+# that reproduces the defect: every image is pinned by IMMUTABLE DIGEST instead
+# of a tag, which is what error.txt reports for data-sender-1 and
+# interconn-opr-postgres.
+#
+# Unfixed, split_image() throws the digest away and returns an empty tag, so the
+# chart's image helper falls through to `repository:Chart.AppVersion` and renders
+# postgres:2.0.0 -- a completely different image from the one that was pinned.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      initContainers:
+        # Init containers are raw pass-through specs, so their image string is
+        # carried whole. Included to prove the digest survives there too.
+        - name: fix-permissions
+          image: busybox@sha256:9ae97d36d26566ff84e8893c64a6dc4fe8ca6d1144bf5b87b2b85a32def253c7
+          command: ["sh", "-c", "chown -R 999:999 /var/lib/postgresql/data"]
+      containers:
+        # THE FIELD UNDER TEST: main container pinned by digest.
+        - name: postgres
+          image: postgres@sha256:86ee6a2b6b1b1c8a1e2d0dcbbf0dcf5a3b7c9d4e5f60718293a4b5c6d7e8f900
+          ports:
+            - name: postgres
+              containerPort: 5432
+        # A sidecar, also pinned by digest.
+        - name: exporter
+          image: quay.io/prometheuscommunity/postgres-exporter@sha256:1122334455667788990011223344556677889900112233445566778899001122
+          ports:
+            - name: metrics
+              containerPort: 9187

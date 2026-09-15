@@ -1,0 +1,85 @@
+error: The collision resolver renames ConfigMaps/Secrets that have identical names AND identical content instead of sharing them, producing multiple duplicate copies of what was a single cluster object.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"ConfigMap Rename - You Were Right, It IS a Real Collision
+Three separate microservice releases share the same ConfigMap name zookeeper-config:
+Release | Workload | ConfigMap name in raw
+zookeeper | StatefulSet | zookeeper-config
+zookeeper-zoonav | Deployment | zookeeper-config
+zookeeper-zbs | Deployment | zookeeper-config
+
+The data is identical (same MD5 hash) - it's the same ZK config. But they are deployed as three separate releases in the same namespace. Without the rename, all three releases would try to create a ConfigMap with the same name and the last one to apply would overwrite the others.
+
+Why the converter renamed it: The collision resolver (convert_to_universal_chart.py:399) picks the first claimant as the "owner" and renames the rest to {owner}-{name}. So one release keeps zookeeper-config, and the others become zookeeper-zoonav-zookeeper-config, zookeeper-zbs-zookeeper-config.
+
+The volume references are updated consistently, so within each release:
+- zookeeper-zoonav release creates ConfigMap zookeeper-zoonav-zookeeper-config + Deployment volume ref zookeeper-zoonav-zookeeper-config
+- Both match, so it works
+
+BUT: In the original OpenShift cluster, there was only ONE ConfigMap named zookeeper-config shared by all workloads. The converter split it into three separate ConfigMaps. This means:
+- Original: 1 ConfigMap, 3 workloads read from it
+- Converted: 3 ConfigMaps (if content was identical, could be shared again but isn't)"
+
+"ConfigMap zookeeper-config Sharing Bug - Analysis
+What happened:
+- zookeeper-zbs got owner of zookeeper-config (processed first alphabetically)
+- zookeeper-zoonav renamed its copy -> zookeeper-zoonav-zookeeper-config
+- zookeeper (the StatefulSet) renamed its copy -> zookeeper-zookeeper-config
+Result in the namespace: 3 ConfigMaps with identical content instead of 1 shared ConfigMap.
+Why the converter missed sharing it: Only ConfigMaps that appear in shared.yaml get promoted to the shared release. zookeeper-config is NOT in shared.yaml - it only appears in the 3 zookeeper-specific files. So the converter treats them as independent collisions rather than shared resources.
+Two problems:
+1. Wrong: 3 redundant ConfigMaps instead of 1
+2. Volume references broken: zookeeper release's volume points to zookeeper-zookeeper-config, but that ConfigMap may be rendered by the wrong release or not at all (depends on which release actually creates it)"
+
+"The claim() method at line 384-405 only returns "reference_shared" when the existing owner is "_shared" (i.e., declared in shared.yaml). When two regular microservices collide, it doesn't check whether the content is identical - it just renames the second one. The identical content note in the warning is informational only, not a shared reference.
+The logic is:
+1. shared.yaml declares it first -> owner = "_shared" -> other microservices get "reference_shared" (shared)
+2. Microservice A declares it first -> owner = "A" -> Microservice B gets "renamed" even if identical
+The bug: When content is identical, the second microservice should get the same treatment as reference_shared - do not copy and reference the first owner's version. Instead it creates a duplicate with a new name.
+Want me to plan a fix that checks existing["hash"] == content_h and triggers "reference_shared" behavior in that case?"
+
+"How should the converter handle identical ConfigMaps/Secrets across microservices in the same namespace? HOW IT HANDLES NOW
+1. First microservice to claim the name keeps the original name - action "own"
+2. Second (and later) microservices that claim the same name get renamed - action "renamed" to <owner>-<name>
+3. All volume/env references in the renamed microservice are updated to point to <owner>-<name>
+4. The original name stays unchanged for the first winner
+The result is:
+- Two separate Secret objects in the rendered output (one original, one prefixed)
+- Both are consistent internally (references point to the right name)
+- But this creates unnecessary duplicates - two Secret objects instead of one shared reference
+This is by design. The converter doesn't auto-share because it can't know if the original cluster actually had a shared Secret or two separate ones that happened to have identical content. It takes the safe path: rename them so both microservices have their own independent copy.
+The "reference_shared" behavior only triggers when the resource is in shared.yaml (line 385: if existing["owner"] == "_shared"), meaning the operator intentionally declared it as shared."
+
+CONFLICT WARNING LINES (verbatim from values/report/conflicts_and_warnings.txt):
+"[rakia-fac2/profiles-manager-yellow-b2b-fac2] Secret/profiles-manager-rsa-key: name collision between microservices 'profiles-manager-black-b2b-fac2' and 'profiles-manager-yellow-b2b-fac2' in namespace 'rakia-fac2' (identical content) -> renamed 'profiles-manager-yellow-b2b-fac2' copy to 'profiles-manager-yellow-b2b-fac2-profiles-manager-rsa-key'"
+"[rakia-monitor/rakia-zk-zoonav] ConfigMap/rakia-zk-config: name collision between microservices 'rakia-zk-zbs' and 'rakia-zk-zoonav' in namespace 'rakia-monitor' (identical content) -> renamed 'rakia-zk-zoonav' copy to 'rakia-zk-zoonav-rakia-zk-config'"
+"[rakia-monitor/rakia-zk] ConfigMap/rakia-zk-config: name collision between microservices 'rakia-zk-zbs' and 'rakia-zk' in namespace 'rakia-monitor' (identical content) -> renamed 'rakia-zk' copy to 'rakia-zk-rakia-zk-config'"
+"[rakia-tst/profiles-manager-yellow-b2b] Secret/profiles-manager-rsa-key: name collision between microservices 'profiles-manager-black-b2b' and 'profiles-manager-yellow-b2b' in namespace 'rakia-tst' (identical content) -> renamed 'profiles-manager-yellow-b2b' copy to 'profiles-manager-yellow-b2b-profiles-manager-rsa-key'"
+"[rakia-tst/rakia-redis-eight-testing-redis] Secret/rakia-redis-eight-testing-auth: name collision between microservices 'midasson-api-yellow-b2c' and 'rakia-redis-eight-testing-redis' in namespace 'rakia-tst' (identical content) -> renamed 'rakia-redis-eight-testing-redis' copy to 'rakia-redis-eight-testing-redis-rakia-redis-eight-testing-auth'"
+
+SECRETS RENAMED TABLE (INFO lines - intentional):
+"profiles-manager-rsa-key | from profiles-manager-yellow-b2b-108.yaml | rendered as profiles-manager-yellow-b2b-108-profiles-manager-rsa-key | release profiles-manager-yellow-b2b-108 | Volume Ref Also Fixed? YES"
+"profiles-manager-rsa-key | from profiles-manager-yellow-b2b-fac1.yaml | rendered as profiles-manager-yellow-b2b-fac1-profiles-manager-rsa-key | release profiles-manager-yellow-b2b-fac1 | YES"
+"profiles-manager-rsa-key | from profiles-manager-yellow-b2b-fac2.yaml | rendered as profiles-manager-yellow-b2b-fac2-profiles-manager-rsa-key | release profiles-manager-yellow-b2b-fac2 | YES"
+"profiles-manager-rsa-key | from profiles-manager-yellow-b2b-tst.yaml | rendered as profiles-manager-yellow-b2b-profiles-manager-rsa-key | release profiles-manager-yellow-b2b | YES"
+"rakia-redis-eight-testing-auth | from rakia-redis-eight-testing-redis.yaml | rendered as rakia-redis-eight-testing-redis-rakia-redis-eight-testing-auth | release rakia-redis-eight-testing-redis | YES"
+
+THE UNDERLYING SOURCE-DATA AMBIGUITY (verbatim):
+"In the cluster (reality):
+- 1 Secret profiles-manager-rsa-key exists in rakia-108
+- 2 Deployments both reference it
+In the source files (what we have):
+- profiles-manager-black-b2b-108.yaml contains the Deployment + the Secret copy
+- profiles-manager-yellow-b2b-108.yaml contains the Deployment + the Secret copy
+The converter sees two independent declarations of profiles-manager-rsa-key and treats them as [separate] owners. But they shouldn't be a collision at all - they're the SAME cluster object that was duplicated [during export].
+The real question is: should the converter recognize that identical-name + identical-content = [shared], [or should we] manually move these to shared.yaml before running?
+Right now the converter has no way to distinguish 'this is the same cluster object duplicated [during export]' [from] 'two microservices genuinely want their own copy with the same name.'"
+
+ADDITIONAL CONTEXT / CLUES:
+- Locations: convert_to_universal_chart.py claim() method lines 384-405, the "_shared" check at line 385, the rename at line 399.
+- Classified in the report's Discoveries as "6. ConfigMap Name Collisions (False Positive within release, but structural issue)" — the renames are internally consistent, so nothing breaks at deploy time, but the cluster ends up with N duplicate objects instead of 1.
+- TWO CANDIDATE FIXES ARE ON THE TABLE and the choice is a product decision, not a mechanical one:
+  A. Auto-share: in claim(), when existing["hash"] == content_h, return "reference_shared" instead of "renamed".
+  B. Operator-driven: manually move the shared ConfigMaps/Secrets into shared.yaml before running the converter.
+- The report warns the collision resolver also produced a residual risk: "zookeeper release's volume points to zookeeper-zookeeper-config, but that ConfigMap may be rendered by the wrong release or not at all" — this must be verified with `helm template` before choosing a fix.
+- Processing order determines the winner and is alphabetical-ish/positional (rakia-zk at pos 24, rakia-zk-zbs at pos 25, rakia-zk-zoonav at pos 26), which makes the outcome unstable across runs if files are added or renamed.

@@ -1,0 +1,41 @@
+error: 16 objects are rendered with no raw source, 15 are relocated to a different release, and 90 Routes/Services are rendered by no release at all — object-level identity errors, largely from collision renames and the shared release.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+SANITIZED FIDELITY SUMMARY CATEGORY COUNTS:
+"CATEGORIES:
+ - extra_object   16 occurrence(s)
+ - relocated      15 occurrence(s)"
+
+TRIAGE CATEGORY FILE (error_other_info.txt):
+"ERROR CATEGORY: Other Info | TOTAL OCCURRENCES: 25 | NAMESPACES AFFECTED: 4
+ AFFECTED RESOURCES:
+ - ConfigMap: [configmap-alpha-717], [configmap-beta-588], [configmap-epsilon-661], [configmap-eta-313], [configmap-gamma-756]
+ - Secret: [secret-alpha-132], [secret-gamma-342], [secret-zeta-570]
+ - Service: [service-alpha-526]
+ - ServiceAccount: [serviceaccount-alpha-678], [serviceaccount-iota-527]
+ EXAMPLE DIFF (Sanitized):
+   rendered as 'dynamic-performance-test-acc-roles-blue' by release 'deployment-delta-441' (expected — collision rename or th[e shared release])"
+
+CROSS-CHECK TABLE ROW:
+"Route/Service rendered by NO release | summary 90 | report 90 | Exact"
+
+OBJECT-COUNT TABLE (before/after comparison between the old and new converter):
+"Objects rendered by nothing | 0 | 6 | -6
+ Objects w/ no raw source     | 0 | 6 | -6
+
+Massive improvement. The fixes between old and new resolved ~87% of lost fields and all missing/ghost objects."
+
+NAMESPACE HEADER LINES:
+"=== rakia-fac1 — 131 raw objects vs 162 rendered ==="
+
+ADDITIONAL CONTEXT / CLUES:
+- THE REPORT CONTAINS TWO IRRECONCILABLE READINGS OF THIS, and it is the most consequential contradiction in the whole dataset after the Route labels question:
+  * One table shows "Objects rendered by nothing: 0" and "Objects w/ no raw source: 0", declaring "all missing/ghost objects" resolved.
+  * The cross-check table shows "Route/Service rendered by NO release | 90 | 90 | Exact" — an EXACT match between summary and report, meaning 90 objects are still orphaned.
+  A count of 0 and a count of 90 for the same phenomenon cannot both describe the current run. Determine which run each belongs to (see Summary_Vs_Report_Data_Mismatch) before believing either.
+- WHY 90 ORPHANED ROUTES/SERVICES WOULD BE SERIOUS: an object rendered by no release is a raw resource that the chart does not produce. After migration it is unmanaged — ArgoCD will not sync it, and if pruning is ever enabled it gets deleted. 90 Services and Routes disappearing is a total loss of ingress for whatever they front.
+- THE 16 EXTRA + 15 RELOCATED ARE PROBABLY BENIGN, and the report says so inline: "(expected — collision rename or the shared release)". An object that moved into the shared release, or that was renamed by the collision resolver, legitimately appears to have "no raw source" under its new name while its old name appears to be "rendered by nothing". These are two halves of one rename, double-counted.
+- THE TEST THAT SEPARATES THEM: for each object rendered by nothing, search the rendered output for an object of the same KIND with matching content under a different name. If found, it is a rename and benign. If not found, it is genuinely lost and is a P0.
+- The namespace header (131 raw vs 162 rendered) shows the chart producing 31 MORE objects than the source — consistent with renames producing both halves, but also consistent with genuine duplication. Reconcile the object counts per namespace.
+- Affected kinds per the triage file: ConfigMap (5+), Secret (3), Service (1), ServiceAccount (2), across 4 namespaces, plus the 90 Routes/Services from the cross-check table.
+- Prior context: this is the same defect pair documented in the previous round at ERRORS_ANALYSIS/Missing_Objects_Not_Rendered_By_Any_Release and .../Extra_Objects_Rendered_With_No_Raw_Source, where the counts were ~25 and ~28. If they are now 90, the situation got worse; if they are now 0, it was fixed. Establish which.

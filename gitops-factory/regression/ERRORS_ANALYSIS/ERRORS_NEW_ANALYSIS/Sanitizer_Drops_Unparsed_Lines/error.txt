@@ -1,0 +1,34 @@
+error: The sanitizer silently omits lines it cannot parse — 3 unparsed lines are excluded entirely from the shareable summary rather than shown.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+SANITIZED FIDELITY SUMMARY (index.txt), verbatim:
+"SANITIZED FIDELITY SUMMARY
+==========================================
+records parsed:   117
+lines unparsed:   3
+categories:       11
+
+CATEGORIES:
+ - extra_object                  16 occurrence(s)
+ - relocated                     15 occurrence(s)
+ - field_lost_critical           14 occurrence(s)
+ - field_lost_environment        14 occurrence(s)
+ - field_lost_operational        14 occurrence(s)
+ - field_lost_operationalpurpose 14 occurrence(s)
+ - field_lost_team               14 occurrence(s)
+ - field_lost_io_instance        10 occurrence(s)
+ - field_changed_crt              4 occurrence(s)
+ - field_lost_io_component        1 occurrence(s)
+ - field_lost_io_runtime_version  1 occurrence(s)
+
+WARNING: some lines could not be parsed and are NOT summarized
+         above. They are omitted entirely rather than shown,
+         because an unparsed line cannot be safely sanitized."
+
+ADDITIONAL CONTEXT / CLUES:
+- THE BEHAVIOUR IS CORRECT BY DESIGN AND SHOULD NOT BE "FIXED" THE OBVIOUS WAY. The sanitizer's contract, stated in its own docstring, is that a leak is a hard failure: "The writer re-scans its own output and REFUSES to write a file that still contains a real identifier — a leak is a hard failure, never a warning." An unparsed line cannot be anonymized reliably, so omitting it is the safe choice. Do not make it emit unparsed lines into shareable output.
+- THE ACTUAL DEFECT IS THE BLIND SPOT, not the omission. 3 lines out of 120 are invisible in every shareable artifact. The sanitizer is explicit and honest about this ("NOTHING IS SILENTLY DROPPED... a parser that quietly skipped 400 lines is visible rather than reassuring") — the count is surfaced precisely so someone acts on it. Nobody has.
+- WHY IT MATTERS DISPROPORTIONATELY: unparsed lines are, by definition, the ones with a shape the parser did not anticipate. Novel error formats are more likely to be genuinely new problems than the 117 that fit known patterns. The 3 lines are the least likely to be routine noise.
+- ACTION: read the 3 unparsed lines directly from the INTERNAL report (values/report/fidelity_report.txt — never the shareable copy), determine why they failed to parse, and either extend the parser to cover their shape or confirm they are truly uninteresting. This is a 10-minute task that closes the only unknown in the dataset.
+- Scale check: 117 records parsed, 3 unparsed, 11 categories — this index summarizes a SUBSET, not the full 1,313-line report. Confirm which run and which namespace tree it covers before comparing its counts against anything else (see Summary_Vs_Report_Data_Mismatch).
+- Files: sanitize_fidelity_report.py, its test test_sanitize_fidelity_report.py, and the generated triage/ and report/shareable/ directories.

@@ -1,0 +1,35 @@
+error: 36 raw objects (20 Routes, 15 Services, 1 Deployment, 1 PVC) are rendered by no Helm release at all — they will be left orphaned/unmanaged after migration.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"Critical: MISSING_OBJECT (36 errors)
+What: Raw manifests have objects that the chart doesn't render at all.
+Kind | Count | Example
+Route | 20 | Route/tyk-gavish-next, Route/observability-jaeger, etc.
+Service | 15 | Service/redis-exp-vip-keepalived-clone, Service/redis-with-nodeport, etc.
+Deployment | 1 | prometheus-thanos-...store (the >53 char release, skipped)
+PVC | 1 | Associated with skipped release above
+
+Root causes:
+- Raw manifests define additional Routes/Services that are sidecars or secondary endpoints not captured in the chart's values configuration
+- 1 Deployment + 1 PVC from the skipped long-named release"
+
+HIGH SEVERITY TABLE ROW:
+"5 | Objects rendered by NO release | Count ~25 (16 routes + services) | Why: Raw resources not managed by any Helm chart -> will be left orphaned/unmanaged after migration | Example: Route/control-station-client-route, Service/grafana-service, Service/zookeeper-client"
+
+"P0: Services/Routes Not Rendered (33 errors)
+Cause: The raw manifests include Service, Route, ConfigMap, and Secret resources defined in the same YAML file. But the converter only extracts Deployment/StatefulSet/CronJob specs into the chart. The related Service/Route resources are either:
+- Not extracted at all, OR
+- Extracted separately but with a different name than the chart's service template generates
+Example: zookeeper-zbs raw has a Service named zookeeper-zbs, but the chart template creates a Service named {release}-zookeeper-zbs. The fidelity checker can't find the original service name.
+Impact: Services are critical for networking. If names don't match, other pods can't reach these deployments."
+
+FIDELITY REPORT LEGEND (for interpreting these lines):
+"ERROR  an object rendered by no release at all, an object with no raw source, or a field the conversion LOST or CHANGED."
+
+ADDITIONAL CONTEXT / CLUES:
+- Two distinct sub-causes are bundled under this count and need different fixes:
+  1. Secondary Routes/Services (sidecar endpoints, nodeport/vip variants) that the converter simply never extracts.
+  2. One release whose name exceeds 53 characters (prometheus-thanos-...store) that was SKIPPED entirely, taking its Deployment and PVC with it — the 53-char limit is Helm's release-name limit and needs an explicit truncation/override strategy.
+- The counts reported differ by pass: "~25 (16 routes + services)" in the severity table, "33 errors" in the P0 section, "36 errors" in the MISSING_OBJECT extraction. All refer to the same defect.
+- This defect is the mirror image of Extra_Objects_Rendered_With_No_Raw_Source — the report explicitly notes the two "collide".
+- Source files: values/report/fidelity_report.txt, values/report/conflicts_and_warnings.txt.

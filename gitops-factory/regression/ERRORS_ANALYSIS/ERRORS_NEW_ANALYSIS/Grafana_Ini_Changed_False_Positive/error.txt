@@ -1,0 +1,20 @@
+error: data.grafana.ini is reported as CHANGED although raw and rendered text are visually identical — 1 error, classified as a likely false positive and already disproved by an existing test.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"6. grafana.ini - 1 CHANGED error (likely false positive): Raw and render text are visually identical. Existing test suite proves YAML pipeline preserves whitespace byte-exactly."
+
+REMEDIATION TABLE ROW:
+"Fix grafana.ini colon bug (1) | -1 | 79 remaining"
+
+SUPPRESSION LIST ENTRY:
+"...VCT labels (1), checksum annotations (14), Jaeger C[ronJob] annotations/labels (4), grafana.ini falses positive (1)"
+
+CROSS-REFERENCED EXISTING TEST:
+"...\output-showcase\ERRORS_ANALYSIS\Grafana_ConfigMap_Trailing_Newline\test\test_blob_fidelity.py — proves YAML pipeline prese[rves whitespace byte-exactly]"
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: false positive. The correct action is to suppress it in the fidelity checker, not to change the converter or the chart.
+- NOTE THE INTERNAL INCONSISTENCY IN THE SOURCE: the remediation table calls this "Fix grafana.ini colon bug (1)" — implying a real parsing bug involving a colon — while the issue list calls it a "likely false positive" whose text is "visually identical". Those are different claims. "Visually identical" is also a weak standard; a colon-related bug would produce a diff that is invisible to the eye but real to a YAML parser (for example key: value being re-emitted as "key: value" quoted, or an unquoted value containing a colon being re-parsed as a nested mapping).
+- ACTION FOR THE NEXT AGENT: do not accept "visually identical" — diff the two byte strings directly and print repr() of both. If they are byte-identical, the checker has a comparison bug worth fixing generally. If they differ by quoting or structure around a colon, this is a REAL bug in how ConfigMap data is re-emitted and the "colon bug" label is the accurate one.
+- The previous analysis round covered the adjacent grafana.ini trailing-newline issue (ERRORS_ANALYSIS/Grafana_ConfigMap_Trailing_Newline) and produced test_blob_fidelity.py, which the report cites as proof the pipeline preserves whitespace. That test proves whitespace is safe; it does NOT prove colon/quoting handling is safe. Extend it rather than assuming it already covers this.
+- Affected: the Grafana ConfigMap, key grafana.ini.

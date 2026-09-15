@@ -1,0 +1,28 @@
+error: CA bundle certificates are reported as CHANGED due to a three-stage YAML serialization mismatch — same certificate, different line wrapping and trailing newline handling — 4-13 errors.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"Category 1: CHANGED CA Bundle Certificates (4 errors)
+
+Affected objects:
+ - ConfigMap/env-cas-image-syncer (devops-mahan-dev)
+ - ConfigMap/vault-ca (devops-mahan-dev, -prd, -tst) — 3 instances
+
+Root cause: Three-stage YAML serialization mismatch. Raw manifests store PEM content as literal block scalars (|). PyYAML's safe_dump serializes as escaped strings. Helm's toYaml (Go yaml.v3) re-emits with its own block scalar rules. The trailing newline between certificates (\n\n# ACCVRAIZ1\n) [is lost] representation through the pipeline, causing raw != rendered at the Python string level. The fidelity checker uses yaml.safe_load_all on both raw an[d rendered] then compares ==. Due to differences in how Go toYaml handles trailing newlines in block scalars vs PyYAML's | (clip mode), trailing \n after the fi[nal] CERTIFICATE----- gets clipped."
+
+SUMMARY TABLE ROW:
+"ca-bundle.crt encoding | 13 | Suppress data.ca-bundle.crt in fidelity check"
+
+REMEDIATION TABLE ROW:
+"Suppress ca-bundle differences (13 — same certs, Helm encoding) | -13 | 51 remaining"
+
+BENIGN LIST ENTRY:
+"- CA bundle line reflow (7 instances) — Same certificate, different YAML line wrapping."
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: benign. The report is explicit and consistent across three separate places that the certificates themselves are byte-identical — only the YAML block-scalar encoding differs. Recommended action is suppression in the fidelity checker, not a converter change.
+- THE ROOT CAUSE IS WORTH UNDERSTANDING BEYOND THIS ONE FIELD, because it will recur on every large text blob: the pipeline crosses two YAML implementations with different block-scalar semantics — PyYAML (safe_dump, clip mode "|") on the way in, Go yaml.v3 (Helm's toYaml) on the way out. Trailing newlines survive one and not the other. Any future multi-line ConfigMap value will hit this.
+- BEFORE SUPPRESSING, VERIFY THE CERTIFICATES ARE ACTUALLY IDENTICAL rather than trusting the label. Extract data.ca-bundle.crt from raw and from helm template output, strip whitespace, and compare the parsed PEM blocks — count certificates and compare fingerprints. A dropped or truncated certificate in a CA bundle is a TLS outage, and the failure mode looks exactly like a whitespace diff until it does not.
+- SPECIFIC RISK CALLED OUT BY THE TEXT ITSELF: "trailing \n after the fi[nal] CERTIFICATE----- gets clipped". Some TLS libraries require a trailing newline after the final END CERTIFICATE line to parse the last certificate in a bundle. If the clip is real rather than cosmetic, the LAST certificate in every affected bundle may be silently unusable. Test this specifically — it is the one way this benign-looking item becomes a production incident.
+- Count discrepancy across passes: 4 (category breakdown), 7 (benign list), 13 (summary and remediation tables). Same defect, different scopes — the 13 likely counts all clusters.
+- Affected: ConfigMap/env-cas-image-syncer (devops-mahan-dev), ConfigMap/vault-ca (devops-mahan-dev, -prd, -tst).
+- Fix location if suppressing: _fidelity_ignored_path() at convert_to_universal_chart.py:2953, adding data.ca-bundle.crt.

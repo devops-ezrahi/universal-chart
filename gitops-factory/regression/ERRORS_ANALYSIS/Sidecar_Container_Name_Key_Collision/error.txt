@@ -1,0 +1,21 @@
+error: Sidecar/main containers are stored in a map keyed by base container name, so containers from different microservices sharing a base name overwrite each other and disappear from the rendered output.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"12. Deployment containers<name>: present in raw, absent from render
+What happens: Sidecar/main containers listed in raw Deployment (e.g., envoy, envoy-agent, juseppelad) are missing from rendered output.
+Why: The handle_workload function at lines 761-766 captures sidecars and stores them in ctx.values["containers"][container_name]. But when multiple microservices share the same base name (e.g., juseppelad-2-441 and juseppelad-2-611 both store into containers["juseppelad"]), the second overwrites the first. The values has only the last one written. The chart then only renders that one."
+
+RELATED CODE FROM THE SAME REPORT:
+"v.setdefault("sidecars", {})[extra["name"]] = entry"
+"convert_to_universal_chart.py:760-768 -> Container loop that splits main vs sidecars"
+"convert_to_universal_chart.py:528 -> named_list_to_map_split_image() - strips name from sidecars/initContainers"
+
+BOTTOM LINE / TOP PRIORITY FIX (from the report):
+"1. Multi-container support - The chart template only renders the main container. Sidecars (oauth-proxy, topic-operator, grafana, kafbat, jaeger-query, prometheus, redis, sentinel, kafka-exporter) are completely missing. This is the biggest functional gap."
+
+ADDITIONAL CONTEXT / CLUES:
+- Locations: convert_to_universal_chart.py lines 761-766 (sidecar capture), line 528 (named_list_to_map_split_image strips the name), Universal-chart/templates/_pod-spec.tpl lines 79-85 (container render loop, main + sidecars).
+- Same root defect family as the volumeMount subPath collision (named_list_to_map at lines 514-518) and the CronJob merge overwrite — a non-unique string used as a dict key.
+- The fix requires a compound/unique key (e.g. microservice + container name) rather than the bare container name.
+- Functional impact: pods lose auth proxies, operators and exporters entirely — "Pods crash or lose core functionality".
+- NOTE: a separate but distinct defect also reports containers as "missing" — the main container being renamed to the release name. See Main_Container_Name_Forced_To_Release_Name. Both surface in the fidelity report as "container X missing"; they have different root causes and different fixes.

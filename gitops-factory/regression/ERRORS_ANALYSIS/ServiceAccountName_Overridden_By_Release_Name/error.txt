@@ -1,0 +1,27 @@
+error: serviceAccountName is stored only at release level and the templates hardcode the release name, so pods reference a ServiceAccount that does not exist (nexus -> nexus-backup, prometheus -> prometheus-prometheus).
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"7. CronJob/Job serviceAccountName: nexus -> nexus-backup
+What happens: Raw CronJob/Job has serviceAccountName: nexus, but rendered uses nexus-backup.
+Why: The converter captures the serviceAccountName for CronJob/Job at line 1079, but ONLY stores it at the release level (ctx.values["serviceAccountName"]). The chart's _pod-spec.tpl jobPodSpec helper (line 283-289) uses {{ .universal-chart.serviceAccountName }}, which is the release-level value, not the per-job value. Raw has nexus, but the release-level SA override for the backup microservice is nexus-backup."
+
+"P1: ServiceAccount Wrong/Lost (27: 18 SA + 9 reference mismatches)
+Cause: The converter doesn't capture serviceAccountName from the pod spec into values. The template hardcodes serviceAccount.name to the release name, ignoring the original ServiceAccount name from the raw manifest.
+Example: Raw prometheus pod uses the prometheus ServiceAccount (which exists), but rendered pod uses prometheus-prometheus (the release name). If prometheus-prometheus SA doesn't exist, the pod fails."
+
+HIGH SEVERITY TABLE ROW:
+"8 | ServiceAccount name changed | Count 5 | Why: Pods reference renamed SA -> RBAC broken, pod fails to start | Example: Deployment/interconn-kafka-kafbat: interconn-kafka-kafbat -> interconn-kafka-kafbat-interconn-kafka-kafbat; CronJob/observability-jaeger-es-index-cleaner: observability-jaeger -> observability-jaeger-es-index-cleaner"
+
+HIGH: CHANGED TABLE ROW:
+"serviceAccountName (CronJob) | 6 | SA name changed to match CronJob name"
+
+ROOT CAUSE TABLE ROWS:
+"C | Chart uses release-level defaults instead of per-resource values | Affects: CronJob/Job SA, securityContext, imagePullPolicy"
+"K | handle_cronjob/handle_job doesn't capture per-job SA, securityContext | Affects: All CronJobs/Jobs"
+
+ADDITIONAL CONTEXT / CLUES:
+- Capture point: convert_to_universal_chart.py line 1079 (captures, but writes to ctx.values["serviceAccountName"] — release scope instead of per-resource scope).
+- Render point: Universal-chart/templates/_pod-spec.tpl lines 283-289, jobPodSpec helper, {{ .universal-chart.serviceAccountName }}.
+- 27 total errors: 18 wrong/lost ServiceAccount objects + 9 reference mismatches.
+- Functional impact is CRITICAL: a pod that references a nonexistent ServiceAccount cannot start, and RBAC bindings attached to the original SA no longer apply.
+- Distinct from the deprecated `serviceAccount:` alias loss (see Legacy_ServiceAccount_Field_Lost) and from ServiceAccount secrets/imagePullSecrets loss (see ServiceAccount_Secrets_And_ImagePullSecrets_Lost).

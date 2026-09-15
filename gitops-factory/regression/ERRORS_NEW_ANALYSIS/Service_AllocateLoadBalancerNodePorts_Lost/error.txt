@@ -1,0 +1,32 @@
+error: Service spec.allocateLoadBalancerNodePorts: true is not preserved — 3 Services affected, 44-62 error occurrences — LoadBalancer Services may not allocate node ports as expected.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"6. Service allocateLoadBalancerNodePorts: true Not Preserved (3 Services)
+
+What's wrong: Service/data-receiver-paamon, Service/zookeeper-external (both namespaces) lost spec.allocateLoadBalancerNodePorts: true.
+
+What to do: Expose allocateLoadBalancerNodePorts as a Service values field and conditionally render it.
+
+Why: This is an OpenShift-specific field. Without it, the LoadBalancer Service may not allocate node ports as expected, affecting external connectivity patterns that depend on node port exposure."
+
+FIELD-PATH TABLE ROW:
+"12 | spec.allocateLoadBalancerNodePorts | 62 | On Redis \"announce\" Services | Suppressible or explicitly set"
+
+FIELD TABLE ROW:
+"spec.allocateLoadBalancerNodePorts | ~44 | Services lose this field"
+
+SUPPRESSION TABLE ROW:
+"allocateLoadBalancerNodePorts | 62 | spec/allocateLoadBalancerNodePorts"
+
+REMEDIATION TABLE ROW:
+"Suppress announce service defaults (62) | -62 | 693 remaining"
+
+ADDITIONAL CONTEXT / CLUES:
+- THE REPORT SPLITS THIS FIELD INTO TWO POPULATIONS AND ONLY ONE IS BENIGN. Read the counts carefully:
+  1. THE 62 ON REDIS "ANNOUNCE" SERVICES — these are marked "Suppressible or explicitly set" and were suppressed in the remediation pass. Redis announce Services are headless/internal; the field is irrelevant there.
+  2. THE 3 REAL ONES — Service/data-receiver-paamon and Service/zookeeper-external (in both namespaces) lost allocateLoadBalancerNodePorts: true. These are actual LoadBalancer Services where the field controls behaviour. FIX THESE.
+  Suppressing the whole field path silences the 62 AND the 3 together. Scope the suppression to the announce Services, or fix the field properly and suppress nothing.
+- WHY THE VALUE MATTERS: allocateLoadBalancerNodePorts defaults to true, so losing an explicit true is usually harmless — which is what makes this easy to wave through. It matters when the platform or a controller reads the explicit setting, and on OpenShift where the field is used to control external connectivity patterns. The report states the consequence directly: "the LoadBalancer Service may not allocate node ports as expected, affecting external connectivity patterns that depend on node port exposure."
+- CHECK FIRST: does any affected Service set it to FALSE? Losing an explicit false while the default is true would silently flip behaviour and IS a production break. The report only ever cites true — confirm that holds across all raw manifests before accepting the low rating.
+- FIX: expose allocateLoadBalancerNodePorts as a Service values field in the converter (build_service_entry) and conditionally render it in Universal-chart/templates/service.yaml. Same one-line-per-field gap as appProtocol, sessionAffinity and externalTrafficPolicy in the previous analysis round.
+- Affected: Service/data-receiver-paamon, Service/zookeeper-external (both namespaces).

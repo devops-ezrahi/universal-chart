@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: metrics-agent
+  labels:
+    app: metrics-agent
+spec:
+  selector:
+    matchLabels:
+      app: metrics-agent
+  template:
+    metadata:
+      labels:
+        app: metrics-agent
+    spec:
+      serviceAccountName: metrics-agent
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:v1.7.0
+        args:
+        - --path.rootfs=/host
+        ports:
+        - name: metrics
+          containerPort: 9100
+        envFrom:
+        - configMapRef:
+            name: platform-ops-alert-thresholds
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+        volumeMounts:
+        - name: rootfs
+          mountPath: /host
+          readOnly: true
+      volumes:
+      - name: rootfs
+        hostPath:
+          path: /
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metrics-agent
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-agent
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: metrics-agent
+  ports:
+  - name: metrics
+    port: 9100
+    targetPort: metrics

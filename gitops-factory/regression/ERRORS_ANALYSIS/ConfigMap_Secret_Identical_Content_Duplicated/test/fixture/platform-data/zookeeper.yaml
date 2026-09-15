@@ -1,0 +1,47 @@
+# Fixture for the ConfigMap/Secret collision folders (18, 19) - reproduces the
+# report's zookeeper case exactly: three microservices in one namespace that all
+# declare a ConfigMap called `zookeeper-config` with BYTE-IDENTICAL content, plus
+# a Secret collision with DIFFERING content as the contrast case.
+#
+# Derived from namespaces-showcase/platform-data/postgres.yaml (same namespace,
+# same StatefulSet + ConfigMap + Secret + volume-mount shape).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+spec:
+  serviceName: zookeeper-headless
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: zk
+          image: zookeeper:3.9
+          env:
+            - name: ZK_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: zookeeper-auth
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+      volumes:
+        - name: config
+          configMap:
+            name: zookeeper-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zookeeper-config
+data:
+  zoo.cfg: "tickTime=2000\ninitLimit=10\nsyncLimit=5\n"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zookeeper-auth
+type: Opaque
+stringData:
+  password: "zk-primary-password"

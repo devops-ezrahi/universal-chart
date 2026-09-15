@@ -1,0 +1,21 @@
+error: Immutable image digests (@sha256:...) are converted into the mutable tag :2.0.0, so the chart can deploy a completely different image than the raw manifest pinned.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+HIGH SEVERITY TABLE ROW:
+"7 | Image SHA -> tag | Count 9 | Why: Immutable digest replaced with mutable :2.0.0 -> could deploy wrong version | Example: Deployment/data-sender-1: @sha256:86ee... -> :2.0.0; StatefulSet/interconn-opr-postgres: PostgreSQL @sha256:... -> :2.0.0"
+
+HIGH: CHANGED TABLE ROW:
+"containers[*].image | 31 | @sha256:... digest -> :2.0.0 tag conversion"
+
+ROOT CAUSE TABLE ROW:
+"G | split_image doesn't handle @sha256:... digests | Affects: Image digest loss"
+
+DISCOVERIES ENTRY:
+"8. Image Digest Loss (HIGH, Real Bug): Raw images use @sha256:digest. Converter/template defaults to :2.0.0 (Chart.AppVersion). If the tag was updated since the digest was pinned, the chart deploys a different image. Affects 9 workloads."
+
+ADDITIONAL CONTEXT / CLUES:
+- Root function: split_image in convert_to_universal_chart.py — it parses repository/tag but does not recognize the @sha256:<digest> form, so the digest is discarded and the fallback tag (Chart.AppVersion = 2.0.0) is substituted.
+- Related function in the same area: named_list_to_map_split_image() at convert_to_universal_chart.py:528.
+- Count discrepancy across two tables in the report: the severity table says 9 workloads, the CHANGED field table says 31 occurrences of containers[*].image — the higher number includes sidecars/initContainers.
+- The fix must preserve the digest form in values (image.digest) and the chart's universal-chart.image helper must emit repository@sha256:digest when a digest is present instead of repository:tag.
+- Functional impact compounds with the imagePullPolicy downgrade: a pinned-by-digest workload becomes pinned to a mutable tag AND stops re-pulling — the deployed binary is effectively unpredictable.

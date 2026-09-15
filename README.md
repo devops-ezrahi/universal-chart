@@ -118,6 +118,9 @@ universal-chart/
 │   ├── extra_deploy_test.yaml
 │   └── validation_test.yaml
 │
+├── gitops-factory/                   # Raw manifest dump -> values tree converter
+│                                     # (excluded from the chart via .helmignore)
+│
 ├── ui/                               # Browser-based values.yaml generator
 │   ├── index.html                    # Single-file UI app (open in browser)
 │   ├── package.json                  # Jest test runner config
@@ -812,7 +815,7 @@ have defaults in its `values.yaml`. The generated ApplicationSets carry
 the live object, so Applications do not flip OutOfSync every reconcile.
 
 Values repos in this shape are produced by
-[gitops-factory](https://github.com/devops-ezrahi/gitops-factory), which
+[gitops-factory](gitops-factory/) (in this repo), which
 converts raw per-namespace manifest dumps into exactly this layout.
 
 ---

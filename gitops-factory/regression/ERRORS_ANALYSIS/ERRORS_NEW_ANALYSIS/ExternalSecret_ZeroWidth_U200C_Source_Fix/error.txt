@@ -1,0 +1,20 @@
+error: spec.secretStoreRef.kind in ExternalSecret/SecretStore contains an invisible zero-width non-joiner (U+200C) — the chart auto-strips it, but the raw source manifests must be fixed upstream.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"8. ExternalSecret Invisible Unicode Character (U+200C) - Source Fix
+
+What's wrong: spec.secretStoreRef.kind in ExternalSecret/SecretStore (both namespaces) contains a zero-width non-joiner character. Chart auto-strips it.
+
+What to do: Fix the raw source manifests in the cluster/upstream. Find secretStoreRef.kind in the ExternalSecret YAML and remove the invisible U+200C character.
+
+Why: If not fixed at source, any tool that looks up this ExternalSecret by the corrupted name would silently fail. The chart's auto-stripping works but is a workaround, not a fix."
+
+PRIORITY TABLE ROW:
+"P7 | 2 chars | Hidden U+200C in ExternalSecret | [low]"
+
+ADDITIONAL CONTEXT / CLUES:
+- THE DEFECT IS IN THE RAW SOURCE DATA, not in the converter or the chart. An invisible control character was committed into the manifest at some point — likely pasted from a document or a chat client.
+- THE CHART CURRENTLY MASKS IT. Auto-stripping means the rendered output is correct today, which is exactly why this is easy to leave unfixed indefinitely. The report is emphatic that this is "a workaround, not a fix" — the corrupted bytes still sit in the source of truth and will bite any other tool that reads them directly (kubectl, ArgoCD diffing, a policy engine, a lookup by name).
+- CONFLICT WITH THE STANDING PROJECT RULE: the previous analysis round recorded the constraint "Do not modify raw manifests; fix Helm templates/values or the converter script" — and on that basis recommended sanitising the character inside the converter (see ERRORS_ANALYSIS/Zero_Width_Unicode_In_SecretStoreRef). THIS report says the opposite: fix it at source, in the cluster/upstream. Both are defensible; pick one deliberately. The strongest answer is BOTH — repair the upstream manifest so the source of truth is clean, AND keep a defensive strip in the converter so a future paste cannot reintroduce it silently.
+- SEARCH WIDER THAN THIS ONE FIELD: grep every raw manifest for the whole zero-width family — U+200B (zero-width space), U+200C (ZWNJ), U+200D (ZWJ), U+FEFF (BOM). Only secretStoreRef.kind surfaced because that is where a mismatch happened to be detectable; the same paste could have landed anywhere.
+- Affected: ExternalSecret/SecretStore spec.secretStoreRef.kind, both namespaces. 2 characters total.

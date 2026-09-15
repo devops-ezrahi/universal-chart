@@ -1,0 +1,63 @@
+# Fixture for ERRORS_ANALYSIS/Service_AppProtocol_Lost.
+#
+# Derived from namespaces-showcase/shop-web/api-gateway.yaml — same namespace,
+# same microservice file name, same Deployment + Service pair. Added:
+# `appProtocol` on the ports, and a SECOND Service so both service templates are
+# covered (service.yaml for the primary, services.yaml for the rest).
+#
+# appProtocol is what a service mesh reads to pick an L7 handler. Istio treats a
+# port with no appProtocol as plain TCP, so `appProtocol: grpc` disappearing
+# silently downgrades gRPC-aware routing, retries and telemetry to raw TCP.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: gateway
+          image: nginx:1.27
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: otlp-grpc
+              containerPort: 4317
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+      appProtocol: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+      appProtocol: grpc
+---
+# A second Service renders through templates/services.yaml rather than
+# service.yaml, so both paths have to carry the field.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway-admin
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+  ports:
+    - name: admin-grpc
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+      appProtocol: grpc

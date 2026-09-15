@@ -1,0 +1,12 @@
+error: An ExternalSecret name collides with another resource's template name and the naming convention appends a "-2" suffix — raw name test-ke is rendered as test-ke-2.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"17. ExternalSecret name: test-ke -> test-ke-2
+What happens: Raw name is test-ke, but rendered name is test-ke-2.
+Why: Line 488: name = raw.get("metadata", {}).get("name", ""). The ExternalSecret test-ke maps to a template name that collides with another resource. The naming convention adds -2 suffix."
+
+ADDITIONAL CONTEXT / CLUES:
+- Location: convert_to_universal_chart.py line 488 (name extraction inside build_externalsecret_entry).
+- The collision is between the ExternalSecret's derived template name and another resource that already claimed the same name — the same collision-resolver family of bugs documented in ConfigMap_Secret_Identical_Content_Duplicated (convert_to_universal_chart.py:384-405 claim() and :399 rename to {owner}-{name}).
+- Functional impact: anything that references the ExternalSecret (or the Secret it produces) by the name test-ke now points at a nonexistent object.
+- Distinct from the ExternalSecret field-loss defect — this one is about the object's identity, not its contents.

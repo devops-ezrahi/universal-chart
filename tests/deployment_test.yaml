@@ -345,6 +345,39 @@ tests:
           path: spec.template.spec.initContainers[0].name
           value: init-db
 
+  - it: should run init containers in initContainerOrder, unlisted ones last
+    set:
+      initContainerOrder: [z-first, a-second]
+      initContainers:
+        a-second:
+          image: busybox:1.36
+        z-first:
+          image: busybox:1.36
+        m-unlisted:
+          image: busybox:1.36
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: z-first
+      - equal:
+          path: spec.template.spec.initContainers[1].name
+          value: a-second
+      - equal:
+          path: spec.template.spec.initContainers[2].name
+          value: m-unlisted
+
+  - it: should keep sorted init container order when initContainerOrder is unset
+    set:
+      initContainers:
+        z-last:
+          image: busybox:1.36
+        a-first:
+          image: busybox:1.36
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: a-first
+
   - it: should set sidecars
     set:
       sidecars:

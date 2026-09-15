@@ -1,0 +1,14 @@
+error: containers[*].ports are reordered and given auto-generated names (e.g. port-8080) during conversion — 9 occurrences.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+HIGH: CHANGED TABLE ROW:
+"containers[*].ports | 9 | Port ordering + auto-naming (port-8080)"
+
+ADDITIONAL CONTEXT / CLUES:
+- Two separate symptoms bundled in one row:
+  1. ORDERING — the port list is rebuilt from a map, so the original array order is not preserved. This is the same map/list round-trip mechanism used for volumeMounts (named_list_to_map at convert_to_universal_chart.py:514-518 + the mapToList helper at _helpers.tpl:145).
+  2. AUTO-NAMING — ports that had no name in the raw manifest are given a synthetic name port-<number>.
+- Port ordering is generally cosmetic to Kubernetes, but auto-naming is NOT: a synthetic name port-8080 will not match a Service targetPort or a probe that referenced a differently-named port, and adding a name where the raw had none changes the object.
+- Related and adjacent defect in the same report: Service appProtocol is dropped from service ports (see Service_AppProtocol_Lost), which breaks Istio gRPC routing.
+- Fix direction: preserve the raw port list order and do not synthesize names for unnamed ports.
+- Verification: diff raw vs rendered containers[*].ports for the 9 affected workloads and confirm no Service/probe references a synthesized port name.

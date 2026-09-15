@@ -1,0 +1,29 @@
+error: Identical volumeMounts lists are emitted with different dictionary key ordering, so the fidelity checker reports them as CHANGED — 2 errors, functionally identical.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"4. VolumeMounts Dict Key Ordering - 2 CHANGED errors: Deployment/midasson-blue-fac1 and Deployment/midasson-yellow-tst have identical volumeMounts lists but different dictionary key ordering. Functionally identical but fidelity checker sees it as CHANGED."
+
+FULLER VERSION:
+"4. VolumeMounts Dict Key Ordering - 2 CHANGED errors
+ - Problem: Same volumeMounts list but with different dictionary key ordering (e.g. {'name': ..., 'mountPath': ...})
+ - Affected: Deployment/midasson-blue-fac1 and Deployment/midasson-yellow-tst
+ - Root cause: Dictionary serialization ordering — Helm/YAML outputs sorted keys vs [Python insertion order].
+   Functionally identical but fidelity checker sees it as CHANGED."
+
+SUMMARY TABLE ROW:
+"VolumeMounts ordering | 2 | Same content, different dict key order - suppress or normalize"
+
+REMEDIATION TABLE ROW:
+"Suppress remaining noise (volumeMount order, init-config.sh, immutable) | -6 | ~45 remaining"
+
+WORK LEFT (verbatim):
+"- Decide whether volumeMounts key ordering should be normalized or suppressed"
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: cosmetic. Kubernetes does not care about key order within a mapping; {name, mountPath} and {mountPath, name} are the same object to the API server.
+- OPEN DECISION with two valid answers, both cheap:
+  A. SUPPRESS / FIX THE COMPARISON — teach the fidelity checker to compare mappings order-insensitively. RECOMMENDED. If the checker is currently doing a string or ordered comparison on dicts, that is itself the defect, and fixing it silences an entire class of future false positives rather than this one instance.
+  B. NORMALIZE THE OUTPUT — sort keys consistently when emitting so raw and rendered agree byte-for-byte. Works, but treats the symptom and leaves the checker able to produce the same noise on any other resource type.
+- DO NOT CONFLATE WITH THE EARLIER VOLUMEMOUNT DEFECT. The previous analysis round documented a real data-loss bug (ERRORS_ANALYSIS/VolumeMount_SubPath_Lost_Duplicate_Name_Collision) where named_list_to_map keyed mounts by name and silently dropped subPath mounts. That one lost data. THIS one loses nothing — only the key order differs. Same field, entirely different severity.
+- Worth confirming while here: that the earlier subPath fix is still holding on these two deployments, since both defects live in the same volumeMounts serialization path.
+- Affected: Deployment/midasson-blue-fac1, Deployment/midasson-yellow-tst.

@@ -1,0 +1,41 @@
+# Fixture for ERRORS_ANALYSIS/Subtract_Defaults_Removes_Explicit_Zero.
+#
+# Derived from namespaces-showcase/background-jobs/nightly-report.yaml — same
+# namespace, same microservice file name, same container/image/resources. What
+# is CHANGED is the three history/retry limits, each set to an explicit 0:
+#
+#   successfulJobsHistoryLimit: 0   keep no completed pods
+#   failedJobsHistoryLimit: 0       keep no failed pods
+#   backoffLimit: 0                 never retry a failed Job
+#
+# All three are meaningful, deliberate values, and all three are falsy. A
+# sibling microservice in this same namespace (db-migrate.yaml) also uses
+# backoffLimit: 0, so common_subtree() promotes it into the namespace's
+# defaults.yaml — which is the layer error.txt suspects of eating it.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 0
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: report
+              image: busybox:1.36
+              command: ["/bin/sh", "-c"]
+              args: ["date; echo generating nightly report; sleep 2; echo done"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 50m
+                  memory: 32Mi

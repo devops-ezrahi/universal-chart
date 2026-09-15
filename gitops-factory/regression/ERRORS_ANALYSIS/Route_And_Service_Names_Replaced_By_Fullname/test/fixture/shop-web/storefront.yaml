@@ -1,0 +1,63 @@
+# The Ingress half of the same defect, on the real showcase storefront shape.
+# Kept as its own microservice because the chart refuses to render
+# ingress.enabled and route.enabled together (universal-chart.validate).
+#
+#   Deployment  storefront
+#   Service     storefront-service        <- '-service' suffix
+#   Ingress     storefront, backend -> storefront-service
+#
+# Once the Service keeps its raw name, the Ingress backend MUST follow it, or
+# the Ingress routes to a Service that does not exist.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  labels:
+    app: storefront
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: storefront
+  template:
+    metadata:
+      labels:
+        app: storefront
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront-service
+spec:
+  type: ClusterIP
+  selector:
+    app: storefront
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: storefront
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: storefront.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: storefront-service
+                port:
+                  name: http

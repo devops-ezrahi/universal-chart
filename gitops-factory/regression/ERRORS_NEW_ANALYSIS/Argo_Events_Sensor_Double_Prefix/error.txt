@@ -1,0 +1,24 @@
+error: Argo Events Sensor resources receive a doubled name prefix during conversion — ~2-4 errors, Medium severity.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+EXECUTIVE SUMMARY CATEGORY TABLE:
+"Argo Events Double-Prefix | ~2 | Medium"
+
+PARALLEL PASS IN THE SAME SESSION:
+"8. Argo Events Sensor Prefixing | ~4 | High"
+
+RELATED CHANGED-ERROR PATTERN (same mechanism):
+"[Name prefixing] | ...ate-roles-blue' vs render='dynamic-blue-atc-roles-blue' | Name prefixing"
+
+RELATED TRIAGE ENTRY:
+"ERROR CATEGORY: Other Info | TOTAL OCCURRENCES: 25 | NAMESPACES AFFECTED: 4
+ EXAMPLE DIFF (Sanitized):
+   rendered as 'dynamic-performance-test-acc-roles-blue' by release 'deployment-delta-441' (expected — collision rename or th[e ...])"
+
+ADDITIONAL CONTEXT / CLUES:
+- SEVERITY IS DISPUTED BETWEEN TWO PASSES OF THE SAME SESSION: one rates it Medium (~2 errors), the other High (~4 errors). Resolve by inspection.
+- THE DEFECT IS A DOUBLED PREFIX, not simply a renamed object — the release name is being applied to a name that already carries it, producing something like <release>-<release>-<name>. This is the same fullname/prefix machinery that produced the ServiceAccount doubling in the previous analysis round ("interconn-kafka-kafbat -> interconn-kafka-kafbat-interconn-kafka-kafbat"), so check whether that fix regressed or never covered Sensor resources.
+- WHY IT MATTERS MORE THAN A COSMETIC RENAME: Argo Events Sensors reference EventSources and trigger templates BY NAME. A Sensor whose name is mangled, or whose dependency reference points at a doubled name, simply never fires — silently. There is no crash and no error event; the event-driven workflow just stops running. That is why the second pass rates it High.
+- ALSO CHECK the Sensor's own spec: dependencies[].eventSourceName and triggers[].template.name. A correct Sensor name with a mangled internal reference is the more likely and more dangerous variant.
+- Argo Events resources are CRDs. Confirm the converter has a real handler for Sensor/EventSource rather than falling through to a generic path that applies workload naming rules — a generic path is the most probable source of the double prefix.
+- FIX LOCATION: the naming/prefix logic in convert_to_universal_chart.py — find where the release prefix is applied and add an idempotence guard so a name already carrying the prefix is not prefixed again.

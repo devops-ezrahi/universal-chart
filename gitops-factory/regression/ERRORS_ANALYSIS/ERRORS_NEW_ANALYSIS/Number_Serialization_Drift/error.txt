@@ -1,0 +1,23 @@
+error: Numeric values change representation between raw and rendered — raw '1e+09' renders as 1000000000 — ~2-6 errors, a serialization difference rather than a value change.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+CHANGED ERRORS BREAKDOWN:
+"2. CHANGED Errors (~10% of errors)
+Pattern: Values exist in both raw and rendered, but are different.
+SUB-CATEGORY | EXAMPLE | IMPACT
+Number Format | raw='1e+09' vs render=1000000000 | Serialization issue
+[Name prefixing] | ...ate-roles-blue' vs render='dynamic-blue-atc-roles-blue' | Name prefixing"
+
+EXECUTIVE SUMMARY CATEGORY TABLE:
+"Number Serialization | ~2 | Low"
+(a parallel pass in the same session lists "6. Number Serialization Drift ~6 Low (1e+09 vs 1000000000)")
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: cosmetic in the normal case. 1e+09 and 1000000000 are the same number; YAML parsers resolve both to the same value, so Kubernetes receives identical input.
+- THE MECHANISM: the raw manifest stores the value in scientific notation as a YAML float. The pipeline parses it to a Python float and re-emits it in decimal form. The fidelity checker then compares the string representations and sees a difference.
+- WHERE THIS STOPS BEING COSMETIC — check these two before closing:
+  1. FLOAT vs INT TYPING. 1e+09 parses as a FLOAT, not an integer. If the field is an integer-typed Kubernetes field (a port, a replica count, a limit, a size in bytes), a float can be rejected by API server schema validation, or coerced in a way that loses precision. Confirm which field carries this value.
+  2. PRECISION AT SCALE. Any value beyond 2^53 loses precision through a float round-trip. Memory and storage quantities in bytes reach that range. If the affected field is a byte quantity, verify the rendered digits exactly.
+- ALSO CHECK: Kubernetes resource quantities (memory: 1Gi, cpu: 500m) must remain STRINGS. If the pipeline is parsing quantity strings as numbers anywhere, that is a real bug of the same family and far more damaging than this instance.
+- Count varies by pass: ~2 (executive summary table) vs ~6 (category list). Same defect.
+- FIX IF PURSUED: preserve the original scalar representation for numeric fields, or normalize both sides before comparison in the fidelity checker. The checker-side fix is cheaper and safer than changing how values are emitted.

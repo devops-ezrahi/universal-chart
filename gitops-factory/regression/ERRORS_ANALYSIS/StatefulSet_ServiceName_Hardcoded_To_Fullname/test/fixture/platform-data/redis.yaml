@@ -1,0 +1,74 @@
+# Derived from namespaces-showcase/platform-data/redis.yaml, with the ONE
+# change that reproduces the defect: the StatefulSet's governing Service is a
+# dedicated HEADLESS Service named '<name>-headless' rather than the regular
+# ClusterIP Service that shares the workload's name.
+#
+# That split is the normal pattern for clustered data systems and is exactly
+# what error.txt describes for jaeger-es-master / zookeeper / postgres-try-
+# postgresql. The shipped showcase manifests happen to use serviceName ==
+# StatefulSet name, which is why the committed fidelity report shows 0 for
+# this defect class.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cache
+  labels:
+    app: redis-cache
+spec:
+  # THE FIELD UNDER TEST. Must survive to the rendered StatefulSet verbatim:
+  # pod DNS is <pod>.<serviceName>.<ns>.svc, and only the headless Service
+  # yields per-pod A records. Pointed at the regular ClusterIP Service, every
+  # peer lookup resolves to the load-balanced VIP and cluster formation fails.
+  serviceName: redis-cache-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-cache
+  template:
+    metadata:
+      labels:
+        app: redis-cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 512Mi
+---
+# The regular Service — load-balanced VIP, NOT valid for peer discovery.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cache
+spec:
+  type: ClusterIP
+  selector:
+    app: redis-cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+# The headless Service the StatefulSet must actually govern.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cache-headless
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: redis-cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

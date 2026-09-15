@@ -1,0 +1,72 @@
+# Fixture for ERRORS_ANALYSIS/ExternalSecret_Spec_Fields_Not_Captured (and the
+# two folders that share its root cause: ExternalSecret_ManagementPolicy_Changed
+# and SecretStore_Spec_Conditions_Not_Rendered).
+#
+# Derived from namespaces-showcase/identity-auth/session-store.yaml - same
+# namespace, same microservice file name, same SecretStore + ExternalSecret pair
+# and the same Vault provider block. What is ADDED is everything the report says
+# is lost: metadata.labels, metadata.ownerReferences, spec.deliverySpec,
+# spec.managementPolicy, spec.target.template.{labels,annotations} and
+# SecretStore spec.conditions.
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: session-store-vault
+  labels:
+    argocd.argoproj.io/instance: vault-identity-auth
+    team: platform
+  ownerReferences:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: session-store
+      uid: 11111111-2222-3333-4444-555555555555
+spec:
+  conditions:
+    - namespaceSelector:
+        matchLabels:
+          shared-store: "true"
+  refreshInterval: 30m
+  provider:
+    vault:
+      server: https://vault.devops-ezrahi.duckdns.org
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: session-store
+          serviceAccountRef:
+            name: session-store
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: session-store-signing-key
+  labels:
+    argocd.argoproj.io/instance: vault-identity-auth
+    team: platform
+  ownerReferences:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: session-store
+      uid: 66666666-7777-8888-9999-000000000000
+spec:
+  secretStoreRef:
+    name: session-store-vault
+    kind: SecretStore
+  refreshInterval: 1h
+  managementPolicy: Default
+  deliverySpec:
+    delay: 5m
+  target:
+    creationPolicy: Owner
+    template:
+      labels:
+        generated-by: external-secrets
+      annotations:
+        reloader.stakater.com/match: "true"
+  data:
+    - secretKey: signingKey
+      remoteRef:
+        key: identity-auth/session-store
+        property: signingKey

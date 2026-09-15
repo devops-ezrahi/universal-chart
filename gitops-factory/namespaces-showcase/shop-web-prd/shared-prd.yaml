@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: shop-web-ci-deployer
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: shop-web-auditor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: shop-web-ci-deployer-role
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - watch
+  - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shop-web-ci-deployer-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: shop-web-ci-deployer-role
+subjects:
+- kind: ServiceAccount
+  name: shop-web-ci-deployer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: shop-web-auditor-role
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  - services
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shop-web-auditor-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: shop-web-auditor-role
+subjects:
+- kind: ServiceAccount
+  name: shop-web-auditor
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-ca-bundle
+  labels:
+    app.kubernetes.io/part-of: shop-web
+data:
+  ca.crt: '-----BEGIN CERTIFICATE-----
+
+    MIIBshowcasedummyplaceholdercertificatefordemonstrationonly
+
+    -----END CERTIFICATE-----
+
+    '
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shop-web-allow-same-namespace
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector: {}

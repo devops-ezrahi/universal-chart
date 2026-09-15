@@ -1,0 +1,24 @@
+error: Empty maps and Kubernetes-populated defaults are dropped from the rendered output (~600 occurrences) — resources: {}, securityContext: {}, dnsPolicy: ClusterFirst, terminationGracePeriodSeconds: 30, creationTimestamp: None — classified as a false positive.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+LOW SEVERITY TABLE ROW:
+"16 | Lost K8s defaults | Count ~600 | Why: resources: {}, securityContext: {}, dnsPolicy: ClusterFirst, terminationGracePeriodSeconds: 30 - K8s fills these in"
+
+conflicts_and_warnings.txt TOP PATTERN ROWS:
+"creationTimestamp: None (pod template) | 137 | Runtime field, harmless"
+"securityContext: {} | 109 | Empty security context"
+"resources: {} | 68 | Empty resource limits"
+"immutable: False (ConfigMap) | 11 | Explicit immutability flag"
+
+DISCOVERIES ENTRY (verbatim):
+"4. resources: {} LOST (False Positive): 40 errors. Raw had empty resources: {}, render has no resources: block. Functionally identical. Converter drops empty dicts. Severity: NONE."
+
+ALSO SEEN IN THE FIDELITY REPORT AS AN ERROR LINE:
+"52 | ERROR  CronJob/elastic-storage-retention LOST at spec.jobTemplate.spec.template.spec.containers[0].resources: raw had {}"
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: FALSE POSITIVE, SEVERITY NONE. An empty map `resources: {}` and an absent `resources:` key are semantically identical to Kubernetes; creationTimestamp is a runtime field that should never be in source; dnsPolicy: ClusterFirst and terminationGracePeriodSeconds: 30 are the API defaults.
+- This is the single largest source of NOISE in the fidelity report (~600 of the ~1,960 Medium/Low LOST errors). Suppressing it in the checker would make the genuinely broken items far easier to see.
+- RECOMMENDED DISPOSITION: fix the FIDELITY CHECKER, not the converter — teach it to treat empty-map == absent and to ignore server-populated defaults (creationTimestamp, dnsPolicy, terminationGracePeriodSeconds, schedulerName, restartPolicy defaults).
+- ONE ITEM IN THIS GROUP IS NOT NECESSARILY NOISE: `immutable: False` on ConfigMaps (11 occurrences) is an explicit flag. False is the default, so dropping it is safe — but if any ConfigMap has `immutable: True` and that is being dropped, it is a real change. Verify before suppressing the whole pattern.
+- The report's standing instruction applies here: "Focus on functional/critical errors, not cosmetic label losses" and "The user is skeptical of 'false positive' classifications and wants precise proof (raw vs rendered comparison) before accepting a severity downgrade."

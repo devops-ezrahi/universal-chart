@@ -1,0 +1,38 @@
+# VERBATIM slice of namespaces-showcase/background-jobs/db-migrate.yaml.
+#
+# Raw container name: 'migrate'. Job/release key: 'db-migrate'.
+# Unfixed, jobPodSpec names the container after the job map key ('db-migrate'),
+# so the CronJob/Job path loses the raw name exactly like the Deployment path.
+# error.txt only discusses the main container; this file pins the other two
+# call sites (Job and CronJob) that share the same rename.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args: ["echo running schema migration; sleep 2; echo done"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report
+spec:
+  schedule: "17 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: report
+              image: busybox:1.36
+              command: ["/bin/sh", "-c"]
+              args: ["echo generating nightly report"]

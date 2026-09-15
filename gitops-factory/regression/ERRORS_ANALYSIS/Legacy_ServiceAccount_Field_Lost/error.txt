@@ -1,0 +1,18 @@
+error: The deprecated pod-spec field `serviceAccount:` (the legacy alias of serviceAccountName) is dropped — 15+ to 24 occurrences, classified as a functional false positive.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+MEDIUM SEVERITY TABLE ROW:
+"14 | Lost serviceAccount field (15+) | Count 15+ | Why: Deprecated but used by some tools for SA binding | Example: Deployment/grafana-deployment: loses serviceAccount: grafana-serviceaccount"
+
+conflicts_and_warnings.txt TOP PATTERN ROW:
+"serviceAccount (legacy field) | 24 | Deprecated SA field"
+
+DISCOVERIES ENTRY (verbatim):
+"5. serviceAccount (deprecated) LOST (False Positive): 23 errors. Raw has deprecated serviceAccount alias. Chart renders serviceAccountName. Functionally identical. Severity: NONE."
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: FALSE POSITIVE, SEVERITY NONE. Kubernetes treats `serviceAccount` as a deprecated alias for `serviceAccountName`; the API server populates both. Rendering only serviceAccountName is correct modern practice.
+- The MEDIUM table's caveat is the only reason to look further: "Deprecated but used by some tools for SA binding". If any external tooling (an admission controller, a policy engine, a legacy operator, or an OpenShift component) reads the `serviceAccount` key specifically, dropping it would matter. No such tool is named anywhere in the report.
+- Count varies by pass: 15+ (severity table), 23 (Discoveries), 24 (pattern table) — same defect.
+- DO NOT CONFUSE with the genuinely critical ServiceAccountName_Overridden_By_Release_Name defect, where the SA *value* is wrong and pods reference a nonexistent SA. This folder is only about the deprecated *key* being absent while the correct key is present with the correct value.
+- Recommended disposition: no code change; update the fidelity checker to treat serviceAccount/serviceAccountName as equivalent.

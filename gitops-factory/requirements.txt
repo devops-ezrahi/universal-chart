@@ -1,0 +1,4 @@
+# python3 run_all.py needs these; a bare checkout has none of them.
+PyYAML          # every script parses/emits manifests with it
+jsonschema      # values_editor.py --schema, and the converter's values check
+pytest          # the regression suite under regression/

@@ -1,0 +1,69 @@
+error: Raw metadata.labels are lost for nearly all resource types — the converter never stores them and the chart templates never render them (~634 label fields / 3,087 lost labels).
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"Fidelity Error Analysis - Why Each Error Occurs
+1. Lost metadata.labels (~634 fields)
+What happens: Raw manifests have labels like app: test-jenkins, argocd.argoproj.io/trace-id: <uuid>, version: 2.0.0, etc. on Deployment, StatefulSet, DaemonSet, CronJob, Job, Service, Route, PVC, ConfigMap, Secret, SecretStore, ExternalSecret, NetworkPolicy, RBAC, ServiceAccount.
+Why: The converter has a split design flaw:
+ - handle_workload stores labels at lines 796-797, but ONLY for ConfigMap/Secret handlers do they actually appear in the rendered templates.
+ - For workload handlers, labels are stored but the corresponding templates (deployment.yaml, statefulset.yaml, daemonset.yaml) ONLY render {{- include "universal-chart.labels" $spec }} (lines 5-8, 7-8, 7-8), which produces only 3 auto-generated labels: app.kubernetes.io/name, app.kubernetes.io/instance, app.kubernetes.io/managed-by.
+ - Handlers for CronJob, Job, Service, Route, PVC, SecretStore, ExternalSecret, NetworkPolicy, Role, RoleBinding, ServiceAccount NEVER capture labels at all.
+ - The chart templates for all of these similarly ONLY render the auto-generated helper labels.
+Summary: The converter doesn't store raw labels for most resource types, and the templates don't have a {{- with $spec.labels }} block to render them if they were stored."
+
+"# deployment.yaml line 7-8:
+metadata:
+  labels:
+    {{- include "universal-chart.labels" . | nindent 4 }}
+# <- No second block like {{- with .Values.workloadLabels }}
+While ConfigMap/Service templates do have a secondary {{- with $spec.labels }} block"
+
+"Summary
+correct.py output -> All labels present
+convert_to_universal_chart.py -> Drops workload metadata.labels (only captures pod template labels)
+values.yaml -> commonLabels: {} (empty, never populated)
+deployment.yaml -> Only renders 5 Helm identity labels via _helpers.tpl
+helm template output -> 3,087 LOST labels"
+
+"What convert_to_universal_chart.py does (line 720-725):
+# Reads pod template labels, removes identity ones
+pod_labels = {
+    k: v for k, v in pod_meta.get("labels").items()   # <- this is spec.template.metadata.labels
+    if k not in ("pod-template-hash", "app.kubernetes.io/name", "app.kubernetes.io/instance", ...)
+}
+v["podLabels"] = pod_labels   # -> stores: team, critical, environment, part-of, argocd...
+Then commonLabels stays {} empty. The workload's own metadata.labels is never read."
+
+"Why this is a corruption, not just a 'loss'
+The podLabels approach works for pod template labels because app.kubernetes.io/name and ... are the ones Helm needs to control. The converter strips those 4 identity labels from pod. Custom labels survive through podLabels.
+But commonLabels is the equivalent mechanism for resource-level labels, and the workload's metadata.labels only gets Helm's identity labels, losing all 3087 custom labels.
+
+Why other resource types are affected differently
+ConfigMap - converter copies metadata.labels to entry["labels"], template has {{- with ...}} -> Labels survive [OK]
+Service - same as ConfigMap -> Labels survive [OK]
+Secret - same pattern -> Labels survive [OK]
+Deployment/StatefulSet/DaemonSet - no equivalent code -> Labels lost [X]"
+
+REPEATED ACROSS THE REPORT AS THE SAME CORE ERROR (deduplicated here):
+- Issue 14: "Deployment labels: many raw labels absent from rendered — Same as issue 1. The converter captures workload labels at lines 796-797, but deployment.yaml only renders the 3 Helm-generated labels."
+- Issue 24: "Job labels + serviceAccountName + securityContext + imagePullPolicy — Same issues as CronJob (issues 1, 5, 6, 7, 14). handle_job has the same flaws as handle_cronjob."
+- Issue 30: "RoleBinding labels — handle_rolebinding never captures labels, and rbac.yaml only renders helper labels."
+- Issue 31 (labels part): "Route labels + spec.to.name — Route metadata labels missing. Why (labels): Same as issue 1."
+- Issue 32 (labels part): "SecretStore labels + ownerRef + spec conditions — Why (labels): build_secretstore_entry never captures labels."
+- Issue 33: "Service labels — Same as issue 1. Why: build_service_entry DOES capture labels at line 305, BUT service.yaml only renders helper labels. service.yaml line 5-8 renders universal-chart.labels, and line 1-4 has no spec.labels block. So even though labels are captured, they're not rendered."
+- Issue 36: "ServiceAccount labels — handle_serviceaccount never captures labels."
+- Issue 37: "Deployment/StatefulSet/DaemonSet labels (repeated) — Same as issue 1, repeated for different workload types."
+- Issue 38: "StatefulSet labels (juseppelad) — Same as issue 1 for StatefulSets."
+- Issue 39: "DaemonSet labels (envoy) — Same as issue 1 + securityContext."
+- LOW severity #15: "Lost organizational labels | ~300 | team, environment, critical, operational labels lost - cosmetic/metadata only"
+- LOW severity #20: "Lost PVC template labels | 2 | ZooKeeper PVCs lose team, environment labels on the PVC"
+- Root Cause table row A: "Converter handler doesn't capture metadata.labels | Affects: 634 label fields across all resource types"
+- Root Cause table row B: "Chart template doesn't render spec.labels from values | Affects: All templates except some"
+- conflicts_and_warnings.txt Top Pattern table: "app.kubernetes.io/part-of | 135 | Team/ownership label"; "app.kubernetes.io/component | 135 | Team/ownership label"; "team, operational, environment labels | 235 | Operational metadata"
+
+ADDITIONAL CONTEXT / CLUES:
+- Two independent defects must both be fixed: (A) the Python converter handlers must capture metadata.labels into values; (B) every chart template must render a {{- with $spec.labels }} / .Values.commonLabels block.
+- Concrete raw label example seen on screen: heritage: Helm, operational: 'false', operational.purpose: tyk-gateway, release: rak-bluetorch-108-bluetorch, team: bluetorch.
+- Pod-template labels DO survive (via v["podLabels"] and spec.template.metadata.labels rendering with .Values.podLabels); only resource-level metadata.labels are lost.
+- Files: convert_to_universal_chart.py (lines 720-725, 796-797), Universal-chart/templates/deployment.yaml (lines 7-8), statefulset.yaml, daemonset.yaml, service.yaml (lines 1-8), rbac.yaml, _helpers.tpl.
+- Severity in the report: LOW / cosmetic-metadata-only per the severity table, but it is the single highest-count defect in the whole report.

@@ -1,0 +1,19 @@
+error: Deployment spec.progressDeadlineSeconds is neither stored in values nor rendered by the template — 68 to 119 occurrences, but the lost value equals the Kubernetes default so impact is low.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"P2: spec.progressDeadlineSeconds Lost (68 errors)
+Cause: This deployment field is not stored in values and not rendered by the template. This is a Deployment-only field that controls how long K8s waits before marking a deployment as failed.
+
+Raw: progressDeadlineSeconds: 600
+Rendered: missing (defaults to 600 in K8s)
+
+Impact: Low - the default IS 600, so losing this explicit value is harmless."
+
+conflicts_and_warnings.txt TOP PATTERN ROW:
+"progressDeadlineSeconds | 119 | Deployment default"
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: LOW / effectively harmless — the raw value (600) is identical to the Kubernetes default, so the rendered Deployment behaves the same.
+- CAVEAT THE NEXT AGENT MUST CHECK: the report only ever cites 600. If ANY Deployment in the raw manifests sets a non-600 value (e.g. a short 120s deadline for fast rollback detection, or a long 3600s for slow-starting apps), that one IS a real behavioural change. Grep the raw manifests for `progressDeadlineSeconds:` and confirm every value is 600 before closing this out.
+- Count discrepancy between the two report passes (68 vs 119) is the usual raw-object vs all-occurrence difference.
+- Fix if pursued: capture spec.progressDeadlineSeconds in handle_workload and render it in Universal-chart/templates/deployment.yaml.

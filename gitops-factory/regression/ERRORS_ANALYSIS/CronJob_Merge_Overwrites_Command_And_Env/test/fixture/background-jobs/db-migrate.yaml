@@ -1,0 +1,73 @@
+# Fixture for ERRORS_ANALYSIS/CronJob_Merge_Overwrites_Command_And_Env.
+#
+# Derived from namespaces-showcase/background-jobs/db-migrate.yaml — same
+# namespace, same microservice file name, same Secret and the same
+# secretKeyRef-into-a-job pattern. What is ADDED is the shape error.txt
+# describes: two CronJobs in one microservice file that reduce to the same
+# values map key ("backup"), carrying DIFFERENT commands and a DIFFERENT value
+# for the same env var.
+#
+#     db-migrate-backup  ->  "backup"
+#     backup             ->  "backup"      <-- same key
+#
+# The commands are error.txt's verbatim strings. STAGE is its named env var.
+#
+# A sibling copy of this microservice lives in ../background-jobs-prd/ with
+# DIFFERENT commands, which is what puts `command` into each namespace's own
+# values file rather than the shared base/ — see STATUS.md §1 on the report's
+# "the values YAML has neither".
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-migrate-backup
+spec:
+  schedule: "0 1 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: busybox:1.36
+              command: ["/bin/bash", "-c", "echo 'Hello from jenkins-backup-1!'"]
+              env:
+                - name: STAGE
+                  value: dev
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-migrate-credentials
+                      key: api-key
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: busybox:1.36
+              command: ["/bin/bash", "-c", "echo 'Hello from jenkins-backup-2!'"]
+              args: ["--verbose"]
+              env:
+                - name: STAGE
+                  value: prod
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-migrate-credentials
+type: Opaque
+stringData:
+  api-key: "showcase-migration-api-key-change-me"

@@ -1,0 +1,91 @@
+error: index of all unique errors extracted from 52 screenshots in the ERRORS folder — a Kubernetes/OpenShift raw-manifest to Helm "Universal-chart" converter is losing, changing or corrupting fields during round-trip conversion.
+
+SOURCE OF THE DATA
+52 JPEG screenshots of a VS Code terminal in C:\Users\User\Documents\Dev0ps\New folder\ERRORS\.
+They capture a scrolling AI analysis session (model: qwen3.6-27B) auditing a round-trip fidelity report.
+Project root visible on screen: C:\repos\metroair-argocdnew
+Key files referenced throughout:
+  C:\repos\metroair-argocdnew\convert_to_universal_chart.py      (the converter)
+  C:\repos\metroair-argocdnew\correct.py
+  C:\repos\metroair-argocdnew\Universal-chart\templates\_pod-spec.tpl
+  C:\repos\metroair-argocdnew\Universal-chart\templates\_helpers.tpl
+  C:\repos\metroair-argocdnew\Universal-chart\templates\deployment.yaml
+  C:\repos\metroair-argocdnew\Universal-chart\templates\statefulset.yaml
+  C:\repos\metroair-argocdnew\Universal-chart\templates\daemonset.yaml
+  C:\repos\metroair-argocdnew\Universal-chart\templates\service.yaml
+  C:\repos\metroair-argocdnew\Universal-chart\templates\routes.yaml
+  C:\repos\metroair-argocdnew\Universal-chart\templates\externalsecret.yaml
+  C:\repos\metroair-argocdnew\Universal-chart\templates\secretstore.yaml
+  C:\repos\metroair-argocdnew\Universal-chart\templates\rbac.yaml
+  C:\repos\metroair-argocdnew\values\report\fidelity_report.txt        (1,393 lines)
+  C:\repos\metroair-argocdnew\values\report\conflicts_and_warnings.txt
+  C:\repos\metroair-argocdnew\namespaces\interconn\                    (raw manifests, source of truth)
+  C:\repos\metroair-argocdnew\values\base\ and values\<namespace>\values\
+Scale: interconn = 208 raw objects vs 238 rendered; interconn-opr = 133 raw vs 146 rendered.
+
+FIDELITY REPORT LEGEND (needed to read any cited line)
+  INFO   an object that legitimately moved (shared release, cluster-shared, renamed on collision) - expected, not a loss.
+  ERROR  an object rendered by no release at all, an object with no raw source, or a field the conversion LOST or CHANGED.
+
+STANDING DIRECTIVES CAPTURED IN THE SESSION (apply to all folders)
+  - Focus on functional/critical errors, not cosmetic label losses.
+  - Do not modify raw manifests; fix Helm templates/values or the converter script.
+  - Provide deep technical explanations with side-by-side comparisons.
+  - The user is skeptical of "false positive" classifications and wants precise proof (raw vs rendered comparison) before accepting a severity downgrade.
+
+--- FOLDER INDEX, ORDERED BY REAL-WORLD BLAST RADIUS ---
+
+P0 - IRREVERSIBLE DATA LOSS / CLUSTER BREAKS
+  StatefulSet_PVC_Retention_Policy_Lost            8 StatefulSets fall back to whenDeleted/whenScaled: Delete. ES, Prometheus, ZK, Redis, PostgreSQL data destroyed on delete/scale/ArgoCD re-sync. FIX BEFORE ANY MIGRATION.
+  StatefulSet_ServiceName_Hardcoded_To_Fullname    6-10 StatefulSets point at the wrong Service. Pod DNS and peer discovery break; clustered apps cannot form clusters.
+  VolumeMount_SubPath_Lost_Duplicate_Name_Collision  4 deployments lose a config file mount; containers cannot start.
+  Main_Container_Name_Forced_To_Release_Name       14 "missing container" errors. OPEN DECISION: preserve original name vs accept chart convention.
+  Sidecar_Container_Name_Key_Collision             Sidecars (oauth-proxy, topic-operator, redis, ...) dropped entirely. Called "the biggest functional gap".
+  ServiceAccountName_Overridden_By_Release_Name    27 errors. Pods reference a ServiceAccount that does not exist; RBAC broken, pods fail to start.
+
+P1 - WRONG BEHAVIOUR AT RUNTIME
+  Route_And_Service_Names_Replaced_By_Fullname     33+ Services/Routes renamed via universal-chart.fullname; DNS and cross-references break.
+  Missing_Objects_Not_Rendered_By_Any_Release      36 raw objects orphaned after migration (20 Routes, 15 Services, 1 Deployment, 1 PVC).
+  Extra_Objects_Rendered_With_No_Raw_Source        ~28 objects rendered from nothing; the mirror image of the row above.
+  Image_Digest_Replaced_With_Mutable_Tag           9-31 images: @sha256:... becomes :2.0.0. Can deploy the wrong binary.
+  ImagePullPolicy_Always_Downgraded_To_IfNotPresent  Stale images silently served.
+  Pod_SecurityContext_Overridden_By_Release_Defaults runAsUser/fsGroup 1000 becomes 2000; volume ownership breaks.
+  CronJob_Schedule_Value_Corruption                "46 2 * * 6" becomes "6 2 * * 1". Job fires at the wrong time.
+  CronJob_Merge_Overwrites_Command_And_Env         Duplicate CronJob names; command and env silently lost.
+  Subtract_Defaults_Removes_Explicit_Zero          backoffLimit 0 becomes 6, successfulJobsHistoryLimit 0 becomes 3.
+  ContainerRestartPolicy_Not_Captured              Always becomes OnFailure on CronJob/Job.
+  ServiceAccount_Secrets_And_ImagePullSecrets_Lost 24 SAs. ANALYSIS UNFINISHED - severity depends on OpenShift vs vanilla K8s target.
+  ConfigMap_Secret_Identical_Content_Duplicated    3 copies of one ConfigMap. OPEN DECISION: auto-share on identical hash vs move to shared.yaml.
+  ConfigMap_Secret_References_Prefixed_With_Release 17 references renamed; internally consistent but externally wrong.
+
+P2 - FIELD-LEVEL LOSSES
+  Workload_Metadata_Labels_Lost                    LARGEST COUNT IN THE REPORT: ~634 fields / 3,087 labels. Two defects: converter does not capture, templates do not render.
+  ExternalSecret_Spec_Fields_Not_Captured          labels, ownerReferences, deliverySpec, target.template.annotations/labels.
+  ExternalSecret_Name_Collision_Suffix             test-ke becomes test-ke-2.
+  ExternalSecret_ManagementPolicy_Changed          Default becomes Create.
+  SecretStore_Spec_Conditions_Not_Rendered         labels, ownerRef, spec conditions.
+  Service_AppProtocol_Lost                         8 ports. Istio cannot route gRPC.
+  Container_Ports_Reordered_And_Auto_Named         9 occurrences; synthetic port-8080 names may break Service/probe references.
+  Empty_Map_Env_Var_Breaks_Generation              TYK_GW_ANALYTICSCONFIG_TYPE: {}. OPEN QUESTION: converter fix, template fix, or both.
+  Annotations_Lost                                 ~50-135. "Mixed" bucket - MUST be triaged for argocd.argoproj.io/* and prometheus.io/* before accepting LOW.
+
+P3 - LIKELY FALSE POSITIVES (verify, then suppress in the fidelity checker rather than changing code)
+  Empty_K8s_Default_Maps_Dropped                   ~600 occurrences. Biggest source of noise in the report.
+  ProgressDeadlineSeconds_Lost                     68-119. Raw value equals the K8s default.
+  Legacy_ServiceAccount_Field_Lost                 15-24. Deprecated alias; correct key is present.
+  Service_SessionAffinity_Lost                     29-150. Sources disagree; check for any non-None value.
+  Service_ExternalTrafficPolicy_Lost               2. Lost value equals the default.
+  Service_Selector_Injected_When_Absent            Template analysis is self-contradictory; check for manual Endpoints objects.
+  Grafana_ConfigMap_Trailing_Newline               2. Harmless for INI, but check other embedded blobs.
+
+TOTAL: 34 unique errors consolidated from ~39 numbered issues plus 20 severity-table rows plus 13 root-cause rows across 52 screenshots.
+
+DEDUPLICATION NOTES
+  - Report issues 1, 14, 16(metadata), 24, 30, 31, 32, 33, 36, 37, 38, 39, LOW#15, LOW#20 and root causes A+B were all the SAME label defect and are consolidated into Workload_Metadata_Labels_Lost.
+  - Report issues 5, 8, 13, 25-27 and MEDIUM#13 were the same imagePullPolicy defect.
+  - Report issues 3, 11 and root causes D+F were the same subtract_defaults zero-value defect.
+  - HIGH#5 and HIGH#6 are two views of the same rename; kept as two folders because the fidelity report counts them separately and the next agent must confirm they cancel out.
+  - Severity counts frequently differ between the three passes in the report (per-object vs per-occurrence). Both numbers are preserved in each file rather than picking one.
+
+KNOWN GAP IN THE SOURCE MATERIAL
+  The numbered issue list runs 1-39, but issues 28 and 29 never appear in any of the 52 screenshots (the capture jumps from "25-27. Job template" straight to "30. RoleBinding labels"). Two unique errors from the original report are therefore MISSING from this analysis. They must be recovered from the original terminal session or by re-running the fidelity report.

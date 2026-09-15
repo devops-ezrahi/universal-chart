@@ -1,0 +1,64 @@
+error: StatefulSet spec.serviceName is never extracted by the converter and is hardcoded to universal-chart.fullname in the template, so pod DNS points at the regular Service instead of the headless Service and clustered apps (ES, ZooKeeper, Postgres) cannot form clusters.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"The Problem: StatefulSet serviceName Is NOT Connected
+The converter processes the StatefulSet at handle_workload() (line 665) and extracts:
+Field | Extracted? | Goes to values?
+podManagementPolicy | Yes | podManagementPolicy
+volumeClaimTemplates | Yes | volumeClaimTemplates
+serviceName | No | -
+persistentVolumeClaimRetentionPolicy | No | -
+
+The template then hardcodes serviceName at statefulset.yaml:14:
+serviceName: {{ include "universal-chart.fullname" . }}
+This always resolves to the StatefulSet's own name (jaeger-es-master), not the headless Service name (jaeger-es-master-headless).
+
+Why?
+Simply because no one thought about it. The converter was designed around the common case where: StatefulSet name = Service name = what everything points to
+It never considered that the headless Service would have a different name (e.g., -headless suffix) - which is a very common pattern for database clusters that need pod-level DNS.
+
+What Should Happen
+The converter should detect when spec.serviceName != the StatefulSet name and store it:
+# In handle_workload(), line 678-696:
+if kind == "StatefulSet":
+    svc_name = spec.get("serviceName")
+    if svc_name and svc_name != ctx.name_map.get("StatefulSet", None):
+        v["serviceName"] = svc_name   # Store the raw name
+Then the template reads it:
+serviceName: {{ .Values.serviceName | default (include "universal-chart.fullname" .) }}"
+
+"Severity Breakdown
+jaeger-es-master, zookeeper, postgres-try-postgresql: The headless Service IS rendered by the chart (services: map in values). But the StatefulSet's serviceName points to the regular Service instead of the headless Service. The regular Service has clusterIP: <IP> (not None), so:
+- DNS jaeger-es-master-0.jaeger-es-master resolves to the ClusterIP load balancer, NOT to pod-specific DNS
+- Pod peer discovery breaks - ES can't find other ES nodes, ZK can't find other ZK nodes
+- Cluster formation fails
+
+prometheus-prometheus: The prometheus-operated Service was created by the prometheus-operator at runtime, not in raw manifests. The chart has service.enabled: false and no services: map. So NO Service named prometheus-operated exists at all. The StatefulSet can't create pods.
+
+interconn-opr-postgres: Points to postgres-try-postgresql-hl which is in the interconn namespace, not interconn-opr. Cross-namespace service reference. Neither the original nor the rendered Service exists."
+
+CRITICAL SEVERITY TABLE ROW:
+"3 | StatefulSet serviceName wrong | Count 6 | Why: StatefulSet can't find its headless service -> pod DNS, inter-pod communication, stable identity all break | Example: StatefulSet/jaeger-es-master: jaeger-es-master-headless -> jaeger-es-master (wrong service); StatefulSet/zookeeper: zookeeper-headless -> zookeeper"
+
+HIGH: CHANGED TABLE ROW:
+"serviceName (StatefulSet) | 10 | Headless service name mismatch"
+
+PROPOSED FIX (verbatim, in Hebrew-annotated screenshot):
+"Stage A: fix the converter — convert_to_universal_chart.py, in the function handling StatefulSets (around lines 678-696):
+if kind == "StatefulSet":
+    spec = doc.get('spec', {})
+    svc_name = spec.get('serviceName')
+    ss_name  = doc['metadata']['name']
+    if svc_name and svc_name != ss_name:
+        v['serviceName'] = svc_name   # preserve the original name
+Stage B: fix the template — Universal-chart/templates/statefulset.yaml:
+# before (buggy):
+serviceName: {{ include "universal-chart.fullname" . }}
+# after (fixed):
+serviceName: {{ .Values.serviceName | default (include "universal-chart.fullname" .) }}"
+
+ADDITIONAL CONTEXT / CLUES:
+- Classified in the report's Discoveries as "1. StatefulSet serviceName (P0, Real Bug)".
+- Locations: convert_to_universal_chart.py handle_workload() line 665, fix site lines 678-696; Universal-chart/templates/statefulset.yaml line 14.
+- Three DISTINCT sub-cases with different fixes: (a) headless Service exists but is not referenced — the fix above solves it; (b) prometheus-operated Service does not exist at all because it was created by the prometheus-operator at runtime, so it must be added to the chart or the StatefulSet excluded; (c) interconn-opr-postgres references a Service in a different namespace, which the chart cannot express — this one is broken in raw too.
+- Functional impact (verbatim summary): "This is a critical bug. It doesn't just break DNS, it breaks the basic ability of clustered data systems to work at all."

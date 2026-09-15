@@ -1,0 +1,139 @@
+# Fixture for ERRORS_ANALYSIS/CronJob_Schedule_Value_Corruption.
+#
+# Derived from namespaces-showcase/background-jobs/nightly-report.yaml (same
+# namespace, same microservice file name, same container/image/resources shape).
+# What is ADDED here is the shape the showcase never produces: more than one
+# CronJob in a single microservice file, two of which reduce to the SAME values
+# map key.
+#
+# handle_cronjob keys ctx.values["cronjobs"] by short_subresource_name(), which
+# strips the leading "<microservice>-". So:
+#
+#     nightly-report-cleanup  ->  "cleanup"
+#     cleanup                 ->  "cleanup"      <-- same key
+#     nightly-report-archive  ->  "archive"      <-- control, no collision
+#
+# The two colliding objects deliberately carry the exact schedules named in
+# error.txt: "46 2 * * 6" (Saturday 02:46) and "6 2 * * 1" (Monday 02:06).
+# Last writer wins, so the surviving entry is rendered under the FIRST object's
+# Kubernetes name while carrying the SECOND object's schedule — which is
+# precisely the reported "46 2 * * 6 -> 6 2 * * 1".
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report-cleanup
+spec:
+  schedule: "46 2 * * 6"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 6
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: cleanup
+              image: busybox:1.36
+              command: ["/bin/sh", "-c"]
+              args: ["echo weekly cleanup; sleep 2; echo done"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 50m
+                  memory: 32Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup
+spec:
+  schedule: "6 2 * * 1"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: cleanup
+              image: busybox:1.36
+              command: ["/bin/sh", "-c"]
+              args: ["echo monday cleanup; sleep 2; echo done"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 50m
+                  memory: 32Mi
+---
+# Control: a CronJob whose key does NOT collide, and whose schedule uses the
+# `*/N` form. A bare `*` starts a YAML alias node, so this one also proves the
+# value survives the converter's own YAML dump and the chart's `| quote`.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report-archive
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: archive
+              image: busybox:1.36
+              command: ["/bin/sh", "-c"]
+              args: ["echo archiving; sleep 2; echo done"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 50m
+                  memory: 32Mi
+---
+# Jobs are keyed by the SAME short_subresource_name() helper two lines further
+# down in the converter, so they collide identically. Present here as a guard
+# only — this folder's assertions are about the schedule.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nightly-report-seed
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args: ["echo seeding from the prefixed job; sleep 2"]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args: ["echo seeding from the unprefixed job; sleep 2"]

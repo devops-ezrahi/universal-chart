@@ -1,0 +1,144 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # The CronJob half of the same field — see db-migrate.yaml. Kept at a
+      # non-default value here too, and on the jobTemplate path specifically,
+      # because handle_cronjob and handle_job are separate code with a history
+      # of drifting apart (folder 5).
+      parallelism: 2
+      template:
+        # POD-template metadata, which is a different thing from the CronJob
+        # object's own metadata above. handle_workload has read these since it
+        # was written; handle_cronjob never did, and the template rendered only
+        # the two selector labels — so these five governance labels vanished
+        # from every CronJob pod (30 errors in the report).
+        #
+        # The annotation is the part with teeth: pod-template labels and
+        # annotations are what admission webhooks and sidecar injectors match
+        # on, so a CronJob pod that loses them can miss an injection it depends
+        # on, or receive one it should have been excluded from. The report rates
+        # this P1 for exactly that reason: "Sidecar injection could crash
+        # CronJobs".
+        metadata:
+          labels:
+            team: background-jobs
+            environment: dev
+            critical: "false"
+            operational: "true"
+            operationalPurpose: reporting-cronjob
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: report
+              image: busybox:1.36
+              command: ["/bin/sh", "-c"]
+              args: ["date; echo generating nightly report; sleep 2; echo done"]
+              # References the ConfigMap declared at the bottom of this file,
+              # which collides with db-migrate.yaml's and therefore gets renamed.
+              # This reference must follow the rename — if it does not, the pod
+              # fails to start and nothing in the conversion says so. That is the
+              # exact question the report left open.
+              envFrom:
+                - configMapRef:
+                    name: job-defaults
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 50m
+                  memory: 32Mi
+---
+# The corpus' first Argo Events resources. The converter has no handler for
+# these CRDs, so they fall through to extraDeploy and are emitted verbatim —
+# which is the correct behaviour for a kind the chart does not model, and is
+# also precisely what needs proving. The report flags Sensors acquiring a
+# doubled name prefix, and warns that the more dangerous variant is "a correct
+# Sensor name with a mangled internal reference": a Sensor whose
+# dependencies[].eventSourceName or triggers[].template.name no longer matches
+# the object it points at never fires, silently, with no crash and no event.
+#
+# Every name below is load-bearing and must survive byte-for-byte:
+#   EventSource/nightly-report        <- referenced by eventSourceName
+#   Sensor/nightly-report             <- the Sensor's own name
+#   dependencies[0].eventSourceName   <- must equal the EventSource's name
+#   dependencies[0].eventName         <- must equal a key under spec.calendar
+#   triggers[0].template.name         <- the trigger's own identity
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: nightly-report
+  labels:
+    team: background-jobs
+spec:
+  calendar:
+    nightly:
+      schedule: "0 2 * * *"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: nightly-report
+  labels:
+    team: background-jobs
+spec:
+  dependencies:
+    - name: nightly-tick
+      eventSourceName: nightly-report
+      eventName: nightly
+  triggers:
+    - template:
+        name: trigger-nightly-report
+        # An Argo Events parameter expression. This is ordinary Argo syntax and
+        # nothing to do with Helm — but extraDeploy renders through `tpl`, so
+        # before as_extra_deploy() escaped it, this single line made
+        # `helm template` fail outright with "cannot parse template" and took
+        # the whole release down with it. Kept in the corpus because it is the
+        # cheapest possible guard against that regression, and because
+        # extraDeploy is by definition the least-tested path in the chart.
+        parameters:
+          - src:
+              dependencyName: nightly-tick
+              dataKey: body.target
+            dest: spec.arguments.parameters.0.value
+            value: "{{workflow.parameters.target}}"
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                generateName: nightly-report-
+              spec:
+                template:
+                  spec:
+                    restartPolicy: Never
+                    containers:
+                      - name: report
+                        image: busybox:1.36
+---
+# The other half of the collision described in db-migrate.yaml. Same kind, same
+# name, DIFFERENT content — so the converter must rename this copy rather than
+# collapse the two, and must rewrite this file's own envFrom to match. Content
+# differing is what makes the rename unambiguously correct: two identical copies
+# would be a judgement call, two different ones are two different objects.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-defaults
+data:
+  JOB_TIMEOUT_SECONDS: "900"
+  JOB_LOG_LEVEL: debug
+  REPORT_FORMAT: csv

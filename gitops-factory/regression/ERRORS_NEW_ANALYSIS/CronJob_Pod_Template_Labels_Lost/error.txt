@@ -1,0 +1,60 @@
+error: CronJob pod template labels are lost — handle_cronjob never captures spec.jobTemplate.spec.template.metadata.labels into podLabels, and the template only renders the 2 selector labels — 30 errors, 5 labels lost per CronJob.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"Category 2: LOST CronJob Pod Template Labels (30 errors)
+
+Affected objects:
+ - CronJob/jenkins-backup-dev (5 labels lost)
+ - CronJob/jenkins-restore-dev (5)
+ - CronJob/juseppelad-uploader-dev (5)
+ - CronJob/jenkins-restore-prd (5)
+ - CronJob/jenkins-backup-tst (5)
+ - CronJob/jenkins-restore-tst (5)
+
+Path: spec.jobTemplate.spec.template.metadata.labels.{critical, environment, operational, operationalPurpose, team}
+
+Root cause: TWO-PRONGED:
+1. Converter gap: handle_cronjob() (convert_to_universal_chart.py:1800-1804) only calls raw_labels(doc) on the CronJob resource itself. It does NOT ex[tract] spec.template.metadata.labels into a podLabels key. handle_workload() does this at line 982, but CronJob/Job handlers don't.
+2. [Tem]plate ... spec.template.metadata.labels [...] only renders selectorLabels (2 labels: app.name + app.instance). No objectLabels merge, no podLabels support."
+
+PER-LABEL TRIAGE FILES (each a separate sanitized category file, same root cause):
+"ERROR CATEGORY: Field Lost Team | TOTAL OCCURRENCES: 14 | NAMESPACES AFFECTED: 3
+ AFFECTED RESOURCES:
+ - CronJob: [cronjob-alpha-173], [cronjob-beta-288], [cronjob-delta-531], [cronjob-epsilon-214], [cronjob-gamma-782]
+ - Route: [route-beta-435], [route-delta-353], [route-epsilon-356], [route-gamma-874], [route-iota-390], [route-lambda...]
+ FIELDS INVOLVED:
+ - metadata.labels.team (8x)
+ - spec.jobTemplate.spec.template.metadata.labels.team (6x)
+ EXAMPLE DIFF (Sanitized):
+ - Raw:      spec.jobTemplate.spec.template.metadata.labels.team: 'devops-mahan'
+ + Rendered: spec.jobTemplate.spec.template.metadata.labels.team: (absent)"
+
+"ERROR CATEGORY: Field Lost Operational | TOTAL OCCURRENCES: 14 | NAMESPACES AFFECTED: 3
+ - metadata.labels.operational (8x)
+ - spec.jobTemplate.spec.template.metadata.labels.operational (6x)
+ - Raw:      ...labels.operational: 'false'
+ + Rendered: ...labels.operational: (absent)"
+
+"ERROR CATEGORY: Field Lost Operationalpurpose | TOTAL OCCURRENCES: 14 | NAMESPACES AFFECTED: 3
+ - metadata.labels.operationalPurpose (8x)
+ - spec.jobTemplate.spec.template.metadata.labels.operationalPurpose (6x)
+ - Raw:      ...labels.operationalPurpose: 'backup-cronjob'
+ + Rendered: ...labels.operationalPurpose: (absent)"
+
+SANITIZED FIDELITY SUMMARY (index.txt) CATEGORY COUNTS:
+"field_lost_critical 14 | field_lost_environment 14 | field_lost_operational 14 | field_lost_operationalpurpose 14 | field_lost_team 14"
+
+REMEDIATION TABLE ROW:
+"Suppress CronJob defaults (44) | -44 | 782 remaining"
+
+PRIORITY TABLE ROW:
+"P1 | 39 labels | Route governance labels | Breaks ArgoCD sync tracking, team/env filtering
+   | [CronJob] pod annotations | Sidecar injection could crash CronJobs"
+
+ADDITIONAL CONTEXT / CLUES:
+- TWO INDEPENDENT DEFECTS, BOTH MUST BE FIXED — capturing the labels without rendering them changes nothing, and vice versa:
+  1. CONVERTER: handle_cronjob() at convert_to_universal_chart.py:1800-1804 must extract spec.jobTemplate.spec.template.metadata.labels into a podLabels key. handle_workload() already does exactly this at line 982 — copy that pattern. handle_job() has the same gap.
+  2. TEMPLATE: the CronJob pod template renders only selectorLabels (app.name + app.instance). It needs an objectLabels/podLabels merge block.
+- The 5 lost labels per CronJob are consistently {critical, environment, operational, operationalPurpose, team} — governance/ownership metadata used for cost allocation, alert routing and environment filtering.
+- THE PRIORITY TABLE FLAGS A REAL RUNTIME RISK, not just metadata loss: "Sidecar injection could crash CronJobs". Pod-template labels are what admission webhooks and sidecar injectors match on. A CronJob pod that loses its labels may miss an injection it depends on — or receive one it should have been excluded from. Verify what selects on these labels before downgrading this to cosmetic.
+- The per-label triage files (error_field_lost_team.txt, _operational.txt, _operationalpurpose.txt, _critical.txt, _environment.txt) are FIVE VIEWS OF THE SAME DEFECT, split by label name by the sanitizer. Do not treat them as five separate bugs. Each file's 14 occurrences split as 8x resource-level (that is the Route defect — see Route_Governance_Labels_Lost) and 6x CronJob pod-template-level (this defect).

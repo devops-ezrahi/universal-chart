@@ -1,4 +1,31 @@
 {{/*
+Init containers, in the order they must run.
+
+The values are a map (so GitOps layers can patch one entry), and Helm ranges a
+map in SORTED key order — so an init container that has to run before an
+alphabetically-earlier one got reordered and the pod crashed. `order` (the
+converter's initContainerOrder) lists names in the raw manifest's order; keys
+it does not name follow in sorted order, so a hand-added entry is never lost.
+Usage: {{- include "universal-chart.initContainers" (dict "containers" .Values.initContainers "order" .Values.initContainerOrder) | nindent 2 }}
+*/}}
+{{- define "universal-chart.initContainers" -}}
+{{- $map := .containers | default dict }}
+{{- $order := .order | default list }}
+{{- range $name := $order }}
+{{- if hasKey $map $name }}
+- name: {{ $name }}
+  {{- toYaml (index $map $name) | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- range $name, $spec := $map }}
+{{- if not (has $name $order) }}
+- name: {{ $name }}
+  {{- toYaml $spec | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 =============================================================================
 SHARED POD SPEC — used by Deployment, StatefulSet, DaemonSet
 =============================================================================
@@ -89,10 +116,7 @@ overhead:
 {{- /* ── Init containers (map-based) ────────────────── */}}
 {{- with .Values.initContainers }}
 initContainers:
-  {{- range $name, $spec := . }}
-  - name: {{ $name }}
-    {{- toYaml $spec | nindent 4 }}
-  {{- end }}
+  {{- include "universal-chart.initContainers" (dict "containers" . "order" $.Values.initContainerOrder) | nindent 2 }}
 {{- end }}
 
 {{- /* ── Main container ───────────────────────────── */}}
@@ -278,10 +302,7 @@ securityContext:
 {{- end }}
 {{- with .job.initContainers }}
 initContainers:
-  {{- range $name, $spec := . }}
-  - name: {{ $name }}
-    {{- toYaml $spec | nindent 4 }}
-  {{- end }}
+  {{- include "universal-chart.initContainers" (dict "containers" . "order" $.job.initContainerOrder) | nindent 2 }}
 {{- end }}
 containers:
   {{- /* .job.name is the jobs/cronjobs MAP KEY, not the container's name.

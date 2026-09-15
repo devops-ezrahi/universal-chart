@@ -1,0 +1,21 @@
+error: The chart renders ~28 objects (12 routes + 16 services) that have no corresponding raw source — resources created with wrong names that match nothing in the cluster.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+HIGH SEVERITY TABLE ROW:
+"6 | Objects rendered with NO raw source | Count ~28 (12 routes + 16 services) | Why: Chart creates resources with wrong names that don't match anything | Example: Route/control-station-client (no raw), Service/control-station-client (no raw) - these collide with #5"
+
+FIDELITY REPORT HEADER LINES:
+"=== interconn - 208 raw objects vs 238 rendered ==="
+"=== interconn-opr - 133 raw objects vs 146 rendered ==="
+
+FIDELITY REPORT LEGEND:
+"Round-trip fidelity report - raw input vs `helm template` of the converted output.
+Legend:
+  INFO   an object that legitimately moved (shared release, cluster-shared, renamed on collision) - expected, not a loss.
+  ERROR  an object rendered by no release at all, an object with no raw source, or a field the conversion LOST or CHANGED."
+
+ADDITIONAL CONTEXT / CLUES:
+- This is NOT an independent bug: the report states explicitly that these objects "collide with #5" (Missing_Objects_Not_Rendered_By_Any_Release). The same rename is counted twice — once as a raw object that disappeared, once as a rendered object that appeared from nowhere.
+- Root cause is therefore the fullname-based renaming of Services and Routes — see Route_And_Service_Names_Replaced_By_Fullname. Fixing the naming defect should eliminate BOTH counts simultaneously.
+- The rendered-object surplus is visible at the namespace level: interconn renders 238 objects from 208 raw, interconn-opr renders 146 from 133.
+- Verification approach for the next agent: after fixing resource naming, re-run the fidelity checker and confirm both the MISSING_OBJECT and EXTRA_OBJECT counts drop together; if only one drops, the two sets were not actually the same objects.

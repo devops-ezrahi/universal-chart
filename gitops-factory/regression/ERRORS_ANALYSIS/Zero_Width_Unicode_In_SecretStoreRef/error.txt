@@ -1,0 +1,16 @@
+error: A Unicode zero-width space (U+200C) inside the raw value "Se‌cretStore" is stored faithfully by the converter but normalized away by Helm, producing a false fidelity mismatch on spec.secretStoreRef.kind.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"23. ExternalSecret spec.secretStoreRef.kind: Se‌cretStore -> SecretStore (zero-width char)
+What happens: Raw has Se‌cretStore (contains Unicode zero-width space U+200C between 'e' and 's'). The rendered Helm output normalizes this to SecretStore.
+Why: The converter stores the value WITH the zero-width character faithfully. When Helm processes the template, it outputs the value as-is (with the char). The fidelity checker compares raw (Se‌cretStore) vs rendered (SecretStore from Helm normalization), and they differ. The fix should sanitize the zero-width character in the converter."
+
+ROOT CAUSE TABLE ROW:
+"I | Zero-width character (‌) in raw data not sanitized | Affects: ExternalSecret secretStoreRef"
+
+ADDITIONAL CONTEXT / CLUES:
+- The defect is in the RAW SOURCE DATA, not in the conversion logic — an invisible control character was committed into the manifest.
+- The report's recommended fix is explicit: sanitize/strip zero-width characters in the converter before storing values.
+- The report notes elsewhere "Do not modify raw manifests; fix Helm templates/values or the converter script" — so the sanitation must happen in convert_to_universal_chart.py.
+- Search target for the next agent: any occurrence of ​ / ‌ / ‍ / ﻿ across the raw manifests, not just this one ExternalSecret.
+- Functional impact: low on its own (Helm normalizes it), but it makes the fidelity report noisy and, if the character survives anywhere else, a kind/name lookup would silently fail.

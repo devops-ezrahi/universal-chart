@@ -1,0 +1,19 @@
+error: Resource annotations are dropped during conversion (~50 to 135 occurrences) — deployment.kubernetes.io/revision and OpenShift-specific annotations — classified as informational only.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+LOW SEVERITY TABLE ROW:
+"17 | Lost annotations | Count ~50 | Why: deployment.kubernetes.io/revision, OpenShift annotations - informational only"
+
+conflicts_and_warnings.txt TOP PATTERN ROW:
+"metadata.annotations | 135 | Mixed: revisions, OpenShift-specific"
+
+ADDITIONAL CONTEXT / CLUES:
+- The pattern table's own wording is the warning sign: "Mixed: revisions, OpenShift-specific". "Mixed" means this bucket has NOT been fully triaged — it is a catch-all, not a verified-harmless category.
+- SAFE TO DROP: deployment.kubernetes.io/revision (server-generated rollout counter), openshift.io/* runtime annotations, kubectl.kubernetes.io/last-applied-configuration.
+- NOT SAFE TO DROP — the next agent must grep for these before accepting the LOW rating:
+  * argocd.argoproj.io/* (sync-waves, hooks, sync-options) — losing a sync-wave reorders the entire ArgoCD deployment sequence.
+  * kubernetes.io/ingress.class, haproxy.router.openshift.io/*, route-specific timeout/balance annotations — these change Route/Ingress behaviour.
+  * prometheus.io/scrape, prometheus.io/port — losing these silently stops metrics collection.
+  * checksum/config style annotations — losing these stops pods from restarting on ConfigMap change.
+- Note the report separately confirms ArgoCD tracking metadata IS being lost elsewhere: "ExternalSecret/mongo-password loses argocd.argoproj.io/instance: vault-interconn" (MEDIUM #12) — evidence that ArgoCD-relevant metadata is inside these buckets.
+- Fix location if pursued: the same converter-capture + template-render gap as labels (see Workload_Metadata_Labels_Lost) — annotations need an equivalent {{- with $spec.annotations }} block in each template.

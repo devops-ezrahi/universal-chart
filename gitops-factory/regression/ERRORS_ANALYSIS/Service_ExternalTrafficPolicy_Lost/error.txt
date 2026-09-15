@@ -1,0 +1,11 @@
+error: Service spec.externalTrafficPolicy: Cluster is dropped during conversion, so source IP is not preserved for external load balancer traffic — 2 occurrences.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+MEDIUM SEVERITY TABLE ROW:
+"11 | Lost externalTrafficPolicy: Cluster | Count 2 | Why: Source IP not preserved for external LB traffic | Example: Service/zookeeper-external loses Cluster policy"
+
+ADDITIONAL CONTEXT / CLUES:
+- Only 2 occurrences, and the lost value (Cluster) is in fact the Kubernetes default — the practical impact is likely nil, but it is listed as a MEDIUM defect in the report and is grouped with the other dropped Service spec fields.
+- NOTE the semantics are the inverse of what the "Why" column states: externalTrafficPolicy: Local is what preserves the client source IP; Cluster is what does NOT preserve it (it SNATs and load-balances across nodes). Losing an explicit Cluster and falling back to the default Cluster changes nothing behaviourally. The next agent should verify the raw value before treating this as a real break.
+- Affected object named in the report: Service/zookeeper-external.
+- Fix location if pursued: build_service_entry in convert_to_universal_chart.py + Universal-chart/templates/service.yaml — the same one-line-per-field gap as appProtocol and sessionAffinity.

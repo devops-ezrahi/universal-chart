@@ -1,0 +1,26 @@
+error: Per-workload / per-job pod-level securityContext is never stored per resource — the chart uses the release-level .Values.podSecurityContext, so raw fsGroup/runAsUser 1000 is rendered as 2000.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"6. CronJob/Job securityContext: fsGroup: 1000, runAsUser: 1000 -> fsGroup: 2000, runAsUser: 2000
+What happens: Raw CronJob/Job pod-level securityContext has fsGroup: 1000, runAsUser: 1000, but rendered has 2000/2000.
+Why: The converter NEVER captures CronJob/Job pod-level securityContext. The chart uses .Values.podSecurityContext (release-level), which defaults to 2000/2000 from defaults.yaml. The per-job securityContext is completely ignored."
+
+"15. Deployment podSecurityContext: missing from rendered
+What happens: Raw has runAsUser: 1000, but rendered has fsGroup: 2000, runAsUser: 2000.
+Why: The converter captures podSecurityContext per-container at line 852, but the chart uses .Values.podSecurityContext (release-level). When multiple containers have different securityContexts, they merge into the release-level value, and the chart's default 2000/2000 may win."
+
+"39. DaemonSet labels (envoy)
+What happens: Same as issue 1 + securityContext: raw has runAsUser: 1000, rendered has 2000.
+Why (securityContext): The converter captures podSecurityContext per-container but stores it at release level. When the raw value (1000) differs from default (2000), it should be stored. But the chart's podSecurityContext helper may override with defaults."
+
+ROOT CAUSE TABLE ROW:
+"C | Chart uses release-level defaults instead of per-resource values | Affects: CronJob/Job SA, securityContext, imagePullPolicy"
+
+ADDITIONAL CONTEXT / CLUES:
+- Scope/altitude bug: a per-resource (and per-container) field is being flattened into one release-level value, so the last writer wins and the defaults.yaml value (2000/2000) usually survives.
+- Capture point that exists but is mis-scoped: convert_to_universal_chart.py line 852 (per-container podSecurityContext).
+- Capture point that is entirely missing: CronJob/Job pod-level securityContext (handle_cronjob / handle_job).
+- Chart side: .Values.podSecurityContext and defaults.yaml (2000/2000).
+- Affects Deployments, DaemonSets, CronJobs and Jobs (report issues 6, 15, 24, 39).
+- Functional impact: running as UID 2000 instead of 1000 breaks file ownership on mounted volumes and can make containers unable to read their own data.
+- conflicts_and_warnings.txt also logs "securityContext: {} | 109 | Empty security context" as a separate, harmless empty-map loss — do not confuse the two.

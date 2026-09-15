@@ -1,0 +1,68 @@
+# Reproduces error.txt's "CronJob/elastic-storage-retention: will not pull latest
+# image each run", on the shape of the real showcase background-jobs manifests.
+#
+# The point is the MIX. One release, three containers, three different intents:
+#
+#   Deployment  imagePullPolicy: IfNotPresent   <- the release-level value
+#   Job         imagePullPolicy: Always         <- must NOT inherit the above
+#   CronJob     imagePullPolicy: Always         <- must NOT inherit the above
+#
+# jobPodSpec renders `.Values.image.pullPolicy` - the RELEASE-level value - for
+# the Job/CronJob container, and neither handle_cronjob nor handle_job captures
+# a per-job one. So both jobs silently downgrade to IfNotPresent and never
+# re-pull, which for a mutable tag means they run whatever was cached on the
+# node. Combined with the digest defect (folder 10) the running binary becomes
+# unpredictable.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elastic-storage
+  labels:
+    app: elastic-storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elastic-storage
+  template:
+    metadata:
+      labels:
+        app: elastic-storage
+    spec:
+      containers:
+        - name: api
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c", "sleep 3600"]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: elastic-storage-seed
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: busybox:1.36
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-c", "echo seeding"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: elastic-storage-retention
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: retention
+              image: busybox:1.36
+              imagePullPolicy: Always
+              command: ["/bin/sh", "-c", "echo pruning old indices"]

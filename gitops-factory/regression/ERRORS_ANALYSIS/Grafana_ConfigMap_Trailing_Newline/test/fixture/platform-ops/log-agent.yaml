@@ -1,0 +1,35 @@
+# Fixture for ERRORS_ANALYSIS/Grafana_ConfigMap_Trailing_Newline.
+#
+# Derived from namespaces-showcase/platform-ops/log-agent.yaml. The ConfigMap
+# carries one blob per whitespace hazard, because error.txt asks for the BROADER
+# check: "trailing-newline loss in a PEM certificate or a shell script WOULD
+# break things, unlike INI."
+#
+#   grafana.ini   - the reported case, a block ending in a BLANK line (\n\n)
+#   tls.crt       - a PEM certificate; a lost trailing newline breaks some parsers
+#   entrypoint.sh - a shell script
+#   padded.conf   - trailing SPACES, which YAML block scalars cannot represent
+#                   literally and must quote
+#   many.txt      - several trailing blank lines
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-agent-config
+data:
+  grafana.ini: |+
+    [server]
+    root_url = http://grafana.local
+
+  tls.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBkTCB+wIJAJ8mZ0m0Z0m0MA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNVBAMMCWxv
+    -----END CERTIFICATE-----
+  entrypoint.sh: |
+    #!/bin/sh
+    set -eu
+    exec /usr/bin/log-agent --config /etc/log-agent/agent.yaml
+  padded.conf: "key = value   \nother = thing\n"
+  many.txt: |+
+    first
+
+

@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cache
+  labels:
+    app: redis-cache
+spec:
+  serviceName: redis-cache
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-cache
+  template:
+    metadata:
+      labels:
+        app: redis-cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /usr/local/etc/redis
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: config
+          configMap:
+            name: redis-cache-conf
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 512Mi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cache-conf
+data:
+  redis.conf: |
+    maxmemory 200mb
+    maxmemory-policy allkeys-lru
+    save ""
+  # Non-ASCII content, deliberately, and the ONLY non-ASCII byte in the whole
+  # corpus. The pipeline crosses a process boundary at helm_template(); a
+  # subprocess.run() without encoding= decodes the child's UTF-8 stdout with
+  # the Windows ANSI codepage, which is textbook mojibake. The two codepoints
+  # below are the exact ones the report names: L-caron (U+013D), which arrives
+  # as two cp1252 characters, and an em-dash (U+2014), which arrives as three.
+  # Until this key existed the round-trip check had nothing to detect it with.
+  init-config.sh: |
+    #!/bin/sh
+    # Maintainer: Ľuboš Novák — cache platform team
+    echo "redis cache — warming up"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cache
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: redis-cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+# A real LoadBalancer carrying an explicit `allocateLoadBalancerNodePorts:
+# false` — the case the report never observed and explicitly asked to be
+# checked for: "does any affected Service set it to FALSE? Losing an explicit
+# false while the default is true would silently flip behaviour and IS a
+# production break."
+#
+# The Kubernetes default is true, so this is the ONLY value of this field whose
+# loss is detectable from behaviour, and the one a truthiness check would drop.
+# Shaped after the report's real cases (data-receiver, an externally exposed
+# ZooKeeper): a cloud LB that fronts the pods directly and deliberately does not
+# want a node port opened on every node in the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cache-external
+  labels:
+    team: platform-data
+spec:
+  type: LoadBalancer
+  allocateLoadBalancerNodePorts: false
+  externalTrafficPolicy: Local
+  selector:
+    app: redis-cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

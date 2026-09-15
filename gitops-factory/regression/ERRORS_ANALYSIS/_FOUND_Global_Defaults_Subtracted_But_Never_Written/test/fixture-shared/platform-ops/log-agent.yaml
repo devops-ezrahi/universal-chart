@@ -1,0 +1,9 @@
+# A config-only microservice, the shape namespaces/*/…-config-only-*.yaml uses.
+# Two of these in the run make global_defaults hold `workload.type: none` and
+# `service.enabled: false` — the same two values the shared release above has.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-agent-config
+data:
+  SINK: stdout

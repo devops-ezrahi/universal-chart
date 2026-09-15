@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+spec:
+  backoffLimit: 1
+  # Deliberately NOT the Kubernetes default of 1. The report rates parallelism
+  # P8 — its lowest — on the grounds that the value it observed was 1, which is
+  # the default, so losing it changes nothing. True of that value; not true of
+  # the field. A batch job declaring `parallelism: 4` that silently converts to
+  # 1 quarters its throughput and nothing in the conversion says so.
+  #
+  # A corpus entry of 1 would prove nothing for exactly the reason the report
+  # gives, so this carries 4 (with completions to match) and its loss is
+  # detectable.
+  parallelism: 4
+  completions: 4
+  template:
+    # Same gap as the CronJob next door — error.txt: "handle_job() has the same
+    # gap." Covered here so a fix to one handler and not the other cannot pass.
+    metadata:
+      labels:
+        team: background-jobs
+        environment: dev
+        critical: "true"
+        operational: "true"
+        operationalPurpose: schema-migration-job
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args: ["echo running schema migration using $(cat /etc/db-migrate/api-key); sleep 2; echo done"]
+          envFrom:
+            - configMapRef:
+                name: job-defaults
+          volumeMounts:
+            - name: credentials
+              mountPath: /etc/db-migrate
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: credentials
+          secret:
+            secretName: db-migrate-credentials
+---
+# A Secret mounted as a FILE, not a secretKeyRef env var — the pattern many
+# migration/CLI tools expect (e.g. a credentials.json or api-key file), as
+# opposed to postgres.yaml's POSTGRES_PASSWORD, which is the env-var pattern.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-migrate-credentials
+type: Opaque
+stringData:
+  api-key: "showcase-migration-api-key-change-me"
+---
+# Half of a deliberate NAME COLLISION with nightly-report.yaml, which declares
+# its own ConfigMap/job-defaults with different content. Two jobs each shipping
+# their own "job-defaults" is ordinary; that they collide in one namespace is
+# the case NamespaceRegistry.claim exists for.
+#
+# This one claims the name first (files are processed in sorted order), so it
+# keeps it and nightly-report's copy is renamed. What must then hold — and what
+# the report could not decide about — is that nightly-report's OWN envFrom
+# follows the rename while this one still points here. That is now checked on
+# every run by the reference-integrity pass in verify_raw_fidelity.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-defaults
+data:
+  JOB_TIMEOUT_SECONDS: "300"
+  JOB_LOG_LEVEL: info

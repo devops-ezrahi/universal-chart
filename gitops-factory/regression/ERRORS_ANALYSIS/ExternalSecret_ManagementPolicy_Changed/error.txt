@@ -1,0 +1,15 @@
+error: ExternalSecret spec.managementPolicy: Default is stripped by subtract_defaults and the chart's own default "Create" is rendered instead.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"20. ExternalSecret spec.managementPolicy: Default -> Create
+What happens: Raw has managementPolicy: Default, rendered has Create.
+Why: build_externalsecret_entry captures it at line 489, but subtract_defaults removes "Default" as it equals the default value. Chart defaults to "Create"."
+
+ROOT CAUSE TABLE ROW:
+"F | Chart template has wrong defaults (6, 3, OnFailure, Create) | Affects: CronJob/Job fields when values are subtracted"
+
+ADDITIONAL CONTEXT / CLUES:
+- Same mechanism as the backoffLimit/successfulJobsHistoryLimit and imagePullPolicy defects: subtract_defaults removes an explicitly-set value it believes matches a default, and the chart's fallback default is a DIFFERENT value than the one that was removed.
+- The literal string "Default" is being treated as "this is the default, drop it" — a value-vs-semantics confusion.
+- Locations: convert_to_universal_chart.py line 489 (capture, inside build_externalsecret_entry), subtract_defaults; Universal-chart/templates/externalsecret.yaml (fallback "Create").
+- Functional impact: managementPolicy controls whether the external-secrets operator creates/updates or merely observes the target Secret; changing Default to Create alters ownership semantics of the generated Secret.

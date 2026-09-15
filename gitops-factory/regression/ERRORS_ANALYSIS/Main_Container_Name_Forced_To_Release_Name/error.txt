@@ -1,0 +1,46 @@
+error: The pod template hardcodes the main container's name to the Helm release name, so the raw container name is destroyed — reported as 14 "missing container" errors (CRITICAL #1).
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"# | Container name | Image | Source
+1 | interconn-kafka-entity-operator (renamed from topic-operator) | strimzi-operator:0.39.0 | Main container (name forced by chart)
+2 | user-operator | strimzi-operator:0.39.0 | Sidecar (sidecars.user-operator)
+
+What's Going Wrong
+1. Main container name is forcibly overwritten. The template at _pod-spec.tpl:119:
+
+- name: {{ include "universal-chart.name" . }}
+
+Always names the main container after the release name (interconn-kafka-entity-operator), not after what the raw manifest called it (topic-operator). So the fidelity checker finds containers["interconn-kafka-entity-operator"] but can't find containers["topic-operator"] and reports it as missing.
+2. The raw manifest has only 2 containers. topic-operator + user-operator. The chart renders 2 containers but the first one has the wrong name. So functionally the pod still has both containers - they're just named differently in the main slot.
+
+The Bottom Line
+This isn't really "missing containers" in the functional sense. It's container name mismatch. The fidelity checker is correct: containers[topic-operator] is gone. But it was renamed to the release name, not truly lost. All 14 cases follow this same pattern - the first container in the raw manifest gets its name overwritten by the chart.
+
+However, this can cause real problems when:
+- Probes/liveness checks reference container names
+- Logs are queried by container name
+- The container name was used in env vars or scripts for self-identification"
+
+"6. Root cause in template: Line 119 in _pod-spec.tpl:
+    - name: {{ include "universal-chart.name" . }}   # Always uses release name, ignoring original"
+
+CRITICAL SEVERITY TABLE ROW:
+"1 | Missing containers | Count 14 | Why: Pods crash or lose core functionality | Example: Deployment/interconn-kafka-entity-operator loses topic-operator container; Deployment/zookeeper-zbs loses oauth-proxy (auth breaks); StatefulSet/jaeger-es-master loses observability-es (the entire ES database container); StatefulSet/rfr-httpproxy-redis-redis-dba loses redis container"
+
+FIDELITY REPORT LINES CITED:
+"Lines 528, 1180: zookeeper-zbs container oauth-proxy missing"
+"Line 260: entity-operator container topic-operator missing"
+
+WORK LEFT / DECISION REQUIRED (verbatim from the report):
+"1. Decide on fix approach for container name:
+ - Option A: Make the template preserve the original main container name (add container.nameOverride or store name in values)
+ - Option B: Accept the rename as chart convention and update the fidelity checker to account for it
+ - Need user direction on which approach
+3. If fixing container names: Modify handle_main_container() to store original name in values; modify _pod-spec.tpl:119 to use it or fallback to fullname."
+
+ADDITIONAL CONTEXT / CLUES:
+- Two root causes identified: "converter doesn't preserve original main container name; template hardcodes release name".
+- Files: convert_to_universal_chart.py:613 handle_main_container() (strips original name); Universal-chart/templates/_pod-spec.tpl:119 (overwrites name); _pod-spec.tpl:79-85 (container render loop).
+- Verified evidence in the report: "Confirmed via helm template that sidecars and initContainers render correctly for zookeeper-zbs and interconn-kafka-entity-operator" and "Verified via grep of fidelity report that all 14 'missing container' cases are actually the first container's name being renamed".
+- Raw manifests used as source of truth: namespaces/interconn/zookeeper-zbs.yaml (4 containers + 1 initContainer), namespaces/interconn/interconn-kafka-entity-operator.yaml (2 containers).
+- THIS IS AN OPEN DECISION, NOT A SETTLED BUG — the next agent must pick Option A or Option B before implementing.

@@ -1,0 +1,20 @@
+error: ConfigMap and Secret names are prefixed with the release name in references — secretKeyRef.name (10 occurrences) and volumes[*].configMap.name (7 occurrences) no longer match the objects that exist in the cluster.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+HIGH: CHANGED TABLE (86 errors total):
+"Field | Count | Issue
+containers[*].image | 31 | @sha256:... digest -> :2.0.0 tag conversion
+secretKeyRef.name | 10 | ConfigMap/Secret names prefixed with release name
+serviceName (StatefulSet) | 10 | Headless service name mismatch
+containers[*].ports | 9 | Port ordering + auto-naming (port-8080)
+volumes[*].configMap.name | 7 | ConfigMap name prefixed
+serviceAccountName (CronJob) | 6 | SA name changed to match CronJob name
+volumeMounts | 4 | Array reordering/naming
+data.grafana.ini | 2 | Trailing newline difference"
+
+ADDITIONAL CONTEXT / CLUES:
+- These prefixed references are produced by the same collision resolver that renames ConfigMaps/Secrets to {owner}-{name} (convert_to_universal_chart.py:399) — see ConfigMap_Secret_Identical_Content_Duplicated.
+- The report notes the references ARE updated consistently within each release ("The volume references are updated consistently, so within each release... Both match, so it works" / "Volume Ref Also Fixed? YES"), so this is internally coherent but externally wrong: anything outside the release that referenced the original name is now broken.
+- The residual risk called out explicitly: "Volume references broken: zookeeper release's volume points to zookeeper-zookeeper-config, but that ConfigMap may be rendered by the wrong release or not at all (depends on which release actually creates it)".
+- Verification for the next agent: run `helm template` per release and confirm every secretKeyRef.name and volumes[*].configMap.name resolves to an object that release actually creates.
+- Fixing the identical-content sharing bug will reduce, but not necessarily eliminate, this count — genuine name collisions between different content must still be renamed.

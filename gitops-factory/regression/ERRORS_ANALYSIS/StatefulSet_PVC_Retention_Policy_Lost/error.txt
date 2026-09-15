@@ -1,0 +1,68 @@
+error: StatefulSet spec.persistentVolumeClaimRetentionPolicy is neither extracted by the converter nor rendered by the template, so whenDeleted/whenScaled silently fall back to the Kubernetes default "Delete" and ALL persistent data is destroyed on delete, scale-down or ArgoCD re-sync.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"The Problem: StatefulSet persistentVolumeClaimRetentionPolicy Not Rendered
+
+What It Is
+When a StatefulSet is deleted or scaled down, Kubernetes decides what happens to its PVCs (PersistentVolumeClaims - the actual data disks). This is controlled by persistentVolumeClaimRetentionPolicy:
+# Raw manifest has this:
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain    # keep PVCs when StatefulSet is deleted
+    whenScaled: Retain     # keep PVCs when scaling replicas down
+
+What Happens Now
+The Helm chart templates (statefulset.yaml) do NOT render this field. Without it, Kubernetes uses the default.
+# Rendered chart output - MISSING entirely, K8s defaults to:
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete    # <- DESTROYS data
+    whenScaled: Delete     # <- DESTROYS data
+
+What's in the raw manifests:
+StatefulSet | Data on PVC | Retention Policy
+jaeger-es-master | Elasticsearch indices (search/tracing data) | whenDeleted: Retain, whenScaled: Retain
+zookeeper | ZooKeeper ensemble data (cluster coordination) | Retain
+prometheus-prometheus | Prometheus TSDB (metrics time-series data) | Retain
+rfr-httpproxy-redis-redis-dba | Redis in-memory datastore (sessions, cache) | Retain
+postgres-try-postgresql | PostgreSQL database | Retain
+interconn-opr-postgres | PostgreSQL database (operational env) | Retain
+
+What the chart renders:
+Nothing. The statefulset.yaml template (69 lines) has zero reference to persistentVolumeClaimRetentionPolicy. The converter never extracts it. It's completely absent.
+
+What K8s does with the default:
+Without this field, the default is Delete. This means:
+Scenario | With Retain (correct) | With Delete (current default)
+Delete the StatefulSet | PVC stays, data is safe, can reattach | PVC deleted, ALL data destroyed
+Scale from 3 to 1 replica | PVCs for removed pods stay | PVCs for removed pods deleted, data lost
+ArgoCD sync/recreate | PVCs survive the cycle | PVCs wiped, full re-init needed
+
+How the data is actually destroyed:
+When ArgoCD does a sync and the StatefulSpec changes, it may:
+1. Delete the StatefulSet
+2. Create a new one with updated spec
+At step 1, with Delete policy, K8s also deletes the PVCs. The StatefulSet comes back with fresh empty disks. For:
+- Elasticsearch: All indices gone. Jaeger traces lost. ES starts as a brand-new cluster, no data.
+- Prometheus: TSDB wiped. All historical metrics gone. Fresh scrape needed, 0 history.
+- ZooKeeper: Ensemble data destroyed. Cluster membership lost, needs full re-election.
+- Redis: In-memory datastore + AOF/RDB gone. Sessions/connections lost.
+- PostgreSQL: Database files gone. Full re-initialization, all tables/queries/data lost.
+
+Why the converter missed it:
+The converter only extracts known fields from the StatefulSet spec. persistentVolumeClaimRetentionPolicy is a newer field (added in K8s 1.23, beta in 1.25, GA) - it simply wasn't in the field whitelist."
+
+CRITICAL SEVERITY TABLE ROW:
+"2 | PVC retention policy lost | Count 8 | Why: Deleting/scaling the StatefulSet will destroy all data (default is Delete, raw had Retain) | Example: StatefulSet/jaeger-es-master: whenDeleted: Retain lost -> ES indices deleted on cleanup; StatefulSet/zookeeper: ZooKeeper data destroyed; StatefulSet/prometheus-prometheus: TSDB wiped"
+
+EXTRACTION TABLE (from the same report):
+"persistentVolumeClaimRetentionPolicy | Extracted? No | Goes to values? -"
+
+conflicts_and_warnings.txt Top Pattern row:
+"persistentVolumeClaimRetentionPolicy | 18 | StatefulSet default"
+
+ADDITIONAL CONTEXT / CLUES:
+- Classified in the report's Discoveries as "2. PVC persistentVolumeClaimRetentionPolicy (P0, Real Bug): Converter and template ignore this. K8s defaults to Delete, causing data destruction on StatefulSet cleanup."
+- Locations: convert_to_universal_chart.py handle_workload() field whitelist (line 665 onward); Universal-chart/templates/statefulset.yaml (69 lines, zero references to the field).
+- THIS IS THE HIGHEST-BLAST-RADIUS DEFECT IN THE ENTIRE REPORT — it is irreversible data loss, not a rendering diff. It must be fixed before any migration/sync is performed.
+- Both the converter (extract the field into values) and the template (render it) must be changed.

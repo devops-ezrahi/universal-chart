@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dex
+  labels:
+    app: dex
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dex
+  template:
+    metadata:
+      labels:
+        app: dex
+    spec:
+      serviceAccountName: dex
+      containers:
+      - name: dex
+        image: dexidp/dex:v2.39.1
+        args:
+        - dex
+        - serve
+        - /etc/dex/config.yaml
+        ports:
+        - name: http
+          containerPort: 5556
+        - name: telemetry
+          containerPort: 5558
+        volumeMounts:
+        - name: config
+          mountPath: /etc/dex
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: telemetry
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: telemetry
+          initialDelaySeconds: 10
+          periodSeconds: 20
+      volumes:
+      - name: config
+        configMap:
+          name: dex-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dex-config
+data:
+  config.yaml: "issuer: https://dex.showcase.example.com\nstorage:\n  type: memory\nweb:\n  http: 0.0.0.0:5556\n\
+    telemetry:\n  http: 0.0.0.0:5558\nstaticClients:\n  - id: showcase-client\n    name: Showcase Client\n\
+    \    redirectURIs:\n      - https://storefront.showcase.example.com/callback\n    secretEnv: DEX_CLIENT_SECRET\n\
+    enablePasswordDB: true\nstaticPasswords:\n  - email: demo@example.com\n    hash: \"$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W\"\
+    \n    username: demo\n    userID: 08a8684b-db88-4b73-90a9-3cd1661f5466\n"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dex
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dex
+spec:
+  type: ClusterIP
+  selector:
+    app: dex
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dex
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dex
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dex
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: dex

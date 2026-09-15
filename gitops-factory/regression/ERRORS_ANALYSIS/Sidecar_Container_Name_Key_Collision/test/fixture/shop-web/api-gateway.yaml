@@ -1,0 +1,65 @@
+# Derived from namespaces-showcase/shop-web/api-gateway.yaml, with two SIDECARS
+# added (the raw showcase manifests have no multi-container pods at all).
+#
+# This is namespace 1 of 2. A second namespace, shop-web-eu/, runs a
+# microservice with the SAME FILE NAME (api-gateway) but DIFFERENT sidecars.
+# The converter groups base files by microservice name, so both land on
+# base/api-gateway.yaml — the exact mechanism error.txt describes as
+# "juseppelad-2-441 and juseppelad-2-611 both store into containers['juseppelad'],
+# the second overwrites the first".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: traefik
+          image: traefik:v3.1
+          args:
+            - --configFile=/etc/traefik/traefik.yml
+          ports:
+            - name: web
+              containerPort: 8000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/traefik
+        # SIDECAR 1 - unique to this namespace.
+        - name: oauth-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+          args:
+            - --upstream=http://127.0.0.1:8000
+          ports:
+            - name: oauth
+              containerPort: 4180
+        # SIDECAR 2 - present in BOTH namespaces, byte-identical, so it is the
+        # one entry common_subtree may legitimately hoist into base/.
+        - name: log-shipper
+          image: fluent/fluent-bit:3.0
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc
+      volumes:
+        - name: config
+          configMap:
+            name: api-gateway-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+data:
+  traefik.yml: |
+    entryPoints:
+      web:
+        address: ":8000"

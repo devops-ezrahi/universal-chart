@@ -1,0 +1,14 @@
+error: SecretStore metadata labels, ownerReferences and spec-level condition/registration fields are lost — the handler never captures labels and the template never renders conditions.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"32. SecretStore labels + ownerRef + spec conditions
+What happens: SecretStore metadata labels missing, and spec-level condition fields are absent.
+Why (labels): build_secretstore_entry never captures labels.
+Why (conditions): secretstore.yaml template doesn't render registration or conditions from values."
+
+ADDITIONAL CONTEXT / CLUES:
+- Same split failure mode as the ExternalSecret defect (see ExternalSecret_Spec_Fields_Not_Captured): the converter function is missing capture logic AND the chart template is missing render logic, so both sides need work.
+- Functions/files: build_secretstore_entry in convert_to_universal_chart.py; Universal-chart/templates/secretstore.yaml.
+- The labels half of this defect is a manifestation of the global label loss documented in Workload_Metadata_Labels_Lost (root causes A + B) — fixing the global label handling should cover it.
+- The conditions half is SecretStore-specific and must be fixed separately: spec.conditions on a SecretStore controls which namespaces may reference the store. Losing it can either widen access (if the default is permissive) or break ExternalSecrets that legitimately referenced the store from another namespace.
+- ownerReferences loss breaks Kubernetes garbage collection of the SecretStore.

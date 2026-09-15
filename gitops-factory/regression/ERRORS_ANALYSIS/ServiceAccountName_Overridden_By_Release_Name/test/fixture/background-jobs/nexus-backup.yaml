@@ -1,0 +1,63 @@
+# Derived from namespaces-showcase/background-jobs/db-migrate.yaml, reshaped to
+# the exact case error.txt names:
+#
+#   "Raw CronJob/Job has serviceAccountName: nexus, but rendered uses
+#    nexus-backup."
+#
+# The file is nexus-backup.yaml, so the release/microservice slug is
+# 'nexus-backup'. The Job and CronJob inside it both run as the PRE-EXISTING
+# 'nexus' ServiceAccount, which this release does not own and must not rename.
+# The Deployment is the control: the main workload path already captures
+# serviceAccountName, so it must keep working.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nexus-backup
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      # THE FIELD UNDER TEST - must survive as 'nexus', not become 'nexus-backup'.
+      serviceAccountName: nexus
+      containers:
+        - name: backup
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args: ["echo backing up nexus"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nexus-prune
+spec:
+  schedule: "0 4 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          # Same field, the CronJob path.
+          serviceAccountName: nexus
+          containers:
+            - name: prune
+              image: busybox:1.36
+              command: ["/bin/sh", "-c"]
+              args: ["echo pruning nexus"]
+---
+# CONTROL: a Job that names no ServiceAccount must still fall back to the
+# release-level one, so the fix must not turn the default into "default".
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nexus-verify
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: verify
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args: ["echo verifying"]

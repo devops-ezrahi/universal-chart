@@ -1,0 +1,17 @@
+error: Raw Services with no spec.selector get an app/instance label selector injected by the chart — flagged by the fidelity checker but identified in the report as INTENDED chart behaviour (a false positive in the checker).
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"35. Service selector: raw absent, rendered present
+What happens: Raw Service has no spec.selector, but rendered Service has selector with app/instance labels.
+Why: service.yaml line 20-23 has:
+
+{{- if or $spec.selector $spec.labels }}
+  {{- toYaml . | nindent 4 }}
+
+Wait, line 21 says {{- if not $spec.selector }} -- so when there's NO selector, it adds default labels as selector. This IS the intended behavior for the chart. The fidelity check should account for this."
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: FALSE POSITIVE / CHECKER DEFECT — the fix belongs in the fidelity checker, not in the converter or the chart. Do not "fix" the template here.
+- BUT NOTE the source analysis is visibly uncertain: the author first quotes line 20-23 as `{{- if or $spec.selector $spec.labels }}` and then corrects themselves mid-sentence with "Wait, line 21 says {{- if not $spec.selector }}". The actual template condition MUST be re-read at Universal-chart/templates/service.yaml lines 20-23 before acting on this — the conclusion rests on which of the two conditions is really there.
+- Behavioural risk if the analysis is wrong: a selector-less Service in Kubernetes is normally paired with a manually-managed Endpoints object (a common pattern for pointing at external/legacy backends). Injecting a selector into such a Service would make it start matching pods and silently override those manual Endpoints — that would be a REAL and serious break, not a false positive.
+- ACTION FOR THE NEXT AGENT: for each raw Service with no spec.selector, check whether a matching Endpoints/EndpointSlice object exists. If yes, this is a real bug and the template must not inject a selector. If no, confirm it as a checker false positive.

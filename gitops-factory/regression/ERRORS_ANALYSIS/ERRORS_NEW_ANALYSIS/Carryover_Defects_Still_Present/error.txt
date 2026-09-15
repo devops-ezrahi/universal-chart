@@ -1,0 +1,41 @@
+error: Nine defects from the previous analysis round are confirmed still present in this report — and three of them have HIGHER counts than before, including the data-destroying PVC retention policy loss.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+CROSS-CHECK TABLE — "Errors that MATCH between summary and report":
+"Error | Summary # | Report # | Match?
+ persistentVolumeClaimRetentionPolicy lost | 8 | 23 | Partial
+ serviceName wrong | 7 | 7 | Exact
+ serviceAccount lost | 25 | 29 | Close
+ image changed | 12 | 9 | Close
+ configMap.name broken | 7 | 6+2=8 | Close
+ data.grafana.ini changed | 2 | 4 | Close
+ spec.to.name (Route) changed | 2 | 8 | Partial
+ sidecar containers lost | 28 | 66 | Partial
+ Labels/annotations lost | 644 | 2,928 | Partial
+ Route/Service rendered by NO release | 90 | 90 | Exact"
+
+SUPPORTING DETAIL FOUND ELSEWHERE IN THE SAME SESSION:
+"VCT metadata lost | 34 | YES — spec.volumeClaimTemplates[].status/kind/apiVersion = 15 total"
+"sidecar containers | 28 | YES — spec.template.spec.containers[sidecar] = 66 total"
+"serviceAccountName changed | 2 | YES — spec.template.spec.serviceAccountName CHANGED = 4 total"
+"serviceAccount (deprecated) lost | 25 | NO (0) — but 29 spec.template.spec.serviceAccount LOST exist"
+"affinity/DNS lost | part of 28 | YES — dnsPolicy/dnsConfig captured by converter, but 0 in report"
+
+ADDITIONAL CONTEXT / CLUES:
+- THIS FOLDER EXISTS TO STOP THESE FROM BEING LOST BETWEEN THE TWO ANALYSIS ROUNDS. None of them is new. Every one has a detailed folder in the PREVIOUS analysis (ERRORS_ANALYSIS/) with root cause, code locations and fix direction already worked out. Read those files rather than re-deriving:
+  * persistentVolumeClaimRetentionPolicy -> ERRORS_ANALYSIS/StatefulSet_PVC_Retention_Policy_Lost
+  * serviceName wrong -> ERRORS_ANALYSIS/StatefulSet_ServiceName_Hardcoded_To_Fullname
+  * serviceAccount lost -> ERRORS_ANALYSIS/ServiceAccountName_Overridden_By_Release_Name and .../Legacy_ServiceAccount_Field_Lost
+  * image changed -> ERRORS_ANALYSIS/Image_Digest_Replaced_With_Mutable_Tag
+  * configMap.name broken -> ERRORS_ANALYSIS/ConfigMap_Secret_References_Prefixed_With_Release
+  * data.grafana.ini changed -> ERRORS_ANALYSIS/Grafana_ConfigMap_Trailing_Newline
+  * spec.to.name (Route) changed -> ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname
+  * sidecar containers lost -> ERRORS_ANALYSIS/Sidecar_Container_Name_Key_Collision
+  * Route/Service rendered by NO release -> ERRORS_ANALYSIS/Missing_Objects_Not_Rendered_By_Any_Release
+- THREE COUNTS MOVED IN THE WRONG DIRECTION AND ARE THE PRIORITY HERE:
+  1. persistentVolumeClaimRetentionPolicy: 8 -> 23. This is the irreversible data-loss defect — StatefulSets falling back to whenDeleted/whenScaled: Delete, destroying Elasticsearch indices, Prometheus TSDB, ZooKeeper ensemble data and PostgreSQL databases on any delete, scale-down or ArgoCD re-sync. Nearly 3x more instances than previously recorded. VERIFY THIS FIRST AND BEFORE ANY MIGRATION.
+  2. sidecar containers lost: 28 -> 66. Pods losing auth proxies, operators and exporters entirely.
+  3. spec.to.name (Route) changed: 2 -> 8.
+- THE INCREASES MAY BE MEASUREMENT, NOT REGRESSION. The two documents describe different converter runs on possibly different input sets (see Summary_Vs_Report_Data_Mismatch), so a higher count can mean "more data scanned" rather than "got worse". That ambiguity is itself the problem: right now nobody can tell whether the PVC retention defect is 3x worse or simply 3x more visible. Re-run the converter once on a single known input and settle it.
+- ONE ITEM NEEDS ITS CLASSIFICATION CORRECTED: "serviceAccount (deprecated) lost | 25 | NO (0) — but 29 spec.template.spec.serviceAccount LOST exist". The summary looked for the wrong path and concluded zero. There are 29. The previous round rated the deprecated alias as harmless (ERRORS_ANALYSIS/Legacy_ServiceAccount_Field_Lost, severity NONE) — that verdict still holds, but the count is 29, not 0.
+- "Labels/annotations lost | 644 | 2,928" is a 4.5x discrepancy on the largest category in either report. Do not plan against either number until one run is established as authoritative.

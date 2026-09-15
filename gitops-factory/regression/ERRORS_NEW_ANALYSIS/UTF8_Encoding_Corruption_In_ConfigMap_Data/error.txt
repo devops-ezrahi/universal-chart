@@ -1,0 +1,36 @@
+error: Non-ASCII characters in ConfigMap data are mangled during the YAML dump/render cycle — Ľuboš becomes Ä¾uboÅ¡ and an em-dash becomes â€" — 4 CHANGED errors. A genuine data-corruption bug.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"2. UTF-8 Encoding Corruption - 3 CHANGED errors: Non-ASCII characters (Ľuboš) in ConfigMap/rakia-zk-config data.navlogback.xml become mangled (Ä¾uboÅ¡) during YAML dump/render cycle. This is a genuine encoding bug."
+
+"3. Em-dash Encoding Corruption - 1 CHANGED error: Em-dash character — becomes â€" in ConfigMap/rakia-redis-eight-testing-config data.init-config.sh. Same encoding pipeline issue."
+
+FULLER VERSION FROM THE CATEGORY BREAKDOWN:
+"2. UTF-8 Encoding Corruption - 3 CHANGED errors
+ - Problem: Non-ASCII characters in ConfigMap data get mangled during YAML dump/r[ender]
+ - Affected: ConfigMap/rakia-zk-config - data.navlogback.xml shows Ľuboš becoming [Ä¾uboÅ¡] (encoding)
+ - Count: 3 errors across clusters
+ - Root cause: Likely encoding issue in dump_yaml() or Helm template rendering
+
+3. Em-dash Encoding Corruption - 1 CHANGED error
+ - Problem: Em-dash character — becomes â€" (UTF-8 triple byte misread as Latin-1)
+ - Affected: ConfigMap/rakia-redis-eight-testing-config - data.init-config.sh
+ - Root cause: Same encoding pipeline issue as #2"
+
+SUMMARY TABLE ROW:
+"UTF-8 corruption | 4 | navlogback.xml (3) + init-config.sh (1) — Ľuboš -> Ä¾uboÅ¡, — -> â€\""
+
+WORK LEFT (verbatim):
+"- Find the UTF-8 encoding corruption source - check dump_yaml(), YAML emitter sett[ings]"
+
+ADDITIONAL CONTEXT / CLUES:
+- CONSOLIDATED HERE: the source report lists these as separate issues #2 and #3, but itself states "Same encoding pipeline issue as #2" and merges them into a single row (count 4) in its own final summary table. One root cause, one fix.
+- THE CORRUPTION SIGNATURE IS DIAGNOSTIC AND IDENTIFIES THE BUG CLASS PRECISELY. Ľ is U+013D, encoded in UTF-8 as bytes 0xC4 0xBD; those two bytes read as cp1252 display as Ä¾. The em-dash — is U+2014, UTF-8 bytes 0xE2 0x80 0x94, which read as cp1252 display as â€". Both are textbook mojibake from decoding UTF-8 bytes with a single-byte codepage. This is not random damage and not a Helm problem.
+- WHERE TO LOOK, in priority order:
+  1. Every open() call that reads or writes YAML in convert_to_universal_chart.py. On Windows, open() with no encoding= argument defaults to the system ANSI codepage (cp1252 here), which is almost certainly the culprit. This machine is win32 — that makes it the leading suspect by a wide margin.
+  2. dump_yaml() — confirm it passes allow_unicode=True (without it PyYAML escapes non-ASCII rather than emitting it) and that the resulting string is written with encoding="utf-8".
+  3. The subprocess call that runs helm template — confirm the output is captured with encoding="utf-8".
+- REFERENCE IMPLEMENTATION ALREADY IN THIS REPO: run_all.py calls subprocess.run(..., capture_output=True, text=True, encoding="utf-8", errors="replace"). Compare the converter's own subprocess and file I/O against that known-good pattern.
+- THIS IS A REAL CORRUPTION, NOT A FORMATTING DIFF. Unlike the CA-bundle reflow and grafana.ini items in this same report, the rendered content genuinely differs from the source and the mangled bytes would be deployed to the cluster. A corrupted name inside navlogback.xml ships as corrupted; a corrupted character inside init-config.sh is executed as a shell script.
+- Affected: ConfigMap/rakia-zk-config (data.navlogback.xml, 3 instances across clusters), ConfigMap/rakia-redis-eight-testing-config (data.init-config.sh, 1 instance).
+- BROADER CHECK: grep the raw manifests for any non-ASCII byte. Only 4 errors surfaced, but that is 4 places where non-ASCII happens to exist — the bug affects 100% of non-ASCII content, so the true blast radius equals however much of it there is.

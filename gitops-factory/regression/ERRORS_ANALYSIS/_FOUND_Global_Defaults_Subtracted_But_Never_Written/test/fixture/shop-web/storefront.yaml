@@ -1,0 +1,42 @@
+# Two SIMILAR microservices in one namespace. That is all it takes.
+#
+# common_subtree over every microservice in the run produces a non-empty
+# global_defaults (workload.type, ports, service.ports, containerName,
+# image.repository ... all identical here). In namespace-scoped mode that file
+# is never written, but the subtraction from every ctx.values runs anyway, so
+# those values are deleted from the output and never reappear.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  labels:
+    app: storefront
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: storefront
+  template:
+    metadata:
+      labels:
+        app: storefront
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront
+spec:
+  type: ClusterIP
+  selector:
+    app: storefront
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

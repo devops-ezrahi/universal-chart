@@ -1,0 +1,27 @@
+error: An env var whose value is an empty map ({}) breaks env var generation — TYK_GW_ANALYTICSCONFIG_TYPE: {} in the gateway values files.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+USER PROMPT IN THE TERMINAL:
+"TYK_GW_ANALYTICSCONFIG_TYPE: {}   why isnt it good lke this"
+
+"Here's the plan:
+Fix 1: Prevent empty maps from breaking env var generation
+There are two approaches:
+1. Fix the data (converter side): Update convert_to_universal_chart.py to filter out env vars with empty {} values, or normalize them to null (so they're skipped during generation) or to { value: "" }.
+2. Fix the template (chart side): Update deployment.yaml or the _helpers.tpl mapToList helper to skip entries where the value is an empty map.
+Which approach do you prefer? Or should I do both for defense in depth?
+
+Fix 2: Clean up values files
+Remove or normalize the TYK_GW_ANALYTICSCONFIG_TYPE: {} entries in:
+ - values/bluetorch/values/gateway-tyk-gateway-dev-tst.yaml
+ - values/bluetorch-fac2/values/gateway-tyk-gateway-dev-tst.yaml"
+
+ADDITIONAL CONTEXT / CLUES:
+- An env var must render as `{name: TYK_GW_ANALYTICSCONFIG_TYPE, value: "..."}`. An empty map `{}` has neither a value nor a valueFrom, so the mapToList helper emits a malformed or empty env entry.
+- Root of the empty map: the raw manifest almost certainly had `value: ""` (empty string). The converter's map conversion turned the empty scalar into an empty dict — the same empty-value handling weakness seen in the resources: {} / securityContext: {} drops.
+- THE CORRECT NORMALIZATION IS `{ value: "" }`, NOT null/skip. An env var explicitly set to the empty string is meaningful to Tyk (it selects the default analytics config type); silently dropping the variable is NOT equivalent to setting it empty. Prefer that option over filtering.
+- AN OPEN QUESTION WAS ASKED AND NEVER ANSWERED: "Which approach do you prefer? Or should I do both for defense in depth?" The recommended answer is BOTH — normalize in the converter so the values files are correct, and guard in the template so a malformed value can never render broken YAML.
+- Affected files (fix the generator, then regenerate rather than hand-editing):
+  values/bluetorch/values/gateway-tyk-gateway-dev-tst.yaml
+  values/bluetorch-fac2/values/gateway-tyk-gateway-dev-tst.yaml
+- Fix locations: convert_to_universal_chart.py (env var capture/normalization); Universal-chart/templates/deployment.yaml and Universal-chart/templates/_helpers.tpl (mapToList helper).

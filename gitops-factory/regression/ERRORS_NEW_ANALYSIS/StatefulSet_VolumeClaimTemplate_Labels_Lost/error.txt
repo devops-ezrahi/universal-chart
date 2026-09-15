@@ -1,0 +1,44 @@
+error: StatefulSet volumeClaimTemplates lose their metadata labels and status, so generated PVCs carry no governance labels — breaking resource tracking, quota management and cost allocation.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"What to do: In the StatefulSet chart, add a volumeClaimTemplateLabels field that renders into spec.volumeClaimTemplates[].metadata.labels.
+
+Why: When the StatefulSet creates PVCs, those PVCs get no governance labels. This breaks resource tracking, quota management, and cost allocation by team/environment."
+
+TRIAGE CATEGORY FILE:
+"ERROR CATEGORY: Field Lost Status | TOTAL OCCURRENCES: 5 | NAMESPACES AFFECTED: 5
+ AFFECTED RESOURCES:
+ - StatefulSet: [statefulset-alpha-996], [statefulset-beta-764]
+ FIELDS INVOLVED:
+ - spec.volumeClaimTemplates[0].status (5x)
+ EXAMPLE DIFF (Sanitized):
+ - Raw:      spec.volumeClaimTemplates[0].status: {'phase': 'Pending'}
+ + Rendered: spec.volumeClaimTemplates[0].status: (absent)"
+
+FIELD TABLE ROW:
+"volumeClaimTemplates metadata | ~25 | apiVersion, kind, creationTimestamp, status, labels"
+
+SUPPRESSION TABLE ROW:
+"volumeClaimTemplates runtime fields | ~17 | spec/volumeClaimTemplates/*/status, kind, apiVersion, creationTimestamp"
+
+REMEDIATION TABLE ROW:
+"Suppress volumeClaimTemplate runtime (17) | -17 | 755 remaining"
+
+CROSS-CHECK TABLE ROW:
+"VCT metadata lost | 34 | YES — spec.volumeClaimTemplates[].status/kind/apiVersion = 15 total"
+
+BENIGN LIST ENTRY:
+"- StatefulSet PVC boilerplate (apiVersion, kind, status, creationTimestamp, 28 instances)"
+
+SUPPRESSION LIST ENTRY:
+"...VCT runtime fields (16), ... VCT labels (1), ..."
+
+ADDITIONAL CONTEXT / CLUES:
+- THIS BUCKET CONTAINS TWO DIFFERENT THINGS AND THEY MUST BE SPLIT — the counts blur them together, which is why the same field path appears in both the "suppress" and "fix" columns:
+  1. RUNTIME BOILERPLATE — status, kind, apiVersion, creationTimestamp (~17-28 instances). GENUINELY BENIGN. status: {'phase': 'Pending'} is server-populated runtime state that must never be in a chart; kind/apiVersion on an embedded template are redundant. SUPPRESS these.
+  2. LABELS — spec.volumeClaimTemplates[].metadata.labels (1+ instances). A REAL LOSS with a stated business consequence: PVCs created by the StatefulSet carry no team/environment labels, so they cannot be tracked, quota-managed or cost-allocated. FIX this.
+  Suppressing the whole path would silently bury the labels defect inside the boilerplate suppression. Write the suppression rule against the specific runtime keys, never against the whole volumeClaimTemplates subtree.
+- FIX: add a volumeClaimTemplateLabels values field to the StatefulSet chart that renders into spec.volumeClaimTemplates[].metadata.labels, and have the converter capture the raw labels into it.
+- The previous analysis round flagged the same thing at low severity (ERRORS_ANALYSIS/Workload_Metadata_Labels_Lost, LOW #20: "Lost PVC template labels | 2 | ZooKeeper PVCs lose team, environment labels on the PVC"). This report escalates it with a concrete rationale — cost allocation and quota — so treat the earlier LOW rating as superseded.
+- NOTE WHAT IS *NOT* IN THIS FOLDER: the far more serious StatefulSet defect from the previous round — persistentVolumeClaimRetentionPolicy being lost, causing data destruction on delete/scale — appears in the cross-check table as "persistentVolumeClaimRetentionPolicy lost | summary 8 | report 23 | Partial". That is tracked at ERRORS_ANALYSIS/StatefulSet_PVC_Retention_Policy_Lost and the count going UP from 8 to 23 deserves attention. Do not assume it was fixed.
+- Affected: statefulset-alpha-996, statefulset-beta-764 (sanitized aliases), 5 namespaces.

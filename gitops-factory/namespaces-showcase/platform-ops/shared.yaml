@@ -1,0 +1,135 @@
+# Not every namespace needs a shared Route/Ingress (platform-ops has no
+# HTTP-facing microservices) — but the multi-ServiceAccount pattern still
+# applies: two tools that operate across the whole namespace, neither tied
+# to log-agent's or metrics-agent's own pods.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-ops-diagnostics
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-ops-config-syncer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: platform-ops-diagnostics-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "events"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-ops-diagnostics-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: platform-ops-diagnostics-role
+subjects:
+  - kind: ServiceAccount
+    name: platform-ops-diagnostics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: platform-ops-config-syncer-role
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-ops-config-syncer-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: platform-ops-config-syncer-role
+subjects:
+  - kind: ServiceAccount
+    name: platform-ops-config-syncer
+---
+# Common alert thresholds both agents pull in via envFrom — shared here so
+# tuning it once affects both without editing either microservice's own file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-ops-alert-thresholds
+data:
+  CPU_ALERT_THRESHOLD_PCT: "85"
+  MEM_ALERT_THRESHOLD_PCT: "90"
+  # A string that PyYAML (YAML 1.1) does NOT consider a number and Go's yaml.v3
+  # (YAML 1.2) DOES. It therefore crossed the values file unquoted and came back
+  # from Helm as the integer 1000000000 — and `ConfigMap.data` is
+  # `map[string]string`, so the rendered object was rejected by the API server
+  # rather than merely printed differently. The report filed this as cosmetic
+  # ("Serialization issue", severity Low).
+  #
+  # Its neighbours are here as the control group: PyYAML and Go agree these three
+  # ARE numeric, so PyYAML's emitter has always quoted them and they never drifted.
+  # Keeping both kinds side by side is what shows the bug is the 1.1/1.2 gap and
+  # not "numbers in general".
+  MAX_SAMPLE_BYTES: "1e+09"
+  SCRAPE_RATIO: "0.10"
+  RULE_SCHEMA_VERSION: "1.20"
+  SERIES_LIMIT: "9007199254740993"
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: platform-ops-allow-monitoring-scrape
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 9100
+---
+# The FIRST Service object in a microservice's file always becomes the
+# chart's "primary" Service, and the primary Service can never keep a custom
+# selector (see shop-web/shared.yaml for the same reasoning applied to
+# Routes) — so, same as there, this slot is a placeholder with no real
+# backing pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-ops-shared-placeholder
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+# Extra Service (2nd Service object in this file): unlike the primary slot
+# above, this DOES keep its explicit custom selector — re-exposing
+# metrics-agent's DaemonSet pods via a stable, non-headless ClusterIP.
+# metrics-agent's OWN Service (metrics-agent.yaml) is headless
+# (clusterIP: None), built for hostNetwork peer discovery, not for a
+# scraper that wants one stable IP. 'shared' owning this means the scrape
+# target survives metrics-agent being renamed/recreated without touching
+# whatever (e.g. a Prometheus scrape config) points at this name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-ops-metrics-aggregate
+spec:
+  type: ClusterIP
+  selector:
+    app: metrics-agent
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics

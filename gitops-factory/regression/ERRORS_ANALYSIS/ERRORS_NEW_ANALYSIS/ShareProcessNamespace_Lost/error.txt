@@ -1,0 +1,36 @@
+error: spec.template.spec.shareProcessNamespace: False is lost from the rendered output — 1 occurrence, the value equals the Kubernetes default.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+TRIAGE CATEGORY FILE (error_field_lost_shareprocessnamespace.txt):
+"ERROR CATEGORY: Field Lost Shareprocessnamespace
+ TOTAL OCCURRENCES: 1
+ NAMESPACES AFFECTED: 1
+
+ AFFECTED RESOURCES:
+ - Deployment: [deployment-nu-118]
+
+ FIELDS INVOLVED:
+ - spec.template.spec.shareProcessNamespace  (1x)
+
+ EXAMPLE DIFF (Sanitized):
+ - Raw:      spec.template.spec.shareProcessNamespace: False
+ + Rendered: spec.template.spec.shareProcessNamespace: (absent)"
+
+FIDELITY REPORT LINE:
+"Line 135: Deployment/observability-otel-collector LOST at spec.template.spec.shareProcessNamespace
+ Raw had False. Default. Benign."
+
+FIELD TABLE ROW:
+"shareProcessNamespace | 1 | otel-collector"
+
+BENIGN LIST ENTRY:
+"- enableServiceLinks: false, shareProcessNamespace: false (3 instances) - Defaults."
+
+SUPPRESSION LIST ENTRY:
+"...enableServiceLinks (3), shareProcessNamespace (1), minReadySeconds (1)..."
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: benign, and consistently so across every pass in the report — unlike minReadySeconds, which got swept into the same bucket but is NOT benign. The Kubernetes default for shareProcessNamespace is false, so dropping an explicit false changes nothing.
+- THE ONE CASE THAT WOULD MATTER: shareProcessNamespace: TRUE lets containers in a pod see each other's processes — used by debugging sidecars and by some service meshes. If any workload sets it to true and that is being dropped, containers lose the ability to signal or inspect each other and the sidecar silently stops working. The report only ever cites False. Grep the raw manifests for shareProcessNamespace: true before accepting this as closed.
+- Affected: Deployment/observability-otel-collector (sanitized alias deployment-nu-118), 1 namespace, 1 occurrence.
+- Correct action: suppress in _fidelity_ignored_path() (convert_to_universal_chart.py:2953), grouped with the other pod-spec defaults — but scope the rule to shareProcessNamespace and enableServiceLinks specifically, NOT to the whole "pod template defaults" bucket, which also contains minReadySeconds (a real loss).

@@ -205,6 +205,9 @@ volumes: {}
 # ---------------------------------------------------------------------------
 # Init containers — MAP-BASED (keyed by container name)
 # ---------------------------------------------------------------------------
+# Run order for initContainers (a map renders in sorted key order otherwise).
+# Names not listed here run after the listed ones, sorted.
+# initContainerOrder: [wait-for-db, migrate]
 initContainers: {}
 # init-db:
 #   image: busybox:1.36

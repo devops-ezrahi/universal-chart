@@ -75,6 +75,22 @@ tests:
       - hasDocuments:
           count: 2
 
+  - it: should run init containers in initContainerOrder
+    set:
+      jobs:
+        migrate:
+          command: ["echo"]
+          initContainerOrder: [z-first, a-second]
+          initContainers:
+            a-second:
+              image: busybox:1.36
+            z-first:
+              image: busybox:1.36
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: z-first
+
   - it: should default restartPolicy to OnFailure
     set:
       jobs:

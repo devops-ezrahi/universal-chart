@@ -1,0 +1,27 @@
+error: Jaeger CronJobs lose spec.jobTemplate.spec.parallelism: 1 — 2 CronJobs, 2 fields — the lost value equals the Kubernetes default so the fix is optional.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"7. CronJob parallelism: 1 Not Preserved (2 CronJobs)
+
+What's wrong: Jaeger CronJobs lost spec.jobTemplate.spec.parallelism: 1.
+
+What to do: Technically this is the K8s default, so fixing it is optional. But if you want exact parity, expose parallelism in CronJob values.
+
+Why: Low priority - 1 is the default. Including it explicitly is a documentation/clarity improvement."
+
+PRIORITY TABLE ROW:
+"P8 | 2 fields | CronJob parallelism: 1 | [low]"
+
+SUPPRESSION LIST ENTRY:
+"...template namespace (2), name (5), parallelism (2), immutable (1), VCT labels (1)..."
+
+FIELD TABLE ROW (grouped):
+"CronJob K8s defaults | ~40 | terminationMessagePath, terminationMessagePolicy, dnsPolicy, schedulerName, terminationGracePeriodSeconds, parallelism, annotations, labels"
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: lowest priority item in the report (P8, the bottom of the priority table). The lost value 1 is the Kubernetes default for Job parallelism, so the rendered CronJob behaves identically.
+- THE ONLY REASON TO ACT: exact parity, if the goal is a byte-clean fidelity report rather than functional equivalence. The report frames it as "a documentation/clarity improvement", not a fix.
+- VERIFY BEFORE CLOSING, same caveat as every other default-valued field in this report: confirm no CronJob anywhere sets parallelism to something other than 1. A parallelism of 2+ that silently drops to 1 halves throughput on a batch job and would be a real regression. The report only ever cites 1.
+- CAUTION ON THE GROUPED SUPPRESSION: parallelism is bundled into the "CronJob K8s defaults (~40-44)" suppression alongside terminationMessagePath, dnsPolicy, schedulerName and terminationGracePeriodSeconds — those are genuinely inert. But that same bucket also lists "annotations, labels", which are NOT inert (see CronJob_Pod_Template_Labels_Lost, 30 errors, flagged P1 with a sidecar-injection risk). Do not suppress the bucket wholesale; enumerate the specific default-valued keys.
+- FIX IF PURSUED: expose parallelism in CronJob values in handle_cronjob() and render it in the CronJob template.
+- Affected: 2 Jaeger CronJobs.

@@ -1,0 +1,19 @@
+error: CronJob cron schedule string is corrupted during conversion — raw "46 2 * * 6" is rendered as "6 2 * * 1", moving the value 6 into the hours position.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"2. CronJob CronSchedule: 46 2 * * 6 -> 46 2 * * 1
+What happens: Raw has schedule: "46 2 * * 6" but rendered values have "6 2 * * 1" (note the 6 moved to the hours position).
+Why: Look at handle_cronjob:
+
+ctx.data["cronjobs"][name]["cronSchedule"] = entry["spec"]["schedule"]
+
+The raw value '46 2 * * 6' is stored correctly, but somewhere else in the converter's flow (likely during the microservice merge at line 1370-1451), if multiple CronJobs for the same microservice have different values, one may overwrite the other. OR this is a default subtraction issue where 6 (default for successfulJobsHistoryLimit) leaks into the schedule string during default subtraction."
+
+ADDITIONAL CONTEXT / CLUES:
+- The schedule is captured correctly at capture time; the corruption happens downstream.
+- Two competing hypotheses are stated in the source report and both must be checked:
+  1. Microservice merge collision at convert_to_universal_chart.py lines 1370-1451 — two CronJobs mapping to the same values entry name overwrite each other (same mechanism as the CronJob command/env merge conflicts).
+  2. subtract_defaults bleeding the value 6 (the chart default for successfulJobsHistoryLimit) into the schedule string.
+- Related merge-collision evidence in the same report: "When merging CronJobs into the same microservice, later entries may overwrite earlier ones. The command is captured at line 1065 but stored per-entry in cronjobs[name]. If two CronJobs map to the same values entry name, one is lost."
+- Function to inspect: handle_cronjob in convert_to_universal_chart.py.
+- Impact: the CronJob fires on the wrong day/hour — a silent functional break, not a cosmetic diff.

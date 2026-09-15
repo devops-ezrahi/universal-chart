@@ -1,0 +1,50 @@
+# Fixture for ERRORS_ANALYSIS/Container_Ports_Reordered_And_Auto_Named.
+#
+# Derived from namespaces-showcase/shop-web/api-gateway.yaml. The container
+# declares four ports covering both halves of the reported defect:
+#
+#   metrics (9090)  named, and deliberately FIRST so alphabetical ordering is
+#                   visibly different from declaration order
+#   http    (8080)  named, referenced by the Service and by the probe BY NAME
+#   9000            UNNAMED - the case that matters. Giving it the synthetic
+#                   name `port-9000` would add a name the object never had.
+#   8081            a second unnamed port, so the map needs two synthetic keys
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: gateway
+          image: nginx:1.27
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - containerPort: 9000
+              protocol: TCP
+            - containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+node_modules/
+
+# Mock raw dump — regenerate with `python generate_mock_environment.py --output namespaces --seed 42`
+namespaces/
+
+# Converter output — regenerate with `python3 run_all.py`
+output/
+output-showcase/
+output-live-demo/

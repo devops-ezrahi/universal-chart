@@ -1,0 +1,56 @@
+error: The working error summary and fidelity_report.txt describe different converter runs — several headline error types in the summary appear zero times in the report, and matched categories disagree by up to 4x.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+CROSS-CHECK TABLE — errors in the summary that are NOT in the report:
+"Error | # in summary | In report?
+ imagePullSecrets lost | 24 | NO (0)
+ secrets lost (ServiceAccount) | 24 | NO (0)
+ containers[0].resources lost | 41 | NO (0)
+ serviceAccount (deprecated) lost | 25 | NO (0) — but 29 spec.template.spec.serviceAccount LOST exist
+ progressDeadlineSeconds lost | 68 | NO (0)
+ securityContext lost | 66 | NO (0)
+ sessionAffinity lost | 44 | NO (0)
+ Job/CronJob misc config | 60 | NO (0)
+ VCT metadata lost | 34 | YES — spec.volumeClaimTemplates[].status/kind/apiVersion = 15 total
+ sidecar containers | 28 | YES — spec.template.spec.containers[sidecar] = 66 total
+ affinity/DNS lost | part of 28 | YES — dnsPolicy/dnsConfig captured by converter, but 0 in report
+ volumeMounts subPath lost | 4 | NO (0)
+ serviceAccountName changed | 2 | YES — spec.template.spec.serviceAccountName CHANGED = 4 total"
+
+"Errors in YOUR SUMMARY but NOT in the report (likely from a different run):
+ These error types do not appear at all in fidelity_report.txt:
+ - imagePullSecrets lost (24) — not present as fidelity LOST errors
+ - secrets lost (24) — not present as fidelity LOST errors
+ - containers[0].resources lost (41) — not in report at all, but 41 is your #1 HIGH error
+ - progressDeadlineSeconds lost (68) — not in report, but highest MEDIUM count
+ - securityContext lost (66) — not in report
+ - sessionAffinity lost (44) — not in report
+ - Job/CronJob misc config (60) — parallelism = 2, serviceAccount in job = 2, but not 60
+ - Pod template metadata (98) — template.metadata.name = 17, not 98"
+
+CROSS-CHECK TABLE — errors that DO match:
+"Error | Summary # | Report # | Match?
+ persistentVolumeClaimRetentionPolicy lost | 8 | 23 | Partial
+ serviceName wrong | 7 | 7 | Exact
+ serviceAccount lost | 25 | 29 | Close
+ image changed | 12 | 9 | Close
+ configMap.name broken | 7 | 6+2=8 | Close
+ data.grafana.ini changed | 2 | 4 | Close
+ spec.to.name (Route) changed | 2 | 8 | Partial
+ sidecar containers lost | 28 | 66 | Partial
+ Labels/annotations lost | 644 | 2,928 | Partial
+ Route/Service rendered by NO release | 90 | 90 | Exact"
+
+CONCLUSION (verbatim):
+"Your summary is from a different data set or a different version of the converter than fidelity_report.txt. The report's [...]"
+
+ADDITIONAL CONTEXT / CLUES:
+- THIS IS A PROCESS DEFECT, NOT A CODE DEFECT, AND IT INVALIDATES PLANNING BUILT ON THE SUMMARY. Two documents were being used interchangeably to decide priorities while describing different converter runs. Eight error types that the summary treats as significant — including its #1 HIGH (containers[0].resources, 41) and its highest MEDIUM (progressDeadlineSeconds, 68) — do not exist in the report at all.
+- READ THIS BEFORE TRUSTING ANY COUNT IN ANY OTHER FOLDER. Every folder in this analysis carries counts that vary between passes; this file explains why. The rule: fidelity_report.txt is generated output and is authoritative; the hand-maintained summary is not.
+- TWO POSSIBLE READINGS, and they have opposite implications — determine which before acting:
+  1. THE SUMMARY IS OLDER, describing a pre-fix run. Then those 8 error types were genuinely FIXED between runs, and this is good news that simply was not recorded.
+  2. THE SUMMARY IS FROM A DIFFERENT INPUT SET (a different namespace tree, or output/ vs output-showcase/). Then the 8 error types are still live in the other data set and were never fixed — they are just invisible in the report being read.
+  The previous analysis round documented every one of those 8 as a real defect (imagePullSecrets, ServiceAccount secrets, resources, progressDeadlineSeconds, securityContext, sessionAffinity, volumeMounts subPath). Their disappearance is therefore either a genuine win or a measurement artifact, and the difference matters enormously.
+- ONE COUNT MOVED THE WRONG WAY AND DESERVES IMMEDIATE ATTENTION: persistentVolumeClaimRetentionPolicy lost went from 8 in the summary to 23 in the report. That is the data-destruction defect (ERRORS_ANALYSIS/StatefulSet_PVC_Retention_Policy_Lost). If the report is the newer run, this got roughly 3x WORSE, not better. Verify this specifically and first.
+- Also note "Labels/annotations lost | 644 | 2,928 | Partial" — a 4.5x discrepancy on the largest category in the analysis.
+- ACTION: re-run the converter on a single known input set, regenerate the report, and rebuild the summary from it. Do not reconcile the two documents by hand.

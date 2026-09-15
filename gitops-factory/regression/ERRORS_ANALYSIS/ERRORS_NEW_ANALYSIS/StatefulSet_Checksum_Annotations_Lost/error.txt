@@ -1,0 +1,27 @@
+error: checksum/* annotations (checksum/config, checksum/secret-certs, checksum/secrets) are dropped from StatefulSets and Deployments — ~10-14 occurrences — auto-generated rollout-trigger hashes.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+FIDELITY REPORT LINES:
+"Lines 144-146: metadata.annotations.checksum/config, checksum/secret-certs, checksum/secrets - These are auto-generated hash annota[tions] from a Helm operator to trigger rollouts when config/secrets change. LOW. The operator regenerates them on deploy."
+
+SUPPRESSION TABLE ROW:
+"StatefulSet checksum annotations | ~10 | metadata/annotations matching ^checksum/.*"
+
+FIELD TABLE ROW:
+"StatefulSet checksum annotations | ~12 | checksum/configmap, checksum/secret, etc."
+
+SUPPRESSION LIST ENTRY:
+"...VCT labels (1), checksum annotations (14), Jaeger C[ronJob] annotations/labels (4)..."
+
+REMEDIATION TABLE ROW:
+"Suppress checksum annotations (~10) | -10 | 772 remaining"
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: LOW / benign, on the stated grounds that "the operator regenerates them on deploy". The suppression rule is already specified precisely: metadata/annotations matching ^checksum/.*
+- WHAT THESE ANNOTATIONS DO: they hold a hash of the referenced ConfigMap/Secret content. When the content changes, the hash changes, the pod template changes, and Kubernetes performs a rolling restart. This is the standard Helm idiom for "restart my pods when their config changes" — without it, a ConfigMap update leaves the running pods on the OLD config indefinitely, because nothing in the pod spec changed.
+- THEREFORE THE BENIGN VERDICT DEPENDS ENTIRELY ON WHO REGENERATES THEM, and this needs confirming rather than assuming:
+  * If a Helm OPERATOR recreates them on every deploy (as the report claims), nothing is lost.
+  * If the Universal-chart itself is expected to compute them, and it does not, then config changes stop triggering restarts. That is a silent, delayed failure — the ConfigMap updates, ArgoCD reports Synced and Healthy, and the pods keep serving stale configuration until something unrelated restarts them. It is very hard to diagnose after the fact.
+- THE CHECK: does Universal-chart contain a checksum/config annotation template (the usual form being sha256sum of the rendered ConfigMap)? If not, and no operator supplies one, this is a real regression regardless of the LOW rating.
+- Counts vary by pass: ~10 (suppression table), ~12 (field table), 14 (suppression list). Same defect.
+- Affected: StatefulSets and Deployments, including Deployment/tyk-yuval (see Deployment_MinReadySeconds_Lost — the checksum annotations and the minReadySeconds loss are on the same object, lines 143-147, but only minReadySeconds is a real loss).

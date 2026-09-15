@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  labels:
+    app: storefront
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: storefront
+  template:
+    metadata:
+      labels:
+        app: storefront
+    spec:
+      serviceAccountName: storefront
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - name: http
+          containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: shared-ca-bundle
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 20
+        volumeMounts:
+        - name: site
+          mountPath: /usr/share/nginx/html
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d
+        - name: audit-log
+          mountPath: /var/log/audit
+      volumes:
+      - name: site
+        configMap:
+          name: storefront-site
+      - name: nginx-conf
+        configMap:
+          name: storefront-nginx-conf
+      - name: audit-log
+        persistentVolumeClaim:
+          claimName: shop-web-audit-log
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storefront-site
+data:
+  index.html: '<!doctype html>
+
+    <html><body><h1>Shop Web Storefront</h1></body></html>
+
+    '
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storefront-nginx-conf
+data:
+  default.conf: "server {\n  listen 8080;\n  root /usr/share/nginx/html;\n  location / {\n    try_files\
+    \ $uri /index.html;\n  }\n}\n"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: storefront
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shop-web-audit-log
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront
+spec:
+  type: ClusterIP
+  selector:
+    app: storefront
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: storefront
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: storefront
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: storefront
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: storefront

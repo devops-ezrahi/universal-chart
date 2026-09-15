@@ -1,0 +1,20 @@
+error: ownerReferences linking Thanos workloads to StoreEndpoint and Thanos CRDs are lost — 2-4 occurrences — operator-managed garbage-collection references.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+FIDELITY REPORT LINES:
+"Lines 112-120: Thanos deployments - 8 additional LOST fields
+ - Lines 116, 120: ownerReferences lost - links to StoreEndpoint and Thanos CRDs. These are operator-managed garbage collection refe[rences]. Benign. (operator re-creates them)"
+
+BENIGN LIST ENTRY:
+"- Thanos ownerReferences (4 instances) - Operator-managed. Operator recreates them."
+
+SUPPRESSION LIST ENTRY:
+"...enableServiceLinks (3), shareProcessNamespace (1), minReadySeconds (1), ownerReferences (2), template namespace (2)..."
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: benign IF AND ONLY IF the Thanos Banzaicloud operator is running in the target cluster. The entire justification is the parenthetical "(operator re-creates them)" — that is a dependency, not a property of the field.
+- WHAT ownerReferences ACTUALLY DO: they are Kubernetes' garbage-collection graph. When the owner (here a StoreEndpoint or Thanos CRD) is deleted, everything holding an ownerReference to it is cascade-deleted. Losing the reference does not break anything while everything is running — it breaks CLEANUP. The workload becomes an orphan that survives deletion of its parent and has to be removed by hand, or lingers consuming resources indefinitely.
+- THE CHECK THAT DECIDES THIS: confirm the Thanos operator is deployed in the migration target and is reconciling these objects. If it is, it rewrites ownerReferences on its next pass and nothing is lost. If it is NOT — or if these workloads are being migrated away from operator management onto plain Helm — the references never return and the garbage-collection graph is permanently broken.
+- A SECOND, SUBTLER RISK: ArgoCD uses ownerReferences to decide which resources are "children" it should not manage directly. Losing them can cause ArgoCD to treat operator-created resources as unmanaged drift, producing perpetual out-of-sync status or, worse, pruning them.
+- NOTE THE CONFLICT WITH ANOTHER FINDING IN THE SAME REPORT: the ExternalSecret analysis in the previous round flagged ownerReferences loss as a real defect requiring a fix (ERRORS_ANALYSIS/ExternalSecret_Spec_Fields_Not_Captured), while this one is waved through as benign. The difference is legitimate — ExternalSecret owners are not operator-recreated — but it means "ownerReferences lost" is not a single verdict. Judge each by whether something recreates them.
+- Count varies: 2 (suppression list) vs 4 (benign list). Affected: Thanos deployments, references to StoreEndpoint and Thanos CRDs.

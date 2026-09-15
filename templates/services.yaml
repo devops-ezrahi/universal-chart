@@ -24,6 +24,17 @@ spec:
   {{- with $spec.externalName }}
   externalName: {{ . }}
   {{- end }}
+  {{- with $spec.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  {{- with $spec.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $spec.externalIPs }}
+  externalIPs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- /* These three are rendered by service.yaml for the PRIMARY Service but
          were absent here, so every ADDITIONAL Service silently lost them:
          a second LoadBalancer dropped `externalTrafficPolicy: Local` (and with

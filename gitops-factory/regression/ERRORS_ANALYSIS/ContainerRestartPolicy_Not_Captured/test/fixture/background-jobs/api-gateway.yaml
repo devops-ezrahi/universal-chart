@@ -1,0 +1,25 @@
+# A Deployment carrying the same container-level restartPolicy, so the defect is
+# covered for the main workload container too and not only for Jobs. Derived
+# from namespaces-showcase/shop-web/api-gateway.yaml, reduced to one container
+# plus the native-sidecar initContainer.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  replicas: 2
+  template:
+    spec:
+      initContainers:
+        - name: config-watcher
+          image: busybox:1.36
+          restartPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do sleep 30; done"]
+      containers:
+        - name: gateway
+          image: nginx:1.27
+          restartPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080

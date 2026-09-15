@@ -1,0 +1,11 @@
+# Derived from namespaces-showcase/platform-ops/shared.yaml, reduced to the one
+# object needed here. A 'shared' release holds namespace-wide config and RBAC and
+# declares NO workload and NO Service — which is exactly why the values it does
+# carry (workload.type: none, service.enabled: false) are the ones a global
+# defaults subtraction can silently remove.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-data-shared-config
+data:
+  LOG_LEVEL: warn

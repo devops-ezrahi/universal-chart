@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  labels:
+    app: opa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      # Pod-TEMPLATE metadata, as an operator or a live-cluster dump writes it.
+      # All three are inert and all three are stripped at the boundary:
+      #   name              Kubernetes ignores it entirely — pod names come from
+      #                     the controller name plus a hash.
+      #   namespace         inherited; setting it to anything else is invalid.
+      #   creationTimestamp server-populated.
+      # Kept here so the strip has something to strip; a corpus without them
+      # cannot tell "handled" from "never encountered".
+      name: opa
+      namespace: identity-auth-prd
+      creationTimestamp: null
+      labels:
+        app: opa
+    spec:
+      serviceAccountName: opa
+      # The Kubernetes default is TRUE, so this is a deliberate opt-out and not
+      # a restatement of the default — which is what the report got backwards
+      # ("false is the K8s default, omitted by chart"). Service links inject a
+      # {SVCNAME}_SERVICE_HOST / _PORT pair for every Service in the namespace,
+      # and an injected name can collide with an application's own variable and
+      # override it at runtime.
+      #
+      # It sits next to shareProcessNamespace below on purpose: that one's
+      # default IS false, so losing it costs nothing, and having both in one pod
+      # spec is what keeps the two verdicts from being confused again.
+      enableServiceLinks: false
+      shareProcessNamespace: false
+      containers:
+      - name: opa
+        image: openpolicyagent/opa:0.65.0
+        command:
+        - /opa
+        - run
+        - --server
+        - --addr=0.0.0.0:8181
+        ports:
+        - name: http
+          containerPort: 8181
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 20
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opa
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+spec:
+  type: ClusterIP
+  selector:
+    app: opa
+  ports:
+  - name: http
+    port: 8181
+    targetPort: http
+---
+# The corpus' first OpenShift Route. Until this existed, `namespaces-showcase`
+# contained ZERO Routes, so the round-trip fidelity check reported 0 for the
+# largest defect class in the whole analysis (613-705 lost Route labels) purely
+# because it had nothing to look at. The governance labels below are the exact
+# set the report names: team / environment / critical / operational /
+# operational.purpose, plus an OpenShift runtime label and the OpenTelemetry
+# opt-in whose loss silently disables instrumentation.
+#
+# argocd.argoproj.io/instance is deliberately present here and deliberately NOT
+# expected in the render: ArgoCD writes it at sync time, and a chart that
+# guessed at an Application name would fight ArgoCD's own tracking on the next
+# sync. It is the one label the report marks unavoidable, and carrying it in
+# this manifest is what proves the suppression is scoped to that single key
+# rather than to labels in general.
+#
+# Hosted on `opa` because it is the one workload here with no Ingress — the
+# chart refuses to render both ("ingress.enabled and route.enabled cannot both
+# be true") — and because opa exists only in this namespace, so there is no
+# shared base for a Route in one environment and an Ingress in another to
+# fight over.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: opa-route
+  labels:
+    team: identity-auth
+    environment: prd
+    critical: "true"
+    operational: "false"
+    operational.purpose: policy-decision-endpoint
+    app.openshift.io/runtime: golang
+    opentelemetry.io/enabled: "true"
+    argocd.argoproj.io/instance: identity-auth-prd-opa
+  annotations:
+    haproxy.router.openshift.io/balance: roundrobin
+spec:
+  host: opa.apps.example.com
+  to:
+    kind: Service
+    name: opa
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

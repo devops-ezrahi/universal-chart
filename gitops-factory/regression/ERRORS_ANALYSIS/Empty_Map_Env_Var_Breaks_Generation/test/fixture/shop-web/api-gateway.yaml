@@ -1,0 +1,33 @@
+# Fixture for ERRORS_ANALYSIS/Empty_Map_Env_Var_Breaks_Generation.
+#
+# Derived from namespaces-showcase/shop-web/api-gateway.yaml. Three env vars
+# cover the three shapes that reduce to an empty body:
+#
+#   GW_ANALYTICS_TYPE   value: ""   the empty string, which is what the report's
+#                                   TYK_GW_ANALYTICSCONFIG_TYPE almost certainly
+#                                   was before the conversion turned it into {}
+#   GW_EMPTY_MAP        value: {}   the corrupted form the report actually saw
+#   GW_BARE             no value    a name with nothing under it at all
+#
+# All three must render as `value: ""`. An env var explicitly set to the empty
+# string is meaningful - it is how a program is told to fall back to its own
+# default - so dropping the variable is NOT equivalent to setting it empty.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: gateway
+          image: nginx:1.27
+          env:
+            - name: GW_ANALYTICS_TYPE
+              value: ""
+            - name: GW_EMPTY_MAP
+              value: {}
+            - name: GW_BARE
+            - name: GW_REAL
+              value: keep-me

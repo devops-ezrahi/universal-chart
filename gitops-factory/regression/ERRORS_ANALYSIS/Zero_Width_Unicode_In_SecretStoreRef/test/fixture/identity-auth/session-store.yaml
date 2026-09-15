@@ -1,0 +1,49 @@
+# Fixture for ERRORS_ANALYSIS/Zero_Width_Unicode_In_SecretStoreRef.
+#
+# Derived from namespaces-showcase/identity-auth/session-store.yaml. The ONLY
+# change is invisible: a U+200C ZERO WIDTH NON-JOINER sits between the 'e' and
+# the 'c' of "SecretStore" in spec.secretStoreRef.kind, and another sits inside
+# the ExternalSecret's own metadata.name. Both look completely normal in a
+# terminal, in a diff and in a code review.
+#
+# This is the report's issue 23. The character is a defect in the SOURCE DATA,
+# not in the conversion logic - but the converter is the only place allowed to
+# repair it, because the raw manifests are the source of truth and must not be
+# edited (the campaign's hard constraints say so explicitly).
+#
+# A ConfigMap is included whose DATA also contains a zero-width character, to
+# pin that the sanitiser does not touch payload - only identifiers.
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: session-store-vault
+spec:
+  provider:
+    vault:
+      server: https://vault.devops-ezrahi.duckdns.org
+      path: secret
+      version: v2
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: session-store-sig‌ning-key
+spec:
+  secretStoreRef:
+    name: session-store-vault
+    kind: Se‌cretStore
+  refreshInterval: 1h
+  target:
+    creationPolicy: Owner
+  data:
+    - secretKey: signingKey
+      remoteRef:
+        key: identity-auth/session-store
+        property: signingKey
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: session-store-messages
+data:
+  greeting: "hello‌world"

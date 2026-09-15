@@ -1,0 +1,42 @@
+# Fixture for ERRORS_ANALYSIS/ServiceAccount_Secrets_And_ImagePullSecrets_Lost.
+#
+# Derived from namespaces-showcase/shop-web/api-gateway.yaml. The ServiceAccount
+# carries BOTH kinds of reference at once, because the whole folder turns on
+# telling them apart:
+#
+#   api-gateway-dockercfg-x9z8y   OpenShift's integrated-registry controller
+#                                 generated this. The Secret it names does not
+#                                 exist on a vanilla cluster, so copying the
+#                                 reference points at nothing.
+#   acme-registry-creds           a hand-added private-registry credential.
+#                                 Drop it and every pod using this SA fails
+#                                 ImagePullBackOff.
+#   api-gateway-token-a1b2c       a ServiceAccount token reference. Kubernetes
+#                                 creates and rotates these itself.
+#
+# All 278 imagePullSecrets in this repo's raw manifests match the auto-generated
+# pattern; zero are custom (STATUS.md section 1). `acme-registry-creds` is the
+# case that does not occur here and would be catastrophic if it did.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-gateway
+imagePullSecrets:
+  - name: api-gateway-dockercfg-x9z8y
+  - name: acme-registry-creds
+secrets:
+  - name: api-gateway-token-a1b2c
+  - name: api-gateway-dockercfg-x9z8y
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  replicas: 1
+  template:
+    spec:
+      serviceAccountName: api-gateway
+      containers:
+        - name: gateway
+          image: registry.acme.example.com/api-gateway:1.0.0

@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  # Kubernetes defaults BOTH halves to `Delete`, so a StatefulSet that declares
+  # `Retain` and converts without it comes back looking identical and then
+  # destroys this database's PVC — and the data on it — the first time it is
+  # deleted, scaled down, or recreated by an ArgoCD sync. It is the one
+  # carryover defect whose loss is irreversible, and until now no manifest in
+  # this corpus carried the field at all, so the fidelity report read 0 for it
+  # both before and after the fix that added it. Declared here so the round-trip
+  # check is the tripwire rather than a fixture nobody re-runs.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+      annotations:
+        # A hash of this StatefulSet's ConfigMap/Secret content, maintained by
+        # whatever deployed it, and the standard Helm idiom for "restart my pods
+        # when their config changes" — without it a Secret update leaves the
+        # running pods on the OLD credentials indefinitely, because nothing in
+        # the pod spec changed.
+        #
+        # The VALUE must not survive conversion: it hashes the source cluster's
+        # content and would be stale on arrival. The BEHAVIOUR must, and the
+        # chart can provide it (checksums.enabled), so the converter reads the
+        # presence of these keys as the signal to turn it on.
+        checksum/secrets: 8f14e45fceea167a5a36dedd4bea2543
+        checksum/config: c4ca4238a0b923820dcc509a6f75849b
+    spec:
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 999:999 /var/lib/postgresql/data"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: appuser
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: POSTGRES_DB
+              value: appdb
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "appuser"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "appuser"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+  volumeClaimTemplates:
+    # Shaped like a real `oc get statefulset -o yaml` dump, which is what the
+    # converter is actually fed. Two different things are mixed together here
+    # on purpose, because the report bundles them into one row and they have
+    # opposite verdicts:
+    #
+    #   metadata.labels          REAL LOSS  -> carried into values and rendered.
+    #                            The PVCs this template creates inherit them,
+    #                            and nothing else gives a generated PVC any
+    #                            team/cost-centre metadata.
+    #   status / creationTimestamp  RUNTIME NOISE -> stripped by sanitize_object.
+    #                            Server-populated; must never reach a chart.
+    #
+    # Keeping both in the corpus is what stops a future "suppress the
+    # volumeClaimTemplates subtree" change from silently taking the labels with
+    # it.
+    - metadata:
+        name: data
+        creationTimestamp: null
+        labels:
+          team: platform-data
+          environment: dev
+          cost-centre: cc-4471
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+      status:
+        phase: Pending
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+type: Opaque
+stringData:
+  password: "showcase-change-me-123"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

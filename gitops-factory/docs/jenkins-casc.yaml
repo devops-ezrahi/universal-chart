@@ -1,0 +1,765 @@
+jenkins:
+  systemMessage: "Welcome to Jenkins <censored: team codename>"
+  numExecutors: 0
+  labelString: "master"
+  mode: EXCLUSIVE
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key: "REGISTRY_URL"
+            value: "<censored: internal artifactory domain>"
+          - key: "JFROG_REGISTRY"
+            value: "<censored: internal artifactory domain>"
+  securityRealm:
+    # local:
+    #  users:
+    #     - id: admin
+    #       password: admin
+    oic:
+      allowedTokenExpirationClockSkewSeconds: 0
+      clientId: "${OIC_CLIENT_ID}"
+      clientSecret: "${OIC_CLIENT_SECRET}"
+      disableSslVerification: false
+
+      escapeHatchSecret: "${OIC_ESCAPE_HATCH_SECRET}"
+      escapeHatchUsername: "${OIC_ESCAPE_HATCH_USERNAME}"
+      escapeHatchEnabled: true
+      escapeHatchGroup: 'admins'
+
+      groupIdStrategy: "caseSensitive"
+      logoutFromOpenidProvider: false
+      serverConfiguration:
+        wellKnown:
+          scopesOverride: "openid role"
+          wellKnownOpenIDConfigurationUrl: "${OIC_WELL_KNOWN}"
+      userIdStrategy: "caseSensitive"
+      userNameField: "sub"
+      groupsFieldName: "role"
+
+  authorizationStrategy:
+    roleBased:
+      roles:
+        global:
+        - name: "admin"
+          entries:
+          - group: "<censored: ldap group dn>"
+          - user: "admin"
+          pattern: ".*"
+          permissions:
+          - "Overall/Administer"
+        - name: "team"
+          entries:
+            - group: "<censored: ldap group dn>"
+            - group: "<censored: ldap group dn>"
+            - group: "<censored: ldap group dn>"
+            - group: "<censored: ldap group dn>"
+            - group: "<censored: ldap group dn>"
+            - user: "<censored: service account username>"
+          pattern: ".*"
+          permissions:
+            - "Overall/Read"
+        items:
+        - name: "team-<censored: team codename>"
+          entries:
+          - group: "<censored: ldap group dn>"
+          pattern: "(?i)<censored: team pattern>(?:$|/.*)"
+          permissions: &developerPermissions
+          - "Job/Build"
+          - "Credentials/Delete"
+          - "Credentials/ManageDomains"
+          - "View/Create"
+          - "Job/Read"
+          - "Credentials/View"
+          - "Credentials/Update"
+          - "Run/Replay"
+          - "Run/Delete"
+          - "Job/Cancel"
+          - "Run/Update"
+          - "Credentials/Create"
+          - "View/Delete"
+          - "Job/Workspace"
+          - "View/Read"
+          - "View/Configure"
+        - name: "team-<censored: team codename>"
+          entries:
+          - group: "<censored: ldap group dn>"
+          - group: "<censored: ldap group dn>"
+          - user: '<censored: user id>' #<censored: user name>
+          pattern: "(?i)<censored: team pattern>.*|<censored: team pattern>.*|<censored: argocd pattern>(?:/(?:<censored: pattern>.*|<censored: pattern>.*))?"
+          permissions: *developerPermissions
+        - name: "team-<censored: team codename>"
+          entries:
+          - group: "<censored: ldap group dn>"
+          - user: "<censored: service account username>"
+          - user: '<censored: user id>' #<censored: user name>
+          pattern: "(?i)<censored: team pattern>($|/.*)|<censored: argocd pattern>(/<censored: team pattern>.*)?"
+          permissions: *developerPermissions
+        - name: "team-<censored: team codename>"
+          entries:
+          - group: "<censored: ldap group dn>"
+          pattern: "(?i)<censored: team pattern>($|/.*)"
+          permissions: *developerPermissions
+        - name: "team-<censored: team codename>"
+          entries:
+          - group: "<censored: ldap group dn>"
+          - user: '<censored: user id>' #<censored: user name>
+          pattern: "(?i)<censored: team pattern>($|/.*)|<censored: argocd pattern>(/<censored: team pattern>.*)?"
+          permissions: *developerPermissions
+        - name: "team-<censored: team codename>"
+          entries:
+          - user: "<censored: user id>" #<censored: user name>
+          pattern: "<censored: argocd pattern>(/<censored: team pattern>.*)?"
+          permissions: *developerPermissions
+  crumbIssuer:
+    standard:
+      excludeClientIPFromCrumb: true
+  clouds:
+    - kubernetes:
+        name: "kubernetes"
+        namespace: "{{ .Release.Namespace }}"
+        jenkinsUrl: "http://{{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local:8080"
+        webSocket: true
+        waitForPodSec: 180
+        templates: &templates
+          - name: "kubeagent-jnlp"
+            label: "kubeagent-jnlp"
+            containers:
+              - name: "jnlp"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                alwaysPullImage: true
+                args: "-noCertificateCheck"
+          - name: "ubi8"
+            label: "ubi8"
+            containers:
+              - name: "ubi8"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "ubi9"
+            label: "ubi9"
+            containers:
+              - name: "ubi9"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "yq"
+            label: "yq"
+            containers:
+              - name: "yq"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: buildkit-rootless
+            label: "buildkit-rootless"
+            containers:
+              - name: buildkit-rootless
+                image: <censored: internal image path>
+                resourceLimitEphemeralStorage: 7Gi
+                alwaysPullImage: true
+                args: "--oci-worker-no-process-sandbox"
+                envVars:
+                - envVar:
+                    key: "XDG_RUNTIME_DIR"
+                    value: "/home/user/.local/tmp"
+                - envVar:
+                    key: "TMPDIR"
+                    value: "/home/user/.local/tmp"
+                privileged: true
+                runAsUser: 1000
+            volumes:
+            - emptyDirVolume:
+                memory: false
+                mountPath: "/home/user/.local/tmp"
+            - emptyDirVolume:
+                memory: false
+                mountPath: "/home/user/.local/share/buildkit"
+            - secretVolume:
+                mountPath: "/home/user/.docker"
+                optional: false
+                secretName: "docker-credentials"
+          - name: buildkit-rootful
+            label: "buildkit-rootful"
+            containers:
+              - name: buildkit-rootful
+                image: <censored: internal image path>
+                resourceLimitEphemeralStorage: 7Gi
+                alwaysPullImage: true
+                privileged: true
+                runAsUser: 0
+                envVars:
+                - envVar:
+                    key: TMPDIR
+                    value: "/tmp/buildkit"
+            volumes:
+            - emptyDirVolume:
+                memory: false
+                mountPath: "/tmp/buildkit"
+            - emptyDirVolume:
+                memory: false
+                mountPath: "/run/buildkit"
+            - emptyDirVolume:
+                memory: false
+                mountPath: "/var/lib/buildkit"
+            - secretVolume:
+                mountPath: "/home/user/.docker"
+                optional: false
+                secretName: "docker-credentials"
+          - name: buildkit
+            label: "buildkit"
+            containers:
+              - name: buildkit
+                image: <censored: internal image path>
+                resourceLimitEphemeralStorage: 7Gi
+                alwaysPullImage: true
+                privileged: true
+                runAsUser: 0
+                envVars:
+                - envVar:
+                    key: TMPDIR
+                    value: "/tmp/buildkit"
+            volumes:
+            - emptyDirVolume:
+                memory: false
+                mountPath: "/tmp/buildkit"
+            - emptyDirVolume:
+                memory: false
+                mountPath: "/run/buildkit"
+            - emptyDirVolume:
+                memory: false
+                mountPath: "/var/lib/buildkit"
+            - secretVolume:
+                mountPath: "/home/user/.docker"
+                optional: false
+                secretName: "docker-credentials"
+          - name: "mvn353-java11"
+            label: "mvn353-java11"
+            containers:
+              - name: "mvn353-java11"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "rti-mvn353-java11"
+            label: "rti-mvn353-java11"
+            containers:
+              - name: "rti-mvn353-java11"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "mvn353-java17"
+            label: "mvn353-java17"
+            containers:
+              - name: "mvn353-java17"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "mvn353-java17-python311"
+            label: "mvn353-java17-python311"
+            containers:
+              - name: "mvn353-java17-python311"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "temp-<censored: team codename>-mvn353-java17-python311"
+            label: "temp-<censored: team codename>-mvn353-java17-python311"
+            containers:
+              - name: "temp-<censored: team codename>-mvn353-java17-python311"
+                image: "<censored: internal image path>"
+                resourceRequestCpu: "100m"
+                resourceRequestMemory: "4Gi"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "rti-mvn353-java17"
+            label: "rti-mvn353-java17"
+            containers:
+              - name: "rti-mvn353-java17"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "mvn397-java17"
+            label: "mvn397-java17"
+            containers:
+              - name: "mvn397-java17"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "rti-mvn397-java17"
+            label: "rti-mvn397-java17"
+            containers:
+              - name: "rti-mvn397-java17"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "rti7-mvn397-java17"
+            label: "rti7-mvn397-java17"
+            containers:
+              - name: "rti7-mvn397-java17"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "rti7-mvn353-jdk17"
+            label: "rti7-mvn353-jdk17"
+            containers:
+              - name: "rti7-mvn353-jdk17"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "node16"
+            label: "node16"
+            containers:
+              - name: "node16"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "node18"
+            label: "node18"
+            containers:
+              - name: "node18"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "node18-pnpm"
+            label: "node18-pnpm"
+            containers:
+              - name: "node18-pnpm"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "node20"
+            label: "node20"
+            containers:
+              - name: "node20"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "node22"
+            label: "node22"
+            containers:
+              - name: "node22"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "node24"
+            label: "node24"
+            containers:
+              - name: "node24"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "semantic-release"
+            label: "semantic-release"
+            containers:
+              - name: "semantic-release"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "sonar"
+            label: "sonar"
+            containers:
+              - name: "sonar"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "python311"
+            label: "python311"
+            containers:
+              - name: "python311"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "rpm-build"
+            label: "rpm-build"
+            containers:
+              - name: "rpm-build"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+          - name: "oc-git"
+            label: "oc-git"
+            containers:
+              - name: "oc-git"
+                image: "<censored: internal image path>"
+                workingDir: "/home/jenkins/agent"
+                command: "sleep"
+                args: "99d"
+                alwaysPullImage: true
+    - kubernetes:
+        name: 'cluster-<censored: team codename>'
+        namespace: '<censored: namespace>'
+        jenkinsUrl: "https://{{ tpl .Values.route.host $ }}"
+        waitForPodSec: 180
+        credentialsId: "cluster-<censored: team codename>-service-account-token"
+        serverUrl: "https://api.<censored: internal cluster domain>"
+        webSocket: true
+        templates: *templates
+  nodes:
+    - permanent:
+        labelString: "dev-<censored: team codename>-win2 windows"
+        launcher:
+          ssh:
+            credentialsId: "windows-ssh-user"
+            host: "dev-<censored: team codename>-win2"
+            javaPath: "\"C:\\Program Files\\Java\\jdk-17.0.2\\bin\\java\""
+            port: 22
+            sshHostKeyVerificationStrategy:
+              manuallyTrustedKeyVerificationStrategy:
+                requireInitialManualTrust: false
+        mode: EXCLUSIVE
+        name: "dev-<censored: team codename>-win2"
+        remoteFS: "C:\\software\\jenkins-{{ .Values.appset.name }}"
+        retentionStrategy: "always"
+    - permanent:
+        labelString: "<censored: docker host> docker"
+        mode: EXCLUSIVE
+        name: "<censored: docker host>"
+        remoteFS: "/software/jenkins"
+        numExecutors: 5
+        nodeProperties:
+          - envVars:
+              env:
+                - key: "DOCKER_BUILDKIT"
+                  value: "1"
+        launcher:
+          ssh:
+            credentialsId: "docker-ssh-user"
+            host: "<censored: docker host>"
+            port: 22
+            launchTimeoutSeconds: 60
+            maxNumRetries: 3
+            retryWaitTime: 120
+            sshHostKeyVerificationStrategy:
+              manuallyTrustedKeyVerificationStrategy:
+                requireInitialManualTrust: false
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - vaultKubernetesCredential:
+              id: "Vault-Kubernetes"
+              mountPath: "{{ .Values.cluster.name }}"
+              role: "k8s-role-{{ .Values.cluster.name }}-{{ .Release.Namespace }}-jenkins"
+              scope: GLOBAL
+              usePolicies: false
+          - usernamePassword:
+              id: "<censored: devops bitbucket service account>"
+              scope: GLOBAL
+              username: "${DOMA_BB_SA_USERNAME}"
+              password: "${DOMA_BB_SA_PASSWORD}"
+          - usernamePassword:
+              id: "<censored: team bitbucket service account>"
+              scope: GLOBAL
+              username: "${BT_BB_SA_USERNAME}"
+              password: "${BT_BB_SA_PASSWORD}"
+          - usernamePassword:
+              id: "<censored: team bitbucket service account>"
+              scope: GLOBAL
+              username: "${FTR_BB_SA_USERNAME}"
+              password: "${FTR_BB_SA_PASSWORD}"
+          - usernamePassword:
+              id: "<censored: team bitbucket service account>"
+              scope: GLOBAL
+              username: "${HAGNA_BB_SA_USERNAME}"
+              password: "${HAGNA_BB_SA_PASSWORD}"
+          - usernamePassword:
+              id: "<censored: team bitbucket service account>"
+              scope: GLOBAL
+              username: "${METROAIR_BB_SA_USERNAME}"
+              password: "${METROAIR_BB_SA_PASSWORD}"
+          - usernamePassword:
+              id: "<censored: team bitbucket service account>"
+              scope: GLOBAL
+              username: "${PAZ_BB_SA_USERNAME}"
+              password: "${PAZ_BB_SA_PASSWORD}"
+          - usernamePassword:
+              id: "<censored: team bitbucket service account>"
+              scope: GLOBAL
+              username: "${RIZ_BB_SA_USERNAME}"
+              password: "${RIZ_BB_SA_PASSWORD}"
+          - usernamePassword:
+              id: "<censored: team bitbucket service account>"
+              scope: GLOBAL
+              username: "${RAK_BB_SA_USERNAME}"
+              password: "${RAK_BB_SA_PASSWORD}"
+              ###################################
+          - basicSSHUserPrivateKey:
+              id: "<censored: devops bitbucket service account ssh>"
+              scope: GLOBAL
+              username: "${DOMA_BB_SA_USERNAME}"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${DOMA_BB_SA_PRIV_KEY}"
+          - basicSSHUserPrivateKey:
+              id: "<censored: team bitbucket service account ssh>"
+              scope: GLOBAL
+              username: "${BT_BB_SA_USERNAME}"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${BT_BB_SA_PRIV_KEY}"
+          - basicSSHUserPrivateKey:
+              id: "<censored: team bitbucket service account ssh>"
+              scope: GLOBAL
+              username: "${FTR_BB_SA_USERNAME}"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${FTR_BB_SA_PRIV_KEY}"
+          - basicSSHUserPrivateKey:
+              id: "<censored: team bitbucket service account ssh>"
+              scope: GLOBAL
+              username: "${HAGNA_BB_SA_USERNAME}"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${HAGNA_BB_SA_PRIV_KEY}"
+          - basicSSHUserPrivateKey:
+              id: "<censored: team bitbucket service account ssh>"
+              scope: GLOBAL
+              username: "${METROAIR_BB_SA_USERNAME}"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${METROAIR_BB_SA_PRIV_KEY}"
+          - basicSSHUserPrivateKey:
+              id: "<censored: team bitbucket service account ssh>"
+              scope: GLOBAL
+              username: "${RAK_BB_SA_USERNAME}"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${RAK_BB_SA_PRIV_KEY}"
+          - basicSSHUserPrivateKey:
+              id: "<censored: team bitbucket service account ssh>"
+              scope: GLOBAL
+              username: "${PAZ_BB_SA_USERNAME}"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${PAZ_BB_SA_PRIV_KEY}"
+          - basicSSHUserPrivateKey:
+              id: "<censored: team bitbucket service account ssh>"
+              scope: GLOBAL
+              username: "${RIZ_BB_SA_USERNAME}"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${RIZ_BB_SA_PRIV_KEY}"
+          - usernamePassword:
+              description: "Username/Password Credentials for Bitbucket service account"
+              id: "<censored: devops service account>"
+              scope: GLOBAL
+              username: "${BITBUCKET_SA_USERNAME}"
+              password: "${BITBUCKET_SA_PASSWORD}"
+          - basicSSHUserPrivateKey:
+              description: "SSH credentials for docker commands on VMs"
+              id: "docker-ssh-user"
+              scope: SYSTEM
+              username: "root"
+              passphrase: ""
+              privateKeySource:
+                directEntry:
+                  privateKey: "${SSH_PRIV_KEY}"
+          - file:
+              id: "docker-config"
+              scope: GLOBAL
+              fileName: "/tmp/.docker/config.json"
+              secretBytes: "${readFileBase64:/tmp/.docker/config.json}"
+          - string:
+              description: "access token for Ansible Tower plugin"
+              id: "awx-tower-access-token"
+              scope: GLOBAL
+              secret: "${AWX_ACCESS_TOKEN}"
+          - string:
+              description: "The token for the Jenkins service account in Cluster <censored: team codename> in the <censored: namespace> namespace"
+              id: "<censored: cluster service account token>"
+              scope: GLOBAL
+              secret: "${CLUSTER_RAK_SA_TOKEN}"
+          - usernamePassword:
+              description: "Username and Password for logging into windows agents"
+              id: "windows-ssh-user"
+              password: "${WINDOWS_SSH_PASSWORD}"
+              scope: SYSTEM
+              username: "${WINDOWS_SSH_USERNAME}"
+              usernameSecret: true
+  appearance:
+  pipelineGraphView:
+    showGraphOnBuildPage: true
+    showGraphOnJobPage: true
+    showStageDurations: true
+    showStageNames: true
+  customHeader:
+    enabled: true
+    header: "jenkins"
+    links:
+    - appNavLink:
+        external: true
+        label: "jFrog Artifactory"
+        logo:
+          image:
+            logoUrl: "<censored: internal artifactory favicon url>"
+        url: "<censored: internal artifactory url>"
+    - appNavLink:
+        external: true
+        label: "Bitbucket"
+        logo:
+          image:
+            logoUrl: "<censored: internal bitbucket favicon url>"
+        url: "<censored: internal bitbucket url>"
+    logo: "default"
+    logoText: "Jenkins"
+    title: '{{ .Values.appset.name }}'
+unclassified:
+  location:
+    url: "https://{{ tpl .Values.route.host $ }}/"
+  hashicorpVault:
+    configuration:
+      disableChildPoliciesOverride: false
+      engineVersion: 2
+      vaultCredentialId: "Vault-Kubernetes"
+      vaultUrl: "<censored: internal vault url>"
+  splunkJenkinsInstallation:
+    enabled: true
+    globalPipelineFilter: true
+    host: "<censored: splunk host>"
+    maxEventsBatchSize: 262144
+    metaDataConfig: |
+      build_event.index=
+      file.index=jenkins_artifact
+    metadataHost: "<censored: jenkins metadata host url>"
+    metadataItemSet:
+    - dataSource: "BUILD_EVENT"
+      keyName: "index"
+    - dataSource: "FILE"
+      keyName: "index"
+      value: "jenkins_artifact"
+    port: 8088
+    rawEventEnabled: true
+    retriesOnError: 3
+    scriptContent: |-
+      //send job metadata and junit reports with page size set to 50 (each event contains max 50 test cases)
+      splunkins.sendTestReport(50)
+      //send coverage, each event contains max 50 class metrics
+      splunkins.sendCoverageReport(50)
+      //send all logs from workspace to splunk, with each file size limits to 10MB
+      splunkins.archive("**/*.log", null, false, "10MB")
+
+      //end
+    splunkAppUrl: "<censored: splunk app url>"
+    token: "${SPLUNK_TOKEN}"
+    useSSL: false
+  globalLibraries:
+    libraries:
+      - name: "jenkins-k8s-shared-library"
+        allowVersionOverride: true
+        defaultVersion: "prd"
+        implicit: true
+        retriever:
+          modernSCM:
+            scm:
+              git:
+                credentialsId: "<censored: devops bitbucket ssh credential>"
+                remote: "<censored: internal git repository url>"
+                traits:
+                  # - "branchDiscoveryTrait"
+                  - checkoutOption:
+                      extension:
+                        timeout: 5
+                  - cloneOption:
+                      extension:
+                        depth: 1
+                        noTags: false
+                        shallow: true
+                        timeout: 5
+  bitbucketEndpointConfiguration:
+    endpoints:
+      - bitbucketServerEndpoint:
+          displayName: "<censored: bitbucket endpoint name>"
+          manageHooks: '{{ ternary true false (eq .Values.appset.name "prd") }}' ## false for non-prod jenkins
+          serverUrl: "<censored: internal bitbucket url>"
+          callCanMerge: true
+          callChanges: true
+          webhookImplementation: NATIVE
+          credentialsId: "<censored: devops service account credential>"
+  ansibleTowerGlobalConfig:
+    towerInstallation:
+      - enableDebugging: true
+        towerCredentialsId: "awx-tower-access-token"
+        towerDisplayName: "<censored: awx display name>"
+        towerTrustCert: true
+        towerURL: "<censored: internal awx url>"
+security:
+  globalJobDslSecurityConfiguration:
+    useScriptSecurity: false
+  gitHostKeyVerificationConfiguration:
+    sshHostKeyVerificationStrategy: "noHostKeyVerificationStrategy"
+jobs:
+  - script: >
+      freeStyleJob('seed-job'){
+        displayName('Seed Job')
+        description('A Seed Job that creates the job configurations for <censored: team codename>')
+        label('docker')
+        scm{
+          git{
+            remote{
+              url('<censored: internal git repository url>')
+              credentials('<censored: devops bitbucket ssh credential>')
+            }
+            branch('prd')
+          }
+        }
+        steps{
+          jobDsl{
+            targets('jobs/*.groovy')
+            removedJobAction('IGNORE')
+            removedViewAction('IGNORE')
+            lookupStrategy('JENKINS_ROOT')
+          }
+        }
+      }

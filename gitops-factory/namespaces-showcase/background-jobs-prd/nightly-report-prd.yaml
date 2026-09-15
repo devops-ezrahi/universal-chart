@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report
+spec:
+  schedule: 0 2 * * *
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: report
+            image: busybox:1.36
+            command:
+            - /bin/sh
+            - -c
+            args:
+            - date; echo generating nightly report; sleep 2; echo done
+            resources:
+              requests:
+                cpu: 10m
+                memory: 16Mi
+              limits:
+                cpu: 50m
+                memory: 32Mi

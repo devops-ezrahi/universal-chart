@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: log-agent
+  labels:
+    app: log-agent
+spec:
+  selector:
+    matchLabels:
+      app: log-agent
+  template:
+    metadata:
+      labels:
+        app: log-agent
+    spec:
+      serviceAccountName: log-agent
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: fluent-bit
+          image: fluent/fluent-bit:2.2.2
+          ports:
+            - name: metrics
+              containerPort: 2020
+          envFrom:
+            - configMapRef:
+                name: platform-ops-alert-thresholds
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: log-agent-conf
+        - name: varlog
+          hostPath:
+            path: /var/log
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-agent-conf
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        5
+        Daemon       Off
+        HTTP_Server  On
+        HTTP_Listen  0.0.0.0
+        HTTP_Port    2020
+
+    [INPUT]
+        Name  tail
+        Path  /var/log/containers/*.log
+
+    [OUTPUT]
+        Name   stdout
+        Match  *
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: log-agent
+---
+# DELIBERATE COLLISION — do not "fix" by renaming.
+#
+# platform-ops-prd/log-agent-prd.yaml declares a ClusterRole of this same name.
+# ClusterRoles are cluster-scoped, so two releases claiming one is a real
+# conflict, and detecting it is a feature with a test on it
+# (ERRORS_ANALYSIS/Missing_Objects_Not_Rendered_By_Any_Release —
+#  "CLUSTER CONFLICT: ClusterRole/log-agent-reader claimed by both ...").
+# Renaming either copy would delete that coverage.
+#
+# CONSEQUENCE FOR ANYONE REGENERATING THE SHOWCASE: the default namespace-scoped
+# mode stops on this by design. Use the remedy the tool itself prints:
+#
+#     python run_all.py --cluster-scoped --input namespaces-showcase --output output-showcase
+#
+# which deploys the shared object once from a `cluster-shared` release. The
+# committed output-showcase/ is generated that way.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: log-agent-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: log-agent-reader-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: log-agent-reader
+subjects:
+  - kind: ServiceAccount
+    name: log-agent
+    namespace: platform-ops

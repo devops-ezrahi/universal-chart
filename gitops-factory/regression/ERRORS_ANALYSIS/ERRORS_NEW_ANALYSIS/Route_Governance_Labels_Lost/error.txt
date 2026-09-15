@@ -1,0 +1,83 @@
+error: Every Route loses its custom governance labels — ArgoCD tracking, team, environment, criticality, purpose and OpenShift runtime labels — the single largest error class in the report at ~613-705 occurrences.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+FIELD-PATH TABLE (top lost fields, with fixability assessment):
+"# | Field Path | Count | Description | Fixability
+1 | metadata.labels.argocd.argoproj.io/instance | 92 | ArgoCD tracking label on Routes | Unavoidable — ArgoCD injects at deploy
+2 | metadata.labels.app.kubernetes.io/part-of | 80 | Application grouping label on Routes | On every Route, custom label
+3 | metadata.labels.team | 76 | Team ownership label on Routes | Custom label
+4 | metadata.labels.operational | 76 | Operational flag on Routes | Custom label
+5 | metadata.labels.environment | 76 | Environment on Routes | Custom label
+6 | metadata.labels.critical | 76 | Criticality flag on Routes | Custom label
+7 | metadata.labels.operational.purpose | 75 | Purpose label on Routes | Custom label
+8 | metadata.labels.app.openshift.io/runtime | 75 | OpenShift runtime label on Routes | Custom label
+9 | metadata.labels.app.kubernetes.io/applicationSet | 75 | ArgoCD ApplicationSet label on Routes | ArgoCD-managed label"
+
+FIDELITY REPORT ERROR LINE (verbatim):
+"423 | ERROR  Route/midasson-api-yellow-b2c-fac1 LOST at metadata.labels.team: raw had 'rakia_app_a'"
+
+DEEP-DIVE ON THE 42-LABEL ROUTE BLOCK:
+"Lines 152-193: Routes - 42 LOST labels
+Every Route loses its custom governance labels. These are all MEDIUM impact:
+ - argocd.argoproj.io/instance (lines 152, 158, 164, 173, 191-193, 414-418): ArgoCD sync tracking - MEDIUM, used for ArgoCD resource management
+ - critical (lines 153, 159, 165, 170, 174-187): Incident response priority flag - MEDIUM
+ - environment: dev (lines 154, 160, 166, 171, 177, 184): Environment identification - MEDIUM
+ - operational: false (lines 155, 162, 168, 172, 178-186): Operational status monitoring flag - MEDIUM
+ - operational.purpose (lines 156-157, 163, 169, 179, 186): Descriptive purpose tagging - LOW-MEDIUM
+ - team: metroair/interconn (lines 157, 180, 187): Team ownership - MEDIUM
+ - alert: false (lines 174, 181): Alert routing categorization - LOW
+ - app.kubernetes.io/part-of: prometheus/jaeger (lines 175, 182, 401, 408): Application grouping - LOW-MEDIUM
+ - app.kubernetes.io/component: query-route (line 188): Component identification - LOW-MEDIUM
+ - template.openshift.io/template-instance-owner (line 190): OpenShift template tracking - LOW (historical)"
+
+PER-LABEL TRIAGE FILES:
+"ERROR CATEGORY: Field Lost Io Instance | TOTAL OCCURRENCES: 10 | NAMESPACES AFFECTED: 3
+ - Route: [route-beta-435], [route-delta-353], [route-epsilon-356], [route-eta-358], [route-gamma-874], [rou...]
+ - metadata.labels.argocd.argoproj.io/instance (10x)
+ - Raw:      metadata.labels.argocd.argoproj.io/instance: 'route-beta-435'
+ + Rendered: metadata.labels.argocd.argoproj.io/instance: (absent)"
+
+"ERROR CATEGORY: Field Lost Io Enabled | TOTAL OCCURRENCES: 36 | NAMESPACES AFFECTED: 5
+ - metadata.labels.opentelemetry.io/enabled (36x)
+ - Raw:      metadata.labels.opentelemetry.io/enabled: 'true'
+ + Rendered: metadata.labels.opentelemetry.io/enabled: (absent)"
+
+"ERROR CATEGORY: Field Lost Io Runtime Version | TOTAL OCCURRENCES: 8 | NAMESPACES AFFECTED: 2
+ - metadata.labels.app.openshift.io/runtime-version (8x)
+ - Raw:      metadata.labels.app.openshift.io/runtime-version: 'latest-release-v8.0.3'
+ + Rendered: (absent)"
+
+"ERROR CATEGORY: Field Lost Io Component | TOTAL OCCURRENCES: 1 | NAMESPACES AFFECTED: 1
+ - Route: [route-alpha-100]
+ - metadata.labels.app.kubernetes.io/component (1x)
+ - Raw:      metadata.labels.app.kubernetes.io/component: 'route-alpha-100'"
+
+"ERROR CATEGORY: Field Lost Team | TOTAL OCCURRENCES: 18 | NAMESPACES AFFECTED: 5
+ - Route: [route-alpha-890], [route-chi-634], [route-gamma-273], [route-iota-981], [route-kappa-905], [route-kappa-908]
+ - metadata.labels.team (18x)
+ - Raw:      metadata.labels.team: 'Bluetorch'
+ + Rendered: metadata.labels.team: (absent)"
+
+REMEDIATION TABLE ROW — THE SINGLE BIGGEST WIN IN THE REPORT:
+"Fix custom labels on Routes (~613) | -613 | 80 remaining"
+
+SUMMARY TABLE ROW:
+"Route labels | 705 | Suppress in _fidelity_ignored_path() for Routes specifically"
+
+TECHNICAL DECISION (verbatim):
+"- Route metadata.labels are NOT suppressed by design"
+
+PRIORITY TABLE ROW:
+"P1 | 39 labels | Route governance labels | Breaks ArgoCD sync tracking, team/env filtering"
+
+ADDITIONAL CONTEXT / CLUES:
+- THE REPORT CONTRADICTS ITSELF ON WHAT TO DO, and this is the most consequential open question in the whole analysis:
+  * The remediation table says FIX: "Fix custom labels on Routes (~613)" — eliminating 613 of 1,314 errors, by far the largest single reduction available.
+  * The summary table says SUPPRESS: "Route labels | 705 | Suppress in _fidelity_ignored_path() for Routes specifically".
+  * A third note says neither: "Route metadata.labels are NOT suppressed by design".
+  These are three incompatible positions on the same 613-705 errors. RESOLVE THIS FIRST — it determines whether the remaining error count lands near 80 or near 700, and every other number in the report depends on it.
+- RECOMMENDATION: fix, do not suppress. Suppressing hides a real loss. The report's own priority table rates it P1 and states the consequence plainly: "Breaks ArgoCD sync tracking, team/env filtering". Losing argocd.argoproj.io/instance means ArgoCD stops tracking the Route as part of its Application — that is a GitOps control-plane failure, not cosmetics.
+- ONE GENUINE EXCEPTION, correctly identified in the field table: metadata.labels.argocd.argoproj.io/instance (92) is marked "Unavoidable — ArgoCD injects at deploy". ArgoCD writes that label itself at sync time, so the chart legitimately should not render it and the checker should ignore it. That single row IS suppressible. The other ~520 are not.
+- FIX LOCATION: build_route_entry in convert_to_universal_chart.py must capture metadata.labels, and Universal-chart/templates/routes.yaml must render them. This is the same converter-gap + template-gap pair documented for every other resource type in the previous analysis round (see ERRORS_ANALYSIS/Workload_Metadata_Labels_Lost, root causes A and B).
+- The per-label triage files (io_instance, io_enabled, io_runtime_version, io_component, team, critical, environment, operational, operationalpurpose) are all VIEWS OF THIS ONE DEFECT, split by label name by the sanitizer. Nine files, one bug, one fix.
+- Note metadata.labels.opentelemetry.io/enabled (36 occurrences, 5 namespaces) — losing this disables OpenTelemetry instrumentation on those Routes. That is a functional loss hiding inside the "labels" bucket.

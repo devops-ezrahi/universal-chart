@@ -1,0 +1,64 @@
+# error.txt's own worked example, rebuilt on the shape of the real
+# namespaces-showcase/shop-web/storefront.yaml.
+#
+# The raw manifest names each object DIFFERENTLY from the workload:
+#   Deployment  control-station-client
+#   Service     control-station-client-service   <- '-service' suffix
+#   Route       control-station-client-route     <- '-route'   suffix
+# and the Route references the Service BY NAME.
+#
+# Unfixed, the chart renders all three as the release fullname
+# 'control-station-client', so both suffixed names vanish and anything outside
+# this release that referenced them points at nothing.
+#
+# NOTE: the Ingress half of this defect lives in the sibling fixture
+# storefront.yaml — the chart deliberately refuses to render ingress.enabled
+# and route.enabled together, so they cannot share one microservice.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-station-client
+  labels:
+    app: control-station-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: control-station-client
+  template:
+    metadata:
+      labels:
+        app: control-station-client
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-station-client-service
+spec:
+  type: ClusterIP
+  selector:
+    app: control-station-client
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: control-station-client-route
+spec:
+  host: control-station-client.apps.example.com
+  to:
+    kind: Service
+    name: control-station-client-service
+    weight: 100
+  port:
+    targetPort: http

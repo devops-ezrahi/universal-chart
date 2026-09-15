@@ -1,0 +1,66 @@
+# The prd sibling of ../background-jobs/db-migrate.yaml, mirroring the real
+# namespaces-showcase/background-jobs-prd/ layout (same microservice, env-suffixed
+# file name, so env_normalized_ms_name() reduces both to the microservice
+# 'db-migrate' and they SHARE base/db-migrate.yaml).
+#
+# The commands differ from the non-prd copy on purpose. common_subtree() only
+# promotes a value into base/ when EVERY namespace running the microservice
+# agrees on it, so `command` is excluded from base/ here and lands in each
+# namespace's own values/<ns>/db-migrate.yaml instead. Reading base/ alone then
+# shows neither command — which is what the source report recorded as "The
+# values YAML has neither".
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-migrate-backup
+spec:
+  schedule: "0 1 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: busybox:1.36
+              command: ["/bin/bash", "-c", "echo 'Hello from jenkins-backup-1-prd!'"]
+              env:
+                - name: STAGE
+                  value: prd-a
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-migrate-credentials
+                      key: api-key
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: busybox:1.36
+              command: ["/bin/bash", "-c", "echo 'Hello from jenkins-backup-2-prd!'"]
+              args: ["--verbose"]
+              env:
+                - name: STAGE
+                  value: prd-b
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-migrate-credentials
+type: Opaque
+stringData:
+  api-key: "showcase-migration-api-key-change-me"

@@ -106,6 +106,24 @@ tests:
       - hasDocuments:
           count: 2
 
+  - it: should run init containers in jobTemplate.initContainerOrder
+    set:
+      cronjobs:
+        backup:
+          schedule: "0 2 * * *"
+          jobTemplate:
+            command: ["/bin/backup.sh"]
+            initContainerOrder: [z-first, a-second]
+            initContainers:
+              a-second:
+                image: busybox:1.36
+              z-first:
+                image: busybox:1.36
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.initContainers[0].name
+          value: z-first
+
   - it: should use the cronjobs map key verbatim as the object name
     set:
       cronjobs:

@@ -1,0 +1,18 @@
+error: Two CronJobs that map to the same values entry name overwrite each other during the microservice merge, so container command and env values from one of them are silently lost.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"9. CronJob container command conflict (jenkins-backup)
+What happens: Two cronjobs have the same template name jenkins-backup. One has command ["/bin/bash", "-c", "echo 'Hello from jenkins-backup-1!'], another has ["/bin/bash", "-c", "echo 'Hello from jenkins-backup-2!']. The values YAML has neither.
+Why: When merging CronJobs into the same microservice, later entries may overwrite earlier ones. The command is captured at line 1065 but stored per-entry in cronjobs[name]. If two CronJobs map to the same values entry name, one is lost."
+
+"10. CronJob container env conflict (jenkins)
+What happens: Two cronjobs have different env values for STAGE variable. Values has only one.
+Why: Same merge conflict as issue 9."
+
+ADDITIONAL CONTEXT / CLUES:
+- Capture point: convert_to_universal_chart.py line 1065 (command), stored into ctx.data["cronjobs"][name].
+- Merge region implicated elsewhere in the report: lines 1370-1451 (microservice merge).
+- Note the report says "The values YAML has neither" for the command case — meaning BOTH commands were dropped, not just one, which is worse than a simple last-writer-wins.
+- Same defect class is suspected as the cause of the CronJob schedule corruption (see CronJob_Schedule_Value_Corruption) and mirrors the sidecar container map-key collision (see Sidecar_Container_Name_Key_Collision) and the volumeMount subPath collision — all are "use a non-unique name as a dict key" bugs.
+- Fix direction: the values entry key for a CronJob must be unique per raw CronJob object (namespace + original metadata.name), not the shared template/microservice name.
+- Functional impact: a CronJob runs the wrong command or with the wrong STAGE env var, or fails outright with no command.

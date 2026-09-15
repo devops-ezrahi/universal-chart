@@ -96,6 +96,25 @@ tests:
           path: spec.ports[0].targetPort
           value: 8081
 
+  - it: should carry loadBalancerIP and loadBalancerSourceRanges on an extra Service
+    set:
+      services:
+        public:
+          enabled: true
+          type: LoadBalancer
+          loadBalancerIP: 10.0.0.10
+          loadBalancerSourceRanges: ["10.0.0.0/8"]
+          ports:
+            http:
+              port: 80
+    asserts:
+      - equal:
+          path: spec.loadBalancerIP
+          value: 10.0.0.10
+      - equal:
+          path: spec.loadBalancerSourceRanges[0]
+          value: 10.0.0.0/8
+
   - it: should support headless services via clusterIP None
     set:
       services:

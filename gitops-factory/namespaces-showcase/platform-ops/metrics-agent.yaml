@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: metrics-agent
+  labels:
+    app: metrics-agent
+  # An operator-managed workload, as the operator leaves it: a garbage-collection
+  # link back to the custom resource that generated it. The report calls losing
+  # these benign "(operator re-creates them)", which is a dependency rather than
+  # a property — but the reason they must not be carried is stronger and needs no
+  # operator at all: an ownerReference IS a `uid`, and a uid from the SOURCE
+  # cluster does not exist in the target. Carry it over and the target's garbage
+  # collector sees an owner that is gone and deletes this object, usually within
+  # seconds. Dropping it does not break garbage collection — keeping it breaks
+  # the object.
+  #
+  # Both levels are here because both are strippable and only one of them was
+  # being stripped: the OUTER one below, and the pod TEMPLATE's a few lines down.
+  ownerReferences:
+    - apiVersion: monitoring.banzaicloud.io/v1alpha1
+      kind: StoreEndpoint
+      name: metrics-agent-store
+      uid: 6f1b0c9e-1d3a-4a2f-9f4e-0b1c2d3e4f50
+      controller: true
+      blockOwnerDeletion: true
+spec:
+  selector:
+    matchLabels:
+      app: metrics-agent
+  template:
+    metadata:
+      labels:
+        app: metrics-agent
+      # The same link on the POD TEMPLATE, which is worse than it looks: pod
+      # template metadata is stamped onto every pod the controller creates, so
+      # this would give each pod an owner that does not exist in the target and
+      # the collector would delete the pods as fast as the DaemonSet made them.
+      ownerReferences:
+        - apiVersion: monitoring.banzaicloud.io/v1alpha1
+          kind: Thanos
+          name: thanos
+          uid: 2a7d4b61-8c05-4e77-b3aa-5d9e6f70a1b2
+    spec:
+      serviceAccountName: metrics-agent
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: node-exporter
+          image: prom/node-exporter:v1.7.0
+          args:
+            - --path.rootfs=/host
+          ports:
+            - name: metrics
+              containerPort: 9100
+            # The statsd-exporter shape: the SAME port number on both protocols,
+            # neither of them named. This is legal Kubernetes — the API's
+            # uniqueness rule is on the containerPort/protocol PAIR — and it is
+            # what silently lost a port, because the converter keyed unnamed
+            # ports on the number alone and the second entry overwrote the
+            # first. It is also the report's one defect whose root cause was
+            # recorded as UNKNOWN. Kept in the corpus so the collision can never
+            # come back unnoticed.
+            - containerPort: 9125
+              protocol: TCP
+            - containerPort: 9125
+              protocol: UDP
+          env:
+            # The same 1.1-vs-1.2 scalar as platform-ops-alert-thresholds, on a
+            # LITERAL env var — a different converter path (env becomes a values
+            # map, ConfigMap data becomes a configMaps entry), and `EnvVar.value`
+            # is string-typed too, so an unquoted round-trip breaks the object
+            # rather than reformatting it.
+            - name: MAX_SAMPLE_BYTES
+              value: "1e+09"
+          envFrom:
+            - configMapRef:
+                name: platform-ops-alert-thresholds
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+              # Third path, and the one error.txt singles out: "Kubernetes
+              # resource quantities (memory: 1Gi, cpu: 500m) must remain
+              # STRINGS." A Quantity in exponent form is legal and is exactly
+              # the shape that survives PyYAML unquoted.
+              ephemeral-storage: "2e+09"
+          volumeMounts:
+            - name: rootfs
+              mountPath: /host
+              readOnly: true
+      volumes:
+        - name: rootfs
+          hostPath:
+            path: /
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metrics-agent
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-agent
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: metrics-agent
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics

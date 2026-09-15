@@ -1,0 +1,26 @@
+# Fixture for ERRORS_ANALYSIS/ProgressDeadlineSeconds_Lost.
+#
+# Derived from namespaces-showcase/shop-web/storefront.yaml. The added field is
+# progressDeadlineSeconds: 120, NOT the 600 the report cites.
+#
+# 600 is the Kubernetes default, so losing it changes nothing - which is why the
+# report classifies this LOW. 120 is the case that matters: a deliberately short
+# deadline so a stuck rollout is marked failed in two minutes instead of ten.
+# error.txt asks explicitly for that check ("If ANY Deployment sets a non-600
+# value ... that one IS a real behavioural change").
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 120
+  template:
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27
+          ports:
+            - name: http
+              containerPort: 8080

@@ -1,0 +1,21 @@
+error: containerRestartPolicy is never captured by the CronJob/Job handlers, so the chart's hardcoded default "OnFailure" replaces the raw value "Always".
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"4. CronJob/Job template: containerRestartPolicy: OnFailure
+What happens: Raw has containerRestartPolicy: Always, but rendered has OnFailure.
+Why: Neither handle_cronjob nor handle_job captures containerRestartPolicy. The chart defaults to OnFailure in _pod-spec.tpl line 244:
+
+containerRestartPolicy: {{ .containerRestartPolicy | default "OnFailure" }}"
+
+"25-27. Job template: backoffLimit, containerRestartPolicy, imagePullPolicy
+What happens: Same as CronJob equivalents (issues 3, 4, 5)."
+
+ROOT CAUSE TABLE ROW:
+"K | handle_cronjob/handle_job doesn't capture per-job SA, securityContext | Affects: All CronJobs/Jobs"
+"F | Chart template has wrong defaults (6, 3, OnFailure, Create) | Affects: CronJob/Job fields when values are subtracted"
+
+ADDITIONAL CONTEXT / CLUES:
+- Purely a converter capture gap plus a wrong template default — the value is not lost by subtraction, it is never read in the first place.
+- Fix locations: handle_cronjob and handle_job in convert_to_universal_chart.py must store spec.jobTemplate.spec.template.spec.containers[*].restartPolicy / containerRestartPolicy into values; Universal-chart/templates/_pod-spec.tpl line 244 holds the bad default.
+- Applies identically to both CronJob and Job resources (report issues 4 and 25-27 are the same defect).
+- Functional impact: Always vs OnFailure changes whether a sidecar/init container in a Job is restarted, which can hang or prematurely finish a Job.

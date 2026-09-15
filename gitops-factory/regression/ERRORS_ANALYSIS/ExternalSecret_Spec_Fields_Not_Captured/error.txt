@@ -1,0 +1,35 @@
+error: Multiple ExternalSecret fields are lost — metadata.labels, metadata.ownerReferences, spec.deliverySpec, spec.target.template.annotations and spec.target.template.labels never survive the conversion.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"16. ExternalSecret labels + spec labels
+What happens: Both metadata.labels and spec.targetAdditionalFields or spec-level labels missing.
+Why (metadata): build_externalsecret_entry never captures metadata.labels.
+Why (spec): externalsecret.yaml template only renders helper labels, no spec.labels."
+
+"18. ExternalSecret ownerRef (present in raw, absent in render)
+What happens: metadata.ownerReferences from raw is lost.
+Why: Neither build_externalsecret_entry nor externalsecret.yaml template captures/renders ownerReferences."
+
+"19. ExternalSecret spec.deliverySpec (absent in render)
+What happens: spec.deliverySpec from raw is missing.
+Why: build_externalsecret_entry captures deliverySpec at line 493, but the chart template doesn't render it."
+
+"21. ExternalSecret spec.target.template.annotations (absent in render)
+What happens: Annotations in spec.target.template are missing.
+Why: Not captured by build_externalsecret_entry (no line for it)."
+
+"22. ExternalSecret spec.target.template.labels (present in raw, absent in render)
+What happens: Template-level labels in spec.target.template are present in raw.
+Why: build_externalsecret_entry does capture spec.target.template.labels at line 498-499, but the chart template externalsecret.yaml has NO rendering for spec.target.template.labels."
+
+ROOT CAUSE TABLE ROWS:
+"L | ExternalSecret handler doesn't capture ownerReferences, deliverySpec fully | Affects: ExternalSecret spec fields"
+"M | externalsecret.yaml doesn't render spec.target.template.labels | Affects: ExternalSecret template labels"
+
+MEDIUM SEVERITY TABLE ROW:
+"12 | Lost ExternalSecret labels | Count 2 | Why: ArgoCD can't track/manage ExternalSecrets | Example: ExternalSecret/mongo-password loses argocd.argoproj.io/instance: vault-interconn"
+
+ADDITIONAL CONTEXT / CLUES:
+- Split failure mode — some fields are never captured (labels, ownerReferences, target.template.annotations) while others ARE captured but never rendered (deliverySpec at line 493, target.template.labels at lines 498-499). Both the converter function and the template must be fixed.
+- Functions/files: build_externalsecret_entry in convert_to_universal_chart.py (lines ~489-499); Universal-chart/templates/externalsecret.yaml.
+- Functional impact: losing argocd.argoproj.io/instance means ArgoCD stops tracking/managing the ExternalSecret; losing ownerReferences breaks garbage collection; losing target.template annotations/labels means the generated Secret lacks required metadata.

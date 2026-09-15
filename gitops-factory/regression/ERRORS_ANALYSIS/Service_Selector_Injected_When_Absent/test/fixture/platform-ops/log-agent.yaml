@@ -1,0 +1,45 @@
+# Fixture for ERRORS_ANALYSIS/Service_Selector_Injected_When_Absent.
+#
+# Derived from namespaces-showcase/platform-ops/shared.yaml, which really does
+# contain a selector-less Service (platform-ops-shared-placeholder). Reproduced
+# here as a microservice so both Service templates are exercised: the primary
+# one via service.yaml and a second via services.yaml.
+#
+# A selector-less Service in Kubernetes is normally paired with a hand-managed
+# Endpoints object pointing at an external backend. The chart injects its own
+# selector unconditionally, which would make such a Service start matching pods
+# and silently override those Endpoints. That is the behavioural risk error.txt
+# tells the next agent to check for.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-agent
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: agent
+          image: busybox:1.36
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: log-agent
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: log-agent-external
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

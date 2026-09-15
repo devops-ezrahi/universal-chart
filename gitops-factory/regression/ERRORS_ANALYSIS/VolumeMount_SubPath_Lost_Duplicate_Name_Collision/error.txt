@@ -1,0 +1,62 @@
+error: named_list_to_map keys volumeMounts by mount name, so when the same volume is mounted several times with different subPaths only the LAST mount survives — containers lose critical config files and fail to start.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"Root Cause: volumeMount.subPath Lost - Duplicate Name Collision
+The problem is in convert_to_universal_chart.py line 514-518, the named_list_to_map function:
+def named_list_to_map(items) -> dict:
+    out = {}
+    for it in items or []:
+        name = it["name"]
+        out[name] = {k: v for k, v in it.items() if k != "name"}
+    return out
+
+The Bug: This function uses the volume mount's name as a dictionary key. When two volume mounts share the same volume name but mount to different paths (common with subPath), the second mount overwrites the first.
+
+Side-by-Side: What Happened
+data-sender - Raw manifest has 2 mounts from the same ConfigMap using subPath:
+# | name | mountPath | subPath
+1 | data-sender-values | /software/DataSender/DataSenderValues.csv | DataSenderValues.csv
+2 | data-sender-values | /software/DataSender/configs/log4j2.xml | log4j2.xml
+
+Both reference the same ConfigMap volume, but use subPath to mount individual files to specific paths. This is a standard pattern for mounting specific ConfigMap keys.
+
+After named_list_to_map:
+out["data-sender-values"] = {mountPath: ".../DataSenderValues.csv", subPath: "DataSenderValues.csv"}   # overwritten
+next
+out["data-sender-values"] = {mountPath: ".../log4j2.xml", subPath: "log4j2.xml"}   # <- only this survives
+
+3 | kafka-consumer-config-volume | .../kafkaConsumerConfig.properties | kafkaConsumerConfig.properties | Unique name
+4 | kafka-producer-config-volume | .../kafkaProducerConfig.properties | kafkaProducerConfig.properties | Unique name
+
+Result: AmdiClient.properties is missing. App can't load its main config -> startup failure.
+
+Why This Pattern Exists
+The subPath pattern is the standard way to mount individual files from a ConfigMap to specific paths. A single volume named amdi-client-configs-volume is mounted at multiple paths using different subPath values, each pointing to a different key in the ConfigMap. This avoids creating many small volumes.
+
+How Critical
+Severity: HIGH - Container Startup Failure
+- Affected deployments: amdi-client, data-sender, data-sender-1, data-sender-udp-1 (4 deployments in fidelity report)
+- The lost mount is always the first one per volume name
+- If the first mount was a critical config file or data file, the container cannot start or runs with wrong data
+- If the first mount was referenced in env var INPUT_...
+- In data-sender's case, the missing /software/DataSender/DataSenderValues.csv - the container is literally pointing to a file that won't exist
+
+Fix Required
+The converter cannot use volume mount name as a unique key. Need a compound key that includes both name and mountPath at convert_to_universal_chart.py:653:
+Converter change (named_list_to_map or a variant for volumeMounts):
+# Instead of: named_list_to_map(c["volumeMounts"])
+# Use a composite key: name + mountPath
+Template change (_pod-spec.tpl:193-196): The mapToList helper at _helpers.tpl:145 reconstructs the list from the map, the key becomes the name field. With composite keys like data-sender-values__...DataSenderValues.csv, the template must parse the composite key back into name + mountPath."
+
+CRITICAL SEVERITY TABLE ROW:
+"4 | Volume subPath mounts lost | Count 4 | Why: App reads wrong file or fails at startup | Example: Deployment/amdi-client: AmdiClient.properties mount lost -> app can't start; Deployment/data-sender: DataSenderValues.csv lost (x3 instances)"
+
+HIGH: CHANGED TABLE ROW:
+"volumeMounts | 4 | Array reordering/naming"
+
+ADDITIONAL CONTEXT / CLUES:
+- Classified in the report's Discoveries as "3. volumeMount.subPath Lost (P1, Real Bug): named_list_to_map() in converter uses volume name as a dict key. If a ConfigMap is mounted multiple times via subPath, the second mount overwrites the first. Affects amdi-client, data-sender, etc. Causes container startup crashes."
+- Locations: convert_to_universal_chart.py lines 514-518 (named_list_to_map) and line 653 (call site for volumeMounts); Universal-chart/templates/_pod-spec.tpl lines 193-196; _helpers.tpl line 145 (mapToList helper).
+- The fix is TWO-SIDED: composite key in the converter AND composite-key parsing in the mapToList template helper.
+- Same "non-unique name used as dict key" defect family as the sidecar container collision and the CronJob merge overwrite.
+- Related mount path seen on screen: mountPath: /software/AmdiClient/configs/kafkaProducerConfig.properties.

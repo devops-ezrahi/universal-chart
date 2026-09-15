@@ -1,0 +1,127 @@
+# ServiceAccount consumed by CI/CD automation across the whole namespace —
+# not tied to any single microservice's pods, so it belongs here rather than
+# in storefront.yaml or api-gateway.yaml.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: shop-web-ci-deployer
+---
+# A second shared ServiceAccount: read-only access for a namespace-wide
+# compliance/audit scanner that isn't itself one of the deployed
+# microservices. Two ServiceAccounts here, each with its own Role, is the
+# point — 'shared' can own as many as the namespace actually needs.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: shop-web-auditor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: shop-web-ci-deployer-role
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shop-web-ci-deployer-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: shop-web-ci-deployer-role
+subjects:
+  - kind: ServiceAccount
+    name: shop-web-ci-deployer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: shop-web-auditor-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: shop-web-auditor-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: shop-web-auditor-role
+subjects:
+  - kind: ServiceAccount
+    name: shop-web-auditor
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-ca-bundle
+  labels:
+    app.kubernetes.io/part-of: shop-web
+data:
+  # A MULTI-certificate bundle, shaped like a real one: comment headers, blank
+  # lines between entries, and a trailing newline after the final END
+  # CERTIFICATE. All three matter.
+  #
+  # The report rates the CA-bundle diffs benign — "same certificate, different
+  # YAML line wrapping" — and is probably right, but flags one way it stops
+  # being benign: "trailing \n after the final CERTIFICATE----- gets clipped.
+  # Some TLS libraries require a trailing newline after the final END
+  # CERTIFICATE line to parse the last certificate in a bundle. If the clip is
+  # real rather than cosmetic, the LAST certificate in every affected bundle may
+  # be silently unusable."
+  #
+  # The pipeline crosses two YAML implementations with different block-scalar
+  # semantics — PyYAML on the way in, Go yaml.v3 (Helm's toYaml) on the way out
+  # — so this is the shape where they can disagree. Single-certificate data
+  # cannot exercise the "last certificate" risk at all, which is why this was
+  # extended from one cert to three.
+  ca.crt: |
+    # ISRG Root X1
+    -----BEGIN CERTIFICATE-----
+    MIIBshowcasedummyplaceholdercertificatefordemonstrationonlyAAA
+    -----END CERTIFICATE-----
+
+    # ACCVRAIZ1
+    -----BEGIN CERTIFICATE-----
+    MIIBshowcasedummyplaceholdercertificatefordemonstrationonlyBBB
+    -----END CERTIFICATE-----
+
+    # Internal Corp Root CA
+    -----BEGIN CERTIFICATE-----
+    MIIBshowcasedummyplaceholdercertificatefordemonstrationonlyCCC
+    -----END CERTIFICATE-----
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shop-web-allow-same-namespace
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+---
+# shop-web-audit-log's PersistentVolumeClaim used to live here, owned by
+# 'shared'. Moved to storefront.yaml — storefront now owns it directly,
+# api-gateway still mounts it as a consumer (see storefront.yaml's comment
+# for the full reasoning and the live re-stamp that made this a zero-downtime
+# ownership move rather than a delete+recreate).
+
+# NOTE: this namespace previously also demonstrated 'shared' owning a
+# Route-based "front door into other microservices" pattern (a primary
+# placeholder Route/Service plus two extra Routes fronting storefront's and
+# api-gateway's own Services via serviceName). Removed: this cluster has no
+# OpenShift Route CRD (see storefront.yaml), and the Universal Chart's
+# Ingress support is a single object with no serviceName-style backend
+# override — the plural, arbitrary-backend pattern Route's routes: map
+# supports has no Ingress equivalent here. The multi-ServiceAccount/RBAC and
+# shared-PVC patterns above are unaffected and still fully demonstrate
+# 'shared' as a namespace-wide resource pool.

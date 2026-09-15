@@ -1,0 +1,28 @@
+error: subtract_defaults strips explicitly-set values of 0 as "same as default", so the chart's own hardcoded defaults take over — backoffLimit 0 becomes 6 and successfulJobsHistoryLimit 0 becomes 3.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"3. CronJob/Job template: backoffLimit: 6 / successfulJobsHistoryLimit: 3
+What happens: Raw has backoffLimit: 0 and successfulJobsHistoryLimit: 0, but rendered has 6 and 3.
+Why (backoffLimit): The _pod-spec.tpl jobPodSpec helper (line 277) has:
+
+{{- if not (hasKey . "backoffLimit") }}
+backoffLimit: 6
+{{- end }}
+
+So if values have backoffLimit set, it renders correctly. If NOT set (because subtract_defaults removed 0 as "same as default"), it defaults to 6.
+Why (successfulJobsHistoryLimit = 0 -> 3): Same mechanism. If the value is stored, it renders. If subtract_defaults subtracts it (because 0 equals some default), the chart's own default 3 takes over. See Issue 9 for the root cause."
+
+"11. CronJob successfulJobsHistoryLimit: 0 -> 6 (jenkins-backup)
+What happens: Values has 0, but rendered has 6.
+Why: The value 0 IS in the values file, but the chart template uses | default 3 or similar. The 6 comes from a default somewhere. This might be a template override or the subtract_defaults issue where 0 equals a default value for a different microservice."
+
+ROOT CAUSE TABLE ROWS:
+"D | subtract_defaults removes 0 as 'same as default' | Affects: successfulJobsHistoryLimit, backoffLimit"
+"F | Chart template has wrong defaults (6, 3, OnFailure, Create) | Affects: CronJob/Job fields when values are subtracted"
+
+ADDITIONAL CONTEXT / CLUES:
+- This is a classic falsy-value bug: the subtraction logic cannot distinguish "value not set" from "value explicitly set to 0".
+- Two-sided fix required: (1) subtract_defaults must compare against the ACTUAL chart default, not treat 0 as absent; (2) the chart's own fallback defaults in _pod-spec.tpl are wrong/arbitrary (6, 3, OnFailure, Create) and must match Kubernetes defaults.
+- Location: convert_to_universal_chart.py subtract_defaults (referenced around line 2306 for the sibling always_equal check); Universal-chart/templates/_pod-spec.tpl line 277 (jobPodSpec helper).
+- Functional impact: backoffLimit 0 means "never retry a failed Job"; rendering 6 makes a failing Job retry 6 times. successfulJobsHistoryLimit 0 means "keep no completed pods"; rendering 3 leaks pods.
+- The same subtract_defaults mechanism also corrupts imagePullPolicy (Always) and ExternalSecret managementPolicy (Default) — see those folders.

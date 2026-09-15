@@ -1,0 +1,70 @@
+error: ~930-1,307 of the 1,314 errors are Kubernetes/OpenShift runtime defaults and server-populated fields that should be suppressed in the fidelity checker, not added to the chart.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"Errors That Are Correctly NOT Changed (Benign - Leave As-Is)
+
+These 270+ errors are K8s/OpenShift runtime defaults and should NOT be added to the c[hart]:
+
+ - creationTimestamp: null (50+ instances) - Set by API server at create time. Meaningl[ess in source]
+ - sessionAffinity: None (68 instances) - K8s default. Explicitly setting it is redunda[nt]
+ - immutable: false (3 instances) - Default. immutable only matters when true.
+ - enableServiceLinks: false, shareProcessNamespace: false (3 instances) - Defaults.
+ - dnsPolicy: ClusterFirst, schedulerName: default-scheduler, terminationGracePeriodSeco[nds]
+ - terminationMessagePath/Policy (12 instances) - K8s container defaults.
+ - ServiceAccount imagePullSecrets/secrets (50 instances) - OpenShift auto-provisions th[em]
+ - StatefulSet PVC boilerplate (apiVersion, kind, status, creationTimestamp, 28 instances)
+ - Thanos ownerReferences (4 instances) - Operator-managed. Operator recreates them.
+ - Deployment template.metadata.name/namespace (7 instances) - Pod template metadata, not [used]
+ - ConfigMap content trailing newline (3 instances) - Whitespace-only difference.
+ - CA bundle line reflow (7 instances) - Same certificate, different YAML line wrapping.
+ - Collision rename reference updates (9 CHANGED fields) - Internally consistent after ren[ame]"
+
+SUPPRESSION PLAN TABLE ("Add suppression for these paths/patterns"):
+"Category | Est. Errors | Paths to Suppress
+ creationTimestamp | 166 | metadata/creationTimestamp
+ sessionAffinity: \"None\" | 199 | spec/sessionAffinity on Services
+ CronJob pod defaults | ~44 | spec/jobTemplate/spec/template/spec/containers/*/terminationMessagePath, same for terminationMessagePolicy, spec/jobTemplate/spec/template/spec/dnsPolicy, schedulerName, terminationGracePeriodSeconds
+ SA imagePullSecrets/secrets | ~16 | secrets and imagePullSecrets on ServiceAccount
+ StatefulSet checksum annotations | ~10 | metadata/annotations matching ^checksum/.*
+ volumeClaimTemplates runtime fields | ~17 | spec/volumeClaimTemplates/*/status, kind, apiVersion, creationTimestamp
+ allocateLoadBalancerNodePorts | 62 | spec/allocateLoadBalancerNodePorts
+ Pod template defaults | ~12 | spec/template/spec/enableServiceLinks, shareProcessNamespace, minReadySeconds on Deployments
+ Jaeger CronJob template annotations/labels | ~5 | spec/jobTemplate/spec/template/metadata/annotations and labels on specific CronJobs"
+
+FULL REMEDIATION LADDER (verbatim — start 1,314 errors):
+"Action | Errors eliminated | Remaining after
+ Start | — | 1,314
+ Suppress ArgoCD labels (92) | -92 | 1,222
+ Suppress creationTimestamp (151) | -151 | 1,071
+ Suppress sessionAffinity None (199) | -199 | 872
+ Suppress SA secrets (46) | -46 | 826
+ Suppress CronJob defaults (44) | -44 | 782
+ Suppress checksum annotations (~10) | -10 | 772
+ Suppress volumeClaimTemplate runtime (17) | -17 | 755
+ Suppress announce service defaults (62) | -62 | 693
+ Fix custom labels on Routes (~613) | -613 | 80
+ Fix grafana.ini colon bug (1) | -1 | 79
+ Fix secret/ConfigMap rename (12) | -12 | 67
+ Suppress navlogback whitespace (3) | -3 | 64
+ Suppress ca-bundle differences (13 — same certs, Helm encoding) | -13 | 51
+ Suppress remaining noise (volumeMount order, init-config.sh, immutable) | -6 | ~45
+
+After suppressing all unavoidable noise: ~45 errors remain — these would be the truly actionable defects to [investigate]."
+
+SUMMARY TABLE ROW:
+"Suppress in _fidelity_ignored_path() | 930+ | creationTimestamp (166), sessionAffinity (199), allocateLoadBalancerNodePorts (62), imagePull[Secrets]/secrets (46), CronJob defaults (66), VCT runtime fields (16), enableServiceLinks (3), shareProcessNamespace (1), minReadySeconds (1), ownerReferences (2), template namespace (2), name (5), parallelism (2), immutable (1), VCT labels (1), checksum annotations (14), Jaeger C[ronJob] annotations/labels (4), grafana.ini falses positive (1)"
+
+FINAL STATE:
+"After suppressing all noise, ~5 real issues remain: 12 secret rename CHANGEDs, 4 UTF-8 corruptions, 2 volumeMounts orderings, 1 missing port."
+
+ADDITIONAL CONTEXT / CLUES:
+- THIS FOLDER IS THE SUPPRESSION WORK ITSELF — the single highest-leverage task in the analysis. It converts a 1,314-line report that nobody can read into a ~45-line one that surfaces real defects.
+- FIX LOCATION: _fidelity_ignored_path() at convert_to_universal_chart.py:2953. All suppression paths above go there.
+- THREE ENTRIES IN THE SUPPRESSION LIST DO NOT BELONG AND MUST BE PULLED OUT BEFORE IMPLEMENTING. The bulk list was assembled by grouping adjacent field paths, and it swept in real losses:
+  1. minReadySeconds (1) — the report's own deep-dive rates it MEDIUM and says "Should be preserved". K8s default is 0; an explicit 10 is a deliberate rollout-safety setting. See Deployment_MinReadySeconds_Lost.
+  2. VCT labels (1) — the report separately says to ADD a volumeClaimTemplateLabels field because PVCs otherwise lose governance labels needed for quota and cost allocation. See StatefulSet_VolumeClaimTemplate_Labels_Lost. Suppress the VCT *runtime* fields (status, kind, apiVersion, creationTimestamp), never the labels.
+  3. allocateLoadBalancerNodePorts (62) — 62 are benign Redis announce Services, but 3 are real LoadBalancer Services the report says to fix. See Service_AllocateLoadBalancerNodePorts_Lost.
+  Also note "Jaeger CronJob annotations/labels (4)" overlaps the P1 CronJob pod-template-labels defect (30 errors, sidecar-injection risk). Scope it to the specific Jaeger CronJobs, not to CronJob template labels generally.
+- ONE ENTRY IS CORRECTLY SUPPRESSED FOR THE WRONG REASON: sessionAffinity: None is genuinely the K8s default and safe to drop, but the previous analysis round rated the same field a MEDIUM defect ("Load balancer session affinity broken"). The suppression is right; confirm no Service sets ClientIP before applying it globally.
+- THE LADDER'S BIGGEST LINE IS NOT A SUPPRESSION: "Fix custom labels on Routes (~613)" is a FIX, and it is disputed elsewhere in the same report as something to suppress instead. That single decision moves the final count between ~45 and ~700. Resolve Route_Governance_Labels_Lost before running this ladder.
+- Everything in the benign list above has its own folder in this analysis where the "verify before suppressing" condition is spelled out. Suppression is cheap to apply and expensive to notice you were wrong about — check each condition once.

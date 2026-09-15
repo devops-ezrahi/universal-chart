@@ -1,0 +1,18 @@
+error: The Grafana ConfigMap data value loses a trailing newline — data.grafana.ini renders "\n" where the raw had "\n\n" — 2 occurrences, harmless for INI parsing.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+LOW SEVERITY TABLE ROW:
+"18 | Grafana ConfigMap trailing newline | Count 2 | Why: \n\n -> \n - harmless for INI parsing"
+
+HIGH: CHANGED TABLE ROW:
+"data.grafana.ini | 2 | Trailing newline difference"
+
+ALSO VISIBLE IN THE FIDELITY REPORT TABLE:
+"ini | ... | newline stripped)"
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: LOW / cosmetic. INI parsers ignore trailing blank lines, so Grafana's behaviour is unchanged.
+- Mechanism: YAML block-scalar round-tripping. A raw block scalar written as `|` (clip) or `|+` (keep) is re-emitted by the converter/Helm as a single trailing newline, collapsing "\n\n" to "\n".
+- WHY IT STILL MATTERS OPERATIONALLY: any ConfigMap content change alters the checksum, so if a `checksum/config` annotation is in use this diff would trigger an unnecessary pod restart. It also causes a permanent non-empty diff in ArgoCD, which trains operators to ignore drift.
+- BROADER CHECK FOR THE NEXT AGENT: this is a whitespace-fidelity issue in the YAML pipeline, not a Grafana-specific one. Verify no OTHER embedded config blob (scripts, .properties files, certificates, PEM keys) is affected — trailing-newline loss in a PEM certificate or a shell script WOULD break things, unlike INI.
+- Affected object: the Grafana ConfigMap, key grafana.ini.

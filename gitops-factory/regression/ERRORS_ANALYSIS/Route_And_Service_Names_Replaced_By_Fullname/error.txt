@@ -1,0 +1,72 @@
+error: The chart uses universal-chart.fullname for ALL resource names, destroying the original -service / -route naming suffixes, so Routes, DNS entries and hardcoded config references point at objects that no longer exist.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"31. Route labels + spec.to.name
+What happens: Route metadata labels missing, and spec.to.name uses fullname instead of raw service name.
+Why (name): routes.yaml line 53 uses {{ $spec.to.name }}, which comes from build_route_entry line 330: spec_to_name = release_fullname. This should be the raw service name."
+
+"34. Service name: juseppelad-2-441 -> jusepped-2.441 (hyphen vs dot)
+What happens: Raw service name has hyphens, rendered name has dots.
+Why: build_service_entry uses fullname for the service metadata name (_helpers.tpl fullname), which uses fullnameOverride from the parent workload's naming. The raw service name (juseppelad-2-441) is stored at line 313 as spec_to_name, but the metadata.name (service.yaml line 5) uses {{ include "common.names.fullname" $ }}."
+
+CONCRETE EXAMPLE (verbatim):
+"Concrete Example: control-station-client
+Raw manifest (namespaces/interconn/control-station-client.yaml):
+# Service in raw:
+  name: control-station-client-service        # <- original name
+spec:
+  selector:
+    app: control-station-client
+    app.kubernetes.io/instance: control-station-client-interconn
+    app.kubernetes.io/name: control-station-client
+# Route in raw (points to the service above):
+  name: control-station-client-route          # <- original name
+spec:
+  to:
+    kind: Service
+    name: control-station-client-service      # <- references the service by name
+
+What the Helm chart renders (from service.yaml line 5 and route.yaml line 6):
+# Service rendered:
+  name: {{ include "universal-chart.fullname" . }}
+# Route rendered:
+  name: {{ include "universal-chart.fullname" $ }}
+spec:
+  to:
+    kind: Service
+    name: {{ include "universal-chart.fullname" $ }}   # -> same name as the route
+
+So Helm renders:
+# Service:
+  name: control-station-client        # <- NOT "control-station-client-service"
+# Route:
+  name: control-station-client        # <- NOT "control-station-client-route"
+spec:
+  to:
+    kind: Service
+    name: control-station-client      # <- points to "control-station-client" (OK - matches)
+
+The problems:
+1. Raw Service name: control-station-client-service -> Rendered name: control-station-client
+   - Anything referencing control-station-client-service (other config, DNS, other routes) will break
+2. Raw Route name: control-station-client-route -> Rendered name: control-station-client
+   - Same name collision between Service and Route
+3. Raw Route to.name: control-station-client-service -> Rendered to.name: control-station-client
+   - In this case the route still resolves correctly internally, but if the original name was referenced elsewhere, it's now wrong
+
+Another example from the report - Route/interconn-kafka-kafbat (line 557):
+raw    spec.to.name: 'interconn-kafka-kafbat-service'
+render spec.to.name: 'interconn-kafka-kafbat'
+The route now points to a service named interconn-kafka-kafbat, but the original pointed to interconn-kafka-kafbat-service - if that service still exists under the old name from a previous deployment, the route is broken (points to nothing).
+
+Root cause: The chart uses universal-chart.fullname for ALL resource names (service, route, deployment...), dropping the original naming suffixes like -service, -route, etc. The raw manifests used distinct names per object; these names may be hardcoded in configs, other references, or DNS entries."
+
+ROOT CAUSE TABLE ROWS:
+"H | Chart uses fullname instead of raw name for routes/services | Affects: Route and Service name mismatches"
+"J | build_route_entry sets spec_to_name to release_fullname | Affects: All route target names"
+
+ADDITIONAL CONTEXT / CLUES:
+- Locations: convert_to_universal_chart.py build_route_entry line 330 (spec_to_name = release_fullname), build_service_entry line 313 (raw name stored as spec_to_name but unused); Universal-chart/templates/service.yaml line 5, routes.yaml line 53 / route.yaml line 6; _helpers.tpl fullname + fullnameOverride.
+- With nameOverride: control-station-client set from base/control-station-client.yaml, fullname resolves to the bare release name.
+- P0 in the "Next Biggest Errors" list — 33 Services/Routes not rendered — and it also produces both halves of the missing/extra object pairs (~25 objects with no release + ~28 objects with no raw source that "collide with #5").
+- Functional impact: "Services are critical for networking. If names don't match, other pods can't reach these deployments."

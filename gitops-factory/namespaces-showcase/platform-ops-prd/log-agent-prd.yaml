@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: log-agent
+  labels:
+    app: log-agent
+spec:
+  selector:
+    matchLabels:
+      app: log-agent
+  template:
+    metadata:
+      labels:
+        app: log-agent
+    spec:
+      serviceAccountName: log-agent
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:2.2.2
+        ports:
+        - name: metrics
+          containerPort: 2020
+        envFrom:
+        - configMapRef:
+            name: platform-ops-alert-thresholds
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        volumeMounts:
+        - name: config
+          mountPath: /fluent-bit/etc
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: log-agent-conf
+      - name: varlog
+        hostPath:
+          path: /var/log
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-agent-conf
+data:
+  fluent-bit.conf: "[SERVICE]\n    Flush        5\n    Daemon       Off\n    HTTP_Server  On\n    HTTP_Listen\
+    \  0.0.0.0\n    HTTP_Port    2020\n\n[INPUT]\n    Name  tail\n    Path  /var/log/containers/*.log\n\
+    \n[OUTPUT]\n    Name   stdout\n    Match  *\n"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: log-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: log-agent-reader
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  - namespaces
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: log-agent-reader-binding-platform-ops-prd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: log-agent-reader
+subjects:
+- kind: ServiceAccount
+  name: log-agent
+  namespace: platform-ops-prd

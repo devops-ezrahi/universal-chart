@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: session-store-settings
+data:
+  SESSION_TTL: "3600"
+  COOKIE_DOMAIN: "showcase.example.com"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: session-store
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: session-store-vault
+spec:
+  provider:
+    vault:
+      # The real Vault in this cluster, reached over its public hostname
+      # (Traefik terminates TLS and forwards to the vault Service). The
+      # in-cluster ClusterSecretStore (manifests/external-secrets.yaml) uses
+      # http://vault.vault.svc.cluster.local:8200 instead — a shorter path
+      # for pod-to-pod traffic within the same cluster — but this SecretStore
+      # deliberately uses the public address instead.
+      server: https://vault.devops-ezrahi.duckdns.org
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: session-store
+          serviceAccountRef:
+            name: session-store
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: session-store-signing-key
+spec:
+  secretStoreRef:
+    name: session-store-vault
+    # There is a ZERO WIDTH NON-JOINER (U+200C) inside the word below, between
+    # "Secret" and "Store". It is invisible in a terminal, in a diff and in a
+    # code review, and it is EXACTLY the defect the report describes on
+    # spec.secretStoreRef.kind. YAML keeps it as ordinary content, so this
+    # string is not "SecretStore" to any lookup that matters.
+    #
+    # Left in the corpus deliberately, and it is the one place in this repo
+    # where a raw manifest is knowingly wrong: the converter strips it and
+    # WARNS, and both halves need something to act on. Do not "clean" this line
+    # — deleting the character removes the only standing coverage for the strip.
+    kind: Secret‌Store
+  refreshInterval: 1h
+  target:
+    creationPolicy: Owner
+  data:
+    - secretKey: signingKey
+      remoteRef:
+        key: identity-auth/session-store
+        property: signingKey

@@ -1,0 +1,59 @@
+# Fixture for ERRORS_ANALYSIS/Service_SessionAffinity_Lost.
+#
+# Derived from namespaces-showcase/shop-web/storefront.yaml — same namespace,
+# same microservice file name, same Deployment + Service shape. Two Services, so
+# both templates are covered (service.yaml for the primary, services.yaml for
+# the rest), and BOTH carry a NON-None sessionAffinity.
+#
+# Non-None is the whole point: 300 of 300 sessionAffinity values in this repo's
+# raw manifests are `None`, which IS the Kubernetes default, so dropping those
+# changes nothing. `ClientIP` is the case that would be a real break, and it is
+# the case the report never counted.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront
+spec:
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+  selector:
+    app: storefront
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront-sticky
+spec:
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+  selector:
+    app: storefront
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

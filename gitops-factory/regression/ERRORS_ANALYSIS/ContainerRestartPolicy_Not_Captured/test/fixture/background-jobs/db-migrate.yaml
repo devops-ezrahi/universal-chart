@@ -1,0 +1,74 @@
+# Fixture for ERRORS_ANALYSIS/ContainerRestartPolicy_Not_Captured.
+#
+# Derived from namespaces-showcase/background-jobs/db-migrate.yaml — same
+# namespace, same microservice file name, same Job + Secret + credentials mount.
+#
+# The field in question is the CONTAINER-level `restartPolicy`, not the
+# pod-level one. They are different fields at different paths and only the
+# pod-level one round-trips today:
+#
+#   spec.template.spec.restartPolicy              <- pod level, already works
+#   spec.template.spec.containers[*].restartPolicy <- container level, the gap
+#   spec.template.spec.initContainers[*].restartPolicy: Always <- native sidecar
+#
+# `restartPolicy: Always` on an initContainer is how Kubernetes 1.28+ declares a
+# native SIDECAR: the container starts before the main one and keeps running
+# alongside it. Lose it and the "sidecar" becomes an ordinary init container
+# that the Job waits to COMPLETE - so a long-running log shipper hangs the Job
+# forever. On a regular container (1.33+) it controls whether that container is
+# restarted in place instead of failing the pod.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: log-shipper
+          image: busybox:1.36
+          restartPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do echo shipping; sleep 5; done"]
+      containers:
+        - name: migrate
+          image: busybox:1.36
+          restartPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args: ["echo running schema migration using $(cat /etc/db-migrate/api-key); sleep 2; echo done"]
+          volumeMounts:
+            - name: credentials
+              mountPath: /etc/db-migrate
+              readOnly: true
+      volumes:
+        - name: credentials
+          secret:
+            secretName: db-migrate-credentials
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-migrate-verify
+spec:
+  schedule: "0 4 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: verify
+              image: busybox:1.36
+              restartPolicy: Always
+              command: ["/bin/sh", "-c"]
+              args: ["echo verifying; sleep 2"]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-migrate-credentials
+type: Opaque
+stringData:
+  api-key: "showcase-migration-api-key-change-me"

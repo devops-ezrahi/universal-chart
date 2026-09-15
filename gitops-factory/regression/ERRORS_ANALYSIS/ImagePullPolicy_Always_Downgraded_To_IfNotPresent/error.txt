@@ -1,0 +1,25 @@
+error: imagePullPolicy: Always is subtracted as a "default value" and the chart falls back to IfNotPresent, so workloads and CronJobs silently run stale images.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"5. CronJob/Job imagePullPolicy: Always -> IfNotPresent
+What happens: Raw containers have imagePullPolicy: Always, but rendered has IfNotPresent.
+Why: The converter captures imagePullPolicy: Always at line 824 for workloads, but the subtract_defaults at line 2306 checks if always_equal matches and removes... For CronJob/Job handlers specifically, handle_main_container IS called, which should capture it. But the chart's _helpers.tpl universal-chart.image only renders pullPolicy if it's NOT IfNotPresent (line 126). When subtract_defaults removes Always, the chart defaults to IfNotPresent."
+
+"8. CronJob container imagePullPolicy + env conflict (kafka)
+What happens: Container kafka has imagePullPolicy: Always in raw but IfNotPresent in rendered.
+Why: Same as issue 5 - Always gets subtracted as 'default value', and chart defaults to IfNotPresent."
+
+"13. Deployment imagePullPolicy: Always -> IfNotPresent
+What happens: Same as issues 5/8."
+
+MEDIUM SEVERITY TABLE ROW:
+"13 | CronJob imagePullPolicy Always -> IfNotPresent | Count 3 | Why: CronJobs may run stale images | Example: CronJob/elastic-storage-retention: will not pull latest image each run"
+
+ROOT CAUSE TABLE ROW:
+"E | subtract_defaults removes Always as 'same as default' | Affects: imagePullPolicy"
+
+ADDITIONAL CONTEXT / CLUES:
+- Two compounding defects: subtract_defaults at convert_to_universal_chart.py:2306 removes the value, and _helpers.tpl "universal-chart.image" (line 126) only emits pullPolicy when it differs from IfNotPresent — so the removed value can never be restored.
+- Captured at convert_to_universal_chart.py line 824 for workloads; handle_main_container is the capture path for CronJob/Job.
+- Affects Deployments, CronJobs and Jobs alike (report issues 5, 8, 13, 25-27 are the same defect).
+- Functional impact: a mutable tag (e.g. :2.0.0) that is re-pushed will never be re-pulled; combined with the image-digest-to-tag defect this means the workload can run an entirely different image than intended.

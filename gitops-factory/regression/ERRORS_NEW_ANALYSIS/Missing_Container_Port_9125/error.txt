@@ -1,0 +1,40 @@
+error: Deployment/b2b loses container port 9125/TCP entirely in the rendered output — 1 LOST error, root cause explicitly UNKNOWN, the only unexplained real defect in the report.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"5. Missing Container Port - 1 LOST error: Deployment/b2b is missing port 9125/TCP in render. Root cause unknown — needs investigation into ports_list_to_map or Helm template mapToList helper."
+
+SUMMARY TABLE ROW:
+"Missing port | 1 | b2b ports[#port:9125/TCP] - fix converter"
+
+FIELD TABLE ROW:
+"ports[#port:9125/TCP] | 1 | Deployment/b2b unnamed port"
+
+WORK LEFT (verbatim):
+"- Investigate b2b Deployment port 9125: check if it was dropped in handle_main_cont[ainer] or [the] Helm template mapToList helper"
+
+RELEVANT CODE LOCATIONS NAMED IN THE REPORT:
+"- Fidelity Report: C:\repos\rakia-argocd-new\universal\gitops-factory\values\report\[fidelity_report.txt] (1,313 ERROR lines)
+ - Unix version: C:\repos\rakia-argocd-new\universal\gitops-factory\values\report\fide[lity_report_unix.txt]
+ - Converter Script: C:\repos\rakia-argocd-new\universal\gitops-factory\convert_to_uni[versal_chart.py]
+   - _fidelity_ignored_path(): line 2953
+   - ports_list_to_map(): line 645
+   - _item_name(): line 3024
+   - handle_main_container() (port handling): line 835
+   - _fidelity_diff(): line 3055
+ - Helm Templates:
+   - ...\Universal-chart\templates\config[map.yaml] - data with toYaml
+   - ...\Universal-chart\templates\_helper[s.tpl] - port rendering helpers
+ - Existing Tests (reference):
+   - ...\output-showcase\ERRORS_ANALYSIS\Container_Ports_Reordered_And_Auto_Named\test\test_container_ports.py - tests named/unnamed [ports]
+   - ...\output-showcase\ERRORS_ANALYSIS\Grafana_ConfigMap_Trailing_Newline\test\test_blob_fidelity.py - proves YAML pipeline prese[rves whitespace]"
+
+TECHNICAL DECISION FROM THE SAME REPORT THAT IS THE PRIME SUSPECT:
+"- Unnamed ports get key port-{number} with unnamed: true marker"
+
+ADDITIONAL CONTEXT / CLUES:
+- THE PORT IS UNNAMED. The field table calls it "Deployment/b2b unnamed port" and the error path is written ports[#port:9125/TCP] — the "#port:" prefix is the checker's synthetic identity for a port carrying no name. That detail is the thread to pull.
+- STRONGEST HYPOTHESIS: ports_list_to_map() (line 645) keys unnamed ports as port-{number} and tags them unnamed: true. The entry is lost if either (a) two ports on b2b collapse to the same synthetic key, or (b) the unnamed: true marker does not survive the round trip through the mapToList helper in _helpers.tpl, so the reconstructed list drops or malforms the entry. Check b2b's raw manifest for how many ports it declares and whether any share a number or lack names.
+- SECOND PLACE TO CHECK: handle_main_container() port handling at line 835 — confirm the port reaches values at all. If it is absent from the generated values file, the loss is in the converter; if present in values but absent from helm template output, the loss is in the template.
+- START FROM THE EXISTING TEST: ERRORS_ANALYSIS/Container_Ports_Reordered_And_Auto_Named/test/test_container_ports.py already exercises named vs unnamed ports. Add a failing case reproducing b2b's exact port list rather than writing a new harness.
+- IMPACT — verify before rating: Kubernetes does not require a containerPort be declared for traffic to reach it, so a Service targeting 9125 BY NUMBER keeps working. What breaks is anything resolving it BY NAME (Service targetPort, probes), NetworkPolicy port references, and port-based discovery/documentation. Determine how 9125 is consumed before deciding severity.
+- Root cause is stated as UNKNOWN in the source. This folder is an INVESTIGATION TASK, not a known fix — expect to spend time here.

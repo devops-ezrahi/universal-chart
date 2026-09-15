@@ -1,0 +1,29 @@
+error: Deployment spec.template.metadata.name and .namespace are dropped — ~7-17 occurrences on Thanos workloads — pod template metadata that is inherited rather than set explicitly.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+FIDELITY REPORT LINES:
+"Lines 112-120: Thanos deployments - 8 additional LOST fields
+ - Lines 112, 114, 118: spec.template.metadata.name and namespace lost - these were managed by the Thanos Banzaicloud operator. Beni[gn.] (operator re-creates them)
+ - Lines 116, 120: ownerReferences lost - links to StoreEndpoint and Thanos CRDs. These are operator-managed garbage collection refe[rences]. Benign. (operator re-creates them)
+ - Lines 113, 119: spec.template.metadata.namespace lost - pod template namespace is typically not set explicitly and is inherited."
+
+FIELD TABLE ROW:
+"Pod template name/namespace/ownerReferences | ~15 | thanso-query, thanos-endpoint-store"
+
+BENIGN LIST ENTRY:
+"- Deployment template.metadata.name/namespace (7 instances) - Pod template metadata, not [used by K8s]"
+
+SUPPRESSION LIST ENTRY:
+"...ownerReferences (2), template namespace (2), name (5), parallelism (2)..."
+
+CROSS-CHECK TABLE ROW (flagging a count discrepancy):
+"Pod template metadata (98) — template.metadata.name = 17, not 98"
+
+ADDITIONAL CONTEXT / CLUES:
+- CLASSIFICATION: benign, and the reasoning is sound on all three sub-fields:
+  * spec.template.metadata.name — Kubernetes IGNORES this field entirely. Pod names are generated from the controller name plus a hash; a name set on the pod template has no effect whatsoever. Safe to drop unconditionally.
+  * spec.template.metadata.namespace — inherited from the object's own namespace. Setting it explicitly is redundant, and setting it to a DIFFERENT namespace is invalid. Safe to drop.
+  * ownerReferences — operator-managed garbage-collection links to StoreEndpoint and Thanos CRDs. The Thanos Banzaicloud operator recreates them on reconcile. Safe to drop, PROVIDED the operator is actually running in the target cluster.
+- THE ONE THING TO VERIFY: the ownerReferences argument rests entirely on "operator re-creates them". If the Thanos operator is NOT deployed in the migration target, those garbage-collection links never come back, and the affected objects become orphans that survive deletion of their parent. Confirm the operator is present before accepting this. The name/namespace fields carry no such dependency.
+- COUNT DISCREPANCY EXPLICITLY FLAGGED BY THE REPORT ITSELF: an earlier summary claimed 98 "Pod template metadata" errors; the actual report contains 17 template.metadata.name entries. This is one instance of the broader summary-vs-report mismatch documented in Summary_Vs_Report_Data_Mismatch — the two documents describe different converter runs. Trust the report, not the summary.
+- Affected: Thanos deployments — thanos-query, thanos-endpoint-store (transcribed in one screenshot as "thanso-query", a typo in the source).

@@ -1,0 +1,28 @@
+error: The converter renames Secrets/ConfigMaps with cluster prefixes for collision avoidance but may not update every reference consistently — 11-12 CHANGED errors across secretName, secretKeyRef.name and configMap.name.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+"1. Secret/ConfigMap Rename Inconsistency - 11 CHANGED errors: Converter renames secrets/ConfigMaps with cluster prefixes for collision avoidance, but references in secretName, secretKeyRef, and configMap.name fields show as CHANGED. These are structural renaming by design, but whether they're bugs depends on reference consistency throughout rendered manifests."
+
+"configMap.name fields show as CHANGED because raw name differs from rendered
+- Affected objects & fields:
+  - 4x Deployment/profiles-manager-yellow-b2b-{cluster} - volumes[0].secret.secretName -> profiles-manager-yellow-b2b-{cluster}-profiles-manager-rsa-key
+  - 3x Deployment/StatefulSet/rakia-zk-{*} - volumes[*].configMap.name: rakia-zk-config
+  - 4x StatefulSet/rakia-redis-eight-testing-redis - env[*].secretKeyRef.name -> redis-eight-testing-auth -> renamed
+- Status: These are structural renaming by design - the converter adds cluster [prefixes]. [Whether] this is a bug depends on whether the references are consistent throughout the r[endered manifests]."
+
+SUMMARY TABLE ROW (Summary: What's Fixable vs Noise):
+"Secret/ConfigMap rename bug (CHANGED) | 12 | Converter is renaming secrets but not all references consistently - volumes point to new name b[ut ...] this may be intentional"
+
+REMEDIATION TABLE ROW:
+"Fix secret/ConfigMap rename (12) | -12 | 67 remaining"
+
+WORK LEFT (verbatim):
+"- Decide whether secret/ConfigMap renaming CHANGEDs are bugs or intended behavior"
+
+ADDITIONAL CONTEXT / CLUES:
+- THIS IS AN OPEN DECISION, NOT A CONFIRMED BUG. The report repeatedly hedges: "may be intentional", "whether they're bugs depends on reference consistency". Do not "fix" it before deciding.
+- THE DECIDING TEST: for each renamed object, render the release with helm template and confirm EVERY reference (volumes[*].secret.secretName, volumes[*].configMap.name, env[*].valueFrom.secretKeyRef.name, envFrom) resolves to an object that same release actually creates. If all resolve, this is cosmetic and belongs in the suppression list. If any dangles, it is a P0 — the pod will fail to mount and will not start.
+- The report notes elsewhere that volume references ARE updated ("volumes point to new name"), which suggests internal consistency; the remaining risk is references from OUTSIDE the release.
+- DIRECT CONTRADICTION INSIDE THE SAME SESSION, which must be resolved before acting: the later "Errors That Are Correctly NOT Changed (Benign - Leave As-Is)" list contains "Collision rename reference updates (9 CHANGED fields) - Internally consistent after ren[ame]". That entry says this is benign; the "6 Real Issues" list says it is one of the real issues. Both cannot be right.
+- Affected releases: profiles-manager-yellow-b2b-{cluster} (4x), rakia-zk-{*} (3x), rakia-redis-eight-testing-redis (4x).
+- This is the same collision-rename machinery documented in the previous analysis round (ERRORS_ANALYSIS/ConfigMap_Secret_Identical_Content_Duplicated and .../ConfigMap_Secret_References_Prefixed_With_Release). Read those two files first — the decision may already have been made there.

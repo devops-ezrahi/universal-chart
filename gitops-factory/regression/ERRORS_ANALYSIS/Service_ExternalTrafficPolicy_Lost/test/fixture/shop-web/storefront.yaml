@@ -1,0 +1,55 @@
+# Fixture for ERRORS_ANALYSIS/Service_ExternalTrafficPolicy_Lost.
+#
+# Derived from namespaces-showcase/shop-web/storefront.yaml — same namespace,
+# same microservice file name, same Deployment + Service shape. Two Services, so
+# both templates are covered (service.yaml for the primary, services.yaml for
+# the rest), and BOTH carry externalTrafficPolicy: Local.
+#
+# `Local` rather than the reported `Cluster` on purpose. `Cluster` IS the
+# Kubernetes default, so losing it changes nothing — which is why the report's
+# own note flags this folder as a probable false positive. `Local` is the value
+# that actually matters: it is what preserves the client source IP, and it is
+# the case that would be a genuine break. externalTrafficPolicy appears 0 times
+# in this repo's raw manifests either way (STATUS.md §1).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app: storefront
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront-lb
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app: storefront
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

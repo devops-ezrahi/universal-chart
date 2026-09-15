@@ -1,0 +1,126 @@
+# Fixture for ERRORS_ANALYSIS/Workload_Metadata_Labels_Lost.
+#
+# Derived from namespaces-showcase/shop-web/api-gateway.yaml - same namespace,
+# same microservice file name, same Deployment + Service + ConfigMap shape. What
+# is ADDED is a set of REAL custom labels on every object kind the report names.
+#
+# The showcase's own manifests carry only `app: api-gateway` at object level,
+# which the chart owns and derives itself - which is exactly why this defect was
+# invisible in the generated output and needs a fixture to reproduce.
+#
+# The labels chosen are the ones the report cites as actually lost:
+#   team / environment            operational ownership metadata
+#   app.kubernetes.io/part-of     135 occurrences in the source report
+#   argocd.argoproj.io/instance   losing it makes ArgoCD stop managing the object
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+    team: storefront
+    environment: prod
+    app.kubernetes.io/part-of: shop-web
+    argocd.argoproj.io/instance: shop-web-api-gateway
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        team: storefront
+    spec:
+      containers:
+        - name: gateway
+          image: nginx:1.27
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  labels:
+    team: storefront
+    app.kubernetes.io/part-of: shop-web
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  labels:
+    team: storefront
+    environment: prod
+data:
+  traefik.yml: "entryPoints:\n  web:\n    address: ':8080'\n"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-gateway
+  labels:
+    team: storefront
+    argocd.argoproj.io/instance: shop-web-api-gateway
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-gateway-cache
+  labels:
+    team: storefront
+    environment: prod
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-gateway-allow
+  labels:
+    team: storefront
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes: ["Ingress"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: api-gateway-reader
+  labels:
+    team: storefront
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: api-gateway-rotate
+  labels:
+    team: storefront
+    environment: prod
+spec:
+  schedule: "0 5 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: rotate
+              image: busybox:1.36

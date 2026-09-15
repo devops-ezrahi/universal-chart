@@ -1,0 +1,15 @@
+error: Service port appProtocol is dropped during conversion, so the Istio service mesh cannot route gRPC traffic correctly — 8 occurrences.
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+MEDIUM SEVERITY TABLE ROW:
+"9 | Lost appProtocol on service ports | Count 8 | Why: Service mesh (Istio) can't route gRPC traffic correctly | Example: Service/observability-otel-collector: otlp-grpc port loses appProtocol: grpc"
+
+ALSO LISTED IN WORK LEFT:
+"- Service appProtocol/sessionAffinity lost (Issue 8)"
+
+ADDITIONAL CONTEXT / CLUES:
+- Neither the converter's Service handler (build_service_entry) nor Universal-chart/templates/service.yaml carries appProtocol through to the rendered port entries.
+- Impact is real, not cosmetic: Istio (and other meshes) use appProtocol to select the correct L7 protocol handler. Losing appProtocol: grpc means the port is treated as plain TCP, breaking gRPC-aware routing, retries and telemetry.
+- Grouped with sessionAffinity and externalTrafficPolicy in the report as a family of Service spec fields the conversion drops (see Service_SessionAffinity_Lost and Service_ExternalTrafficPolicy_Lost) — same file, likely the same one-line fix per field.
+- Concrete affected object named in the report: Service/observability-otel-collector, port otlp-grpc.
+- Fix: capture spec.ports[*].appProtocol in build_service_entry and render it in service.yaml.

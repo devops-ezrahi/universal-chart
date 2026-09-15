@@ -1,0 +1,19 @@
+error: Service spec.sessionAffinity is dropped from every rendered Service — 29 services affected (150 occurrences of sessionAffinity: None across the report).
+
+EXACT TEXT EXTRACTED FROM IMAGES:
+MEDIUM SEVERITY TABLE ROW:
+"10 | Lost sessionAffinity on services | Count 29 | Why: Load balancer session affinity broken | Example: All app services lose sessionAffinity: None"
+
+conflicts_and_warnings.txt TOP PATTERN ROW:
+"sessionAffinity: None | 150 | K8s default, safe to drop"
+
+ALSO LISTED IN WORK LEFT:
+"- Service appProtocol/sessionAffinity lost (Issue 8)"
+
+ADDITIONAL CONTEXT / CLUES:
+- THE TWO SOURCES DISAGREE ON SEVERITY AND THE NEXT AGENT MUST RESOLVE IT:
+  * The MEDIUM severity table calls it "Load balancer session affinity broken" (a real defect, 29 services).
+  * The conflicts_and_warnings.txt pattern table classifies "sessionAffinity: None" as "K8s default, safe to drop" (150 occurrences, harmless).
+  Both can be true simultaneously: dropping the explicit value None is harmless because None IS the Kubernetes default, but any Service that had sessionAffinity: ClientIP would be a genuine break. The count of Services with a NON-None value is what actually matters and is not stated anywhere in the report.
+- ACTION FOR THE NEXT AGENT: grep the raw manifests for `sessionAffinity:` with a value other than `None` before deciding this is cosmetic. The report's own guidance was "The user is skeptical of 'false positive' classifications and wants precise proof (raw vs rendered comparison) before accepting a severity downgrade."
+- Fix location if a real value is found: build_service_entry in convert_to_universal_chart.py + Universal-chart/templates/service.yaml (same place as appProtocol and externalTrafficPolicy).
