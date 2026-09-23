@@ -12,7 +12,8 @@ name; set nameOverride when you want something other than the release name
 itself (e.g. the release name has extra GitOps plumbing baked into it).
 */}}
 {{- define "universal-chart.name" -}}
-{{- default .Release.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- $name := default .Release.Name .Values.nameOverride }}
+{{- tpl (printf "%v" $name) . | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
@@ -28,11 +29,8 @@ this chart is reused by many differently-named apps, so its own name must
 never leak into any of them.
 */}}
 {{- define "universal-chart.fullname" -}}
-{{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- default .Release.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-{{- end }}
+{{- $name := .Values.fullnameOverride | default (.Values.nameOverride | default .Release.Name) }}
+{{- tpl (printf "%v" $name) . | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
@@ -73,7 +71,7 @@ unique and no disambiguation to stay distinct. A hand-written values file gets
 exactly the name it wrote.
 */}}
 {{- define "universal-chart.subresourceName" -}}
-{{- .name -}}
+{{- tpl (printf "%v" .name) .root -}}
 {{- end }}
 
 {{- define "universal-chart.cronJobName" -}}
@@ -115,7 +113,7 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 */}}
 {{- define "universal-chart.objectLabels" -}}
 {{- $core := fromYaml (include "universal-chart.labels" .root) }}
-{{- toYaml (merge $core (.own | default dict)) }}
+{{- tpl (toYaml (merge $core (.own | default dict))) .root }}
 {{- end }}
 
 {{- define "universal-chart.labels" -}}
@@ -123,7 +121,7 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- if .Chart.AppVersion }}
 {{- $core = merge $core (dict "app.kubernetes.io/version" (.Chart.AppVersion | toString)) }}
 {{- end }}
-{{- merge $core (.Values.commonLabels | default dict) | toYaml }}
+{{- tpl (toYaml (merge $core (.Values.commonLabels | default dict))) . }}
 {{- end }}
 
 {{/*
@@ -153,7 +151,7 @@ the reference dangling. Current callers: service.yaml (the object itself),
 route.yaml + routes.yaml (spec.to.name) and ingress.yaml (backend.service.name).
 */}}
 {{- define "universal-chart.primaryServiceName" -}}
-{{- .Values.service.name | default (include "universal-chart.fullname" .) }}
+{{- tpl (printf "%v" (.Values.service.name | default (include "universal-chart.fullname" .))) . }}
 {{- end }}
 
 {{/*
@@ -161,9 +159,9 @@ ServiceAccount name
 */}}
 {{- define "universal-chart.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "universal-chart.fullname" .) .Values.serviceAccount.name }}
+{{- tpl (printf "%v" (default (include "universal-chart.fullname" .) .Values.serviceAccount.name)) . }}
 {{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- tpl (printf "%v" (default "default" .Values.serviceAccount.name)) . }}
 {{- end }}
 {{- end }}
 
@@ -175,12 +173,14 @@ a ":tag" suffix appended; that would either produce an invalid
 Chart.AppVersion.
 */}}
 {{- define "universal-chart.image" -}}
+{{- $repo := tpl (printf "%v" .Values.image.repository) . }}
 {{- if .Values.image.digest }}
-{{- printf "%s@%s" .Values.image.repository .Values.image.digest }}
-{{- else if contains "@" .Values.image.repository }}
-{{- .Values.image.repository }}
+{{- printf "%s@%s" $repo .Values.image.digest }}
+{{- else if contains "@" $repo }}
+{{- $repo }}
 {{- else }}
-{{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) }}
+{{- $tag := tpl (printf "%v" (.Values.image.tag | default .Chart.AppVersion)) . }}
+{{- printf "%s:%s" $repo $tag }}
 {{- end }}
 {{- end }}
 
@@ -199,19 +199,23 @@ share a name. Such entries are keyed '<name>:<subPath>' and carry an explicit
 `name` field, so the real name is `$spec.name | default $key` — never the bare
 key, which would emit a mount referencing a volume that does not exist.
 
-Usage:  {{- include "universal-chart.mapToList" .Values.ports | nindent 4 }}
+Usage:  {{- include "universal-chart.mapToList" (list .Values.ports $) | nindent 4 }}
+
+The second argument is the tpl context (the release root) used to evaluate
+expressions embedded in map values, same as universal-chart.tplval.
 */}}
 {{- define "universal-chart.mapToList" -}}
-{{- range $name, $spec := . }}
+{{- $ctx := index . 1 }}
+{{- range $name, $spec := index . 0 }}
 {{- /* `unnamed: true` means the map key is bookkeeping, not a real name: a
        container port the raw manifest left unnamed still needs a key here, but
        emitting `name: port-8080` would give the object a name it never had, and
        a Service targetPort or probe that resolves ports BY name would then
        match something that did not exist before. */}}
 {{- if $spec.unnamed }}
-- {{- toYaml (omit $spec "unnamed" "name") | nindent 2 }}
+- {{- tpl (toYaml (omit $spec "unnamed" "name")) $ctx | nindent 2 }}
 {{- else }}
-- name: {{ $spec.name | default $name }}
+- name: {{ include "universal-chart.tplval" (list ($spec.name | default $name) $ctx) }}
   {{- /* An entry whose body is empty renders `- name: X` followed by a bare
          `{}`, which is malformed for an env var (no value, no valueFrom) and
          for a port. An empty body almost always means the source had
@@ -221,12 +225,32 @@ Usage:  {{- include "universal-chart.mapToList" .Values.ports | nindent 4 }}
          would change behaviour rather than preserve it. */}}
   {{- $body := omit $spec "name" }}
   {{- if $body }}
-  {{- toYaml $body | nindent 2 }}
+  {{- tpl (toYaml $body) $ctx | nindent 2 }}
   {{- else }}
   value: ""
   {{- end }}
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{/*
+=============================================================================
+TPL — every value that is EMITTED goes through tpl
+=============================================================================
+Values files are often passed in from git (ArgoCD ApplicationSet valueFiles),
+so a value can itself contain {{ }} expressions that must be evaluated against
+the release root at render time. Every template therefore emits values only
+through this helper:
+
+  {{ include "universal-chart.tplval" (list <value> <ctx>) }}
+
+where <ctx> is the release root ($ in templates, $ in _pod-spec.tpl, and .
+inside define helpers that receive the root as their argument). The value is
+rendered with %v BEFORE tpl so non-string types (numbers, bools, lists) still
+work, and a plain value with no {{ }} round-trips unchanged.
+*/}}
+{{- define "universal-chart.tplval" -}}
+{{- tpl (printf "%v" (index . 0)) (index . 1) -}}
 {{- end }}
 
 {{/*
@@ -248,10 +272,10 @@ Usage: add to pod annotations:
 {{- define "universal-chart.checksumAnnotations" -}}
 {{- if .Values.checksums.enabled }}
 {{- if .Values.configMaps }}
-checksum/configmaps: {{ .Values.configMaps | toYaml | sha256sum }}
+checksum/configmaps: {{ tpl (toYaml .Values.configMaps) . | sha256sum }}
 {{- end }}
 {{- if .Values.secrets }}
-checksum/secrets: {{ .Values.secrets | toYaml | sha256sum }}
+checksum/secrets: {{ tpl (toYaml .Values.secrets) . | sha256sum }}
 {{- end }}
 {{- end }}
 {{- end }}
