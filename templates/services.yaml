@@ -1,3 +1,4 @@
+{{- include "universal-chart.renderValues" . }}
 {{/*
 Extra Services beyond the primary one (.Values.service) — MAP-BASED, keyed by
 service name. Use when a microservice needs more than one Service object

@@ -12,8 +12,7 @@ name; set nameOverride when you want something other than the release name
 itself (e.g. the release name has extra GitOps plumbing baked into it).
 */}}
 {{- define "universal-chart.name" -}}
-{{- $name := default .Release.Name .Values.nameOverride }}
-{{- tpl (printf "%v" $name) . | trunc 63 | trimSuffix "-" }}
+{{- default .Release.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
@@ -29,8 +28,11 @@ this chart is reused by many differently-named apps, so its own name must
 never leak into any of them.
 */}}
 {{- define "universal-chart.fullname" -}}
-{{- $name := .Values.fullnameOverride | default (.Values.nameOverride | default .Release.Name) }}
-{{- tpl (printf "%v" $name) . | trunc 63 | trimSuffix "-" }}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- default .Release.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -71,7 +73,7 @@ unique and no disambiguation to stay distinct. A hand-written values file gets
 exactly the name it wrote.
 */}}
 {{- define "universal-chart.subresourceName" -}}
-{{- tpl (printf "%v" .name) .root -}}
+{{- .name -}}
 {{- end }}
 
 {{- define "universal-chart.cronJobName" -}}
@@ -113,7 +115,7 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 */}}
 {{- define "universal-chart.objectLabels" -}}
 {{- $core := fromYaml (include "universal-chart.labels" .root) }}
-{{- tpl (toYaml (merge $core (.own | default dict))) .root }}
+{{- toYaml (merge $core (.own | default dict)) }}
 {{- end }}
 
 {{- define "universal-chart.labels" -}}
@@ -121,7 +123,7 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- if .Chart.AppVersion }}
 {{- $core = merge $core (dict "app.kubernetes.io/version" (.Chart.AppVersion | toString)) }}
 {{- end }}
-{{- tpl (toYaml (merge $core (.Values.commonLabels | default dict))) . }}
+{{- merge $core (.Values.commonLabels | default dict) | toYaml }}
 {{- end }}
 
 {{/*
@@ -151,7 +153,7 @@ the reference dangling. Current callers: service.yaml (the object itself),
 route.yaml + routes.yaml (spec.to.name) and ingress.yaml (backend.service.name).
 */}}
 {{- define "universal-chart.primaryServiceName" -}}
-{{- tpl (printf "%v" (.Values.service.name | default (include "universal-chart.fullname" .))) . }}
+{{- .Values.service.name | default (include "universal-chart.fullname" .) }}
 {{- end }}
 
 {{/*
@@ -159,9 +161,9 @@ ServiceAccount name
 */}}
 {{- define "universal-chart.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- tpl (printf "%v" (default (include "universal-chart.fullname" .) .Values.serviceAccount.name)) . }}
+{{- default (include "universal-chart.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
-{{- tpl (printf "%v" (default "default" .Values.serviceAccount.name)) . }}
+{{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
 
@@ -173,14 +175,12 @@ a ":tag" suffix appended; that would either produce an invalid
 Chart.AppVersion.
 */}}
 {{- define "universal-chart.image" -}}
-{{- $repo := tpl (printf "%v" .Values.image.repository) . }}
 {{- if .Values.image.digest }}
-{{- printf "%s@%s" $repo .Values.image.digest }}
-{{- else if contains "@" $repo }}
-{{- $repo }}
+{{- printf "%s@%s" .Values.image.repository .Values.image.digest }}
+{{- else if contains "@" .Values.image.repository }}
+{{- .Values.image.repository }}
 {{- else }}
-{{- $tag := tpl (printf "%v" (.Values.image.tag | default .Chart.AppVersion)) . }}
-{{- printf "%s:%s" $repo $tag }}
+{{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) }}
 {{- end }}
 {{- end }}
 
@@ -199,23 +199,19 @@ share a name. Such entries are keyed '<name>:<subPath>' and carry an explicit
 `name` field, so the real name is `$spec.name | default $key` — never the bare
 key, which would emit a mount referencing a volume that does not exist.
 
-Usage:  {{- include "universal-chart.mapToList" (list .Values.ports $) | nindent 4 }}
-
-The second argument is the tpl context (the release root) used to evaluate
-expressions embedded in map values, same as universal-chart.tplval.
+Usage:  {{- include "universal-chart.mapToList" .Values.ports | nindent 4 }}
 */}}
 {{- define "universal-chart.mapToList" -}}
-{{- $ctx := index . 1 }}
-{{- range $name, $spec := index . 0 }}
+{{- range $name, $spec := . }}
 {{- /* `unnamed: true` means the map key is bookkeeping, not a real name: a
        container port the raw manifest left unnamed still needs a key here, but
        emitting `name: port-8080` would give the object a name it never had, and
        a Service targetPort or probe that resolves ports BY name would then
        match something that did not exist before. */}}
 {{- if $spec.unnamed }}
-- {{- tpl (toYaml (omit $spec "unnamed" "name")) $ctx | nindent 2 }}
+- {{- toYaml (omit $spec "unnamed" "name") | nindent 2 }}
 {{- else }}
-- name: {{ include "universal-chart.tplval" (list ($spec.name | default $name) $ctx) }}
+- name: {{ $spec.name | default $name }}
   {{- /* An entry whose body is empty renders `- name: X` followed by a bare
          `{}`, which is malformed for an env var (no value, no valueFrom) and
          for a port. An empty body almost always means the source had
@@ -225,7 +221,7 @@ expressions embedded in map values, same as universal-chart.tplval.
          would change behaviour rather than preserve it. */}}
   {{- $body := omit $spec "name" }}
   {{- if $body }}
-  {{- tpl (toYaml $body) $ctx | nindent 2 }}
+  {{- toYaml $body | nindent 2 }}
   {{- else }}
   value: ""
   {{- end }}
@@ -235,22 +231,67 @@ expressions embedded in map values, same as universal-chart.tplval.
 
 {{/*
 =============================================================================
-TPL — every value that is EMITTED goes through tpl
+TPL — every value can carry {{ }} expressions
 =============================================================================
-Values files are often passed in from git (ArgoCD ApplicationSet valueFiles),
-so a value can itself contain {{ }} expressions that must be evaluated against
-the release root at render time. Every template therefore emits values only
-through this helper:
+Values files usually come from git (ArgoCD ApplicationSet valueFiles), so any
+string in them — a map value, a list item, or a map KEY such as a jobs/cronjobs
+name — may contain {{ }} evaluated against the release root.
 
-  {{ include "universal-chart.tplval" (list <value> <ctx>) }}
+renderValues walks .Values ONCE, before any template reads it, and replaces
+every string holding "{{" with its tpl result, in place. Every template file
+calls it on its first line; the marker makes the calls after the first free.
 
-where <ctx> is the release root ($ in templates, $ in _pod-spec.tpl, and .
-inside define helpers that receive the root as their argument). The value is
-rendered with %v BEFORE tpl so non-string types (numbers, bools, lists) still
-work, and a plain value with no {{ }} round-trips unchanged.
+Exactly once, never per field as well: a value that must emit a literal "{{"
+is written escaped ({{ "{{" }}), and a second pass would render the escaped
+form and break it. For the same reason extraDeploy is skipped — extra-deploy.yaml
+tpl's its entries itself.
+
+A rendered value is always a string ("3", "true"), exactly as if it had been
+quoted in the values file.
 */}}
-{{- define "universal-chart.tplval" -}}
-{{- tpl (printf "%v" (index . 0)) (index . 1) -}}
+{{- define "universal-chart.renderValues" -}}
+{{- if not (hasKey .Values "__universalChartRendered") }}
+{{- $_ := set .Values "__universalChartRendered" true }}
+{{- include "universal-chart.tplWalk" (dict "node" (omit .Values "extraDeploy" "__universalChartRendered") "into" .Values "ctx" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Renders .node's strings (values and keys) and writes each rendered entry into
+.into, which is .node itself except at the top level, where .node is a copy
+minus the keys that must not be walked. Maps nested anywhere are mutated in
+place; lists are rebuilt, since a list element cannot be assigned in place.
+ponytail: a list nested directly inside a list has only its maps rendered, not
+its bare strings — no Kubernetes field has that shape.
+*/}}
+{{- define "universal-chart.tplWalk" -}}
+{{- $ctx := .ctx }}
+{{- $into := .into }}
+{{- range $k, $v := .node }}
+{{- $nv := $v }}
+{{- if kindIs "string" $v }}
+{{- if contains "{{" $v }}{{ $nv = tpl $v $ctx }}{{ end }}
+{{- else if kindIs "map" $v }}
+{{- include "universal-chart.tplWalk" (dict "node" $v "into" $v "ctx" $ctx) }}
+{{- else if kindIs "slice" $v }}
+{{- $nv = list }}
+{{- range $item := $v }}
+{{- if and (kindIs "string" $item) (contains "{{" $item) }}
+{{- $nv = append $nv (tpl $item $ctx) }}
+{{- else }}
+{{- if kindIs "map" $item }}{{ include "universal-chart.tplWalk" (dict "node" $item "into" $item "ctx" $ctx) }}{{ end }}
+{{- $nv = append $nv $item }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $nk := $k }}
+{{- if contains "{{" $k }}
+{{- $nk = tpl $k $ctx }}
+{{- $_ := unset $into $k }}
+{{- if hasKey $into $nk }}{{ fail (printf "values key %q renders to %q, which already exists" $k $nk) }}{{ end }}
+{{- end }}
+{{- $_ := set $into $nk $nv }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -272,10 +313,10 @@ Usage: add to pod annotations:
 {{- define "universal-chart.checksumAnnotations" -}}
 {{- if .Values.checksums.enabled }}
 {{- if .Values.configMaps }}
-checksum/configmaps: {{ tpl (toYaml .Values.configMaps) . | sha256sum }}
+checksum/configmaps: {{ .Values.configMaps | toYaml | sha256sum }}
 {{- end }}
 {{- if .Values.secrets }}
-checksum/secrets: {{ tpl (toYaml .Values.secrets) . | sha256sum }}
+checksum/secrets: {{ .Values.secrets | toYaml | sha256sum }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -1,3 +1,4 @@
+{{- include "universal-chart.renderValues" . }}
 {{/*
 Extra OpenShift Routes beyond the primary one (.Values.route) — MAP-BASED,
 keyed by route name. Use when a microservice fronts more than one hostname/

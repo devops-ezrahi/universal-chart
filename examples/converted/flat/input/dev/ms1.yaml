@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms1
+  namespace: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ms1
+  template:
+    metadata:
+      labels:
+        app: ms1
+    spec:
+      containers:
+        - name: app
+          image: registry.example.org/ms1:1.0.0
+          env:
+            - name: ENVIRONMENT
+              value: dev
+            - name: DB_URL
+              value: http://db.dev.svc:5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms1
+  namespace: dev
+spec:
+  selector:
+    app: ms1
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

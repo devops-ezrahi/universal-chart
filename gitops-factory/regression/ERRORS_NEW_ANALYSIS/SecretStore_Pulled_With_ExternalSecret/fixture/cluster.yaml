@@ -1,0 +1,220 @@
+# What a fake `oc` serves for namespace interconn-opr (see the test).
+#
+# zookeeper and kafka each read an ExternalSecret from ONE SecretStore
+# (zookeeper-secret-store, modelled on the live object: Vault kubernetes auth
+# as ServiceAccount 'vault', CA from ConfigMap 'vault-ca') -> it is shared.
+# solo alone reads from solo-store (kind omitted, CA in a Secret) -> solo.yaml,
+# and from ClusterSecretStore global-store, whose CA lives in another
+# namespace -> the store is pulled, its CA is not.
+# The NetworkPolicy and ServiceMonitor must never be asked for.
+apiVersion: v1
+kind: List
+items:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: zookeeper
+    namespace: interconn-opr
+    labels: {app: zookeeper}
+  spec:
+    selector: {matchLabels: {app: zookeeper}}
+    template:
+      metadata: {labels: {app: zookeeper}}
+      spec:
+        containers:
+        - name: zookeeper
+          image: registry.example/zookeeper:3.9
+          env:
+          - name: ZK_PASSWORD
+            valueFrom: {secretKeyRef: {name: zk-creds, key: password}}
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: kafka
+    namespace: interconn-opr
+    labels: {app: kafka}
+  spec:
+    selector: {matchLabels: {app: kafka}}
+    template:
+      metadata: {labels: {app: kafka}}
+      spec:
+        containers:
+        - name: kafka
+          image: registry.example/kafka:3.7
+          env:
+          - name: KAFKA_PASSWORD
+            valueFrom: {secretKeyRef: {name: kafka-creds, key: password}}
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: solo
+    namespace: interconn-opr
+    labels: {app: solo}
+  spec:
+    selector: {matchLabels: {app: solo}}
+    template:
+      metadata: {labels: {app: solo}}
+      spec:
+        containers:
+        - name: solo
+          image: registry.example/solo:1.0
+          env:
+          - name: SOLO_TOKEN
+            valueFrom: {secretKeyRef: {name: solo-creds, key: token}}
+          - name: GLOBAL_TOKEN
+            valueFrom: {secretKeyRef: {name: solo-global, key: token}}
+- apiVersion: external-secrets.io/v1beta1
+  kind: ExternalSecret
+  metadata: {name: zk-es, namespace: interconn-opr}
+  spec:
+    refreshInterval: 1h
+    secretStoreRef: {kind: SecretStore, name: zookeeper-secret-store}
+    target: {name: zk-creds}
+    data:
+    - secretKey: password
+      remoteRef: {key: interconn/zookeeper, property: password}
+- apiVersion: external-secrets.io/v1beta1
+  kind: ExternalSecret
+  metadata: {name: kafka-es, namespace: interconn-opr}
+  spec:
+    refreshInterval: 1h
+    secretStoreRef: {kind: SecretStore, name: zookeeper-secret-store}
+    target: {name: kafka-creds}
+    data:
+    - secretKey: password
+      remoteRef: {key: interconn/kafka, property: password}
+- apiVersion: external-secrets.io/v1beta1
+  kind: ExternalSecret
+  metadata: {name: solo-es, namespace: interconn-opr}
+  spec:
+    refreshInterval: 1h
+    secretStoreRef: {name: solo-store}
+    target: {name: solo-creds}
+    data:
+    - secretKey: token
+      remoteRef: {key: interconn/solo, property: token}
+- apiVersion: external-secrets.io/v1beta1
+  kind: ExternalSecret
+  metadata: {name: solo-global-es, namespace: interconn-opr}
+  spec:
+    refreshInterval: 1h
+    secretStoreRef: {kind: ClusterSecretStore, name: global-store}
+    target: {name: solo-global}
+    data:
+    - secretKey: token
+      remoteRef: {key: global/solo, property: token}
+- apiVersion: external-secrets.io/v1beta1
+  kind: SecretStore
+  metadata:
+    name: zookeeper-secret-store
+    namespace: interconn-opr
+    uid: 5b1f7a52-0000-4000-8000-000000000001
+    resourceVersion: "123456"
+    creationTimestamp: "2025-01-01T00:00:00Z"
+    generation: 3
+    managedFields:
+    - manager: argocd-controller
+      operation: Apply
+    labels:
+      cloudopsResource: "true"
+      critical: "false"
+      environment: dev
+      operational: "true"
+      operationalPurpose: messaging
+      team: interconn
+  spec:
+    provider:
+      vault:
+        server: https://vault.example:8200
+        path: secret
+        version: v2
+        auth:
+          kubernetes:
+            mountPath: dev
+            role: k8s-role-dev-interconn-opr-vault
+            serviceAccountRef: {name: vault}
+        caProvider: {type: ConfigMap, name: vault-ca, key: ca.crt}
+  status:
+    conditions:
+    - {type: Ready, status: "True", reason: Valid}
+- apiVersion: external-secrets.io/v1beta1
+  kind: SecretStore
+  metadata:
+    name: solo-store
+    namespace: interconn-opr
+    uid: 5b1f7a52-0000-4000-8000-000000000002
+    resourceVersion: "123457"
+  spec:
+    provider:
+      vault:
+        server: https://vault.example:8200
+        path: secret
+        version: v2
+        auth:
+          kubernetes:
+            mountPath: dev
+            role: k8s-role-dev-solo
+            serviceAccountRef: {name: solo-vault}
+        caProvider: {type: Secret, name: solo-vault-ca, key: ca.crt, namespace: interconn-opr}
+# v1beta1 like everything else: the cluster-shared release must carry the
+# source's apiVersion through too (it used to fall back to the chart's v1).
+- apiVersion: external-secrets.io/v1beta1
+  kind: ClusterSecretStore
+  metadata:
+    name: global-store
+    uid: 5b1f7a52-0000-4000-8000-000000000003
+  spec:
+    provider:
+      vault:
+        server: https://vault.example:8200
+        path: secret
+        version: v2
+        auth:
+          kubernetes:
+            mountPath: global
+            role: k8s-role-global
+            serviceAccountRef: {name: eso-global, namespace: vault-system}
+        caProvider: {type: ConfigMap, name: global-ca, key: ca.crt, namespace: vault-system}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: vault-ca
+    namespace: interconn-opr
+    uid: 5b1f7a52-0000-4000-8000-000000000004
+    resourceVersion: "99"
+  data:
+    ca.crt: |
+      -----BEGIN CERTIFICATE-----
+      MIIBfake
+      -----END CERTIFICATE-----
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: vault
+    namespace: interconn-opr
+    uid: 5b1f7a52-0000-4000-8000-000000000005
+    resourceVersion: "100"
+    labels: {team: interconn}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: solo-vault-ca
+    namespace: interconn-opr
+    uid: 5b1f7a52-0000-4000-8000-000000000006
+  type: Opaque
+  data:
+    ca.crt: ZmFrZS1jYQ==
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: solo-vault
+    namespace: interconn-opr
+    uid: 5b1f7a52-0000-4000-8000-000000000007
+- apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata: {name: deny-all, namespace: interconn-opr}
+  spec: {podSelector: {}, policyTypes: [Ingress]}
+- apiVersion: monitoring.coreos.com/v1
+  kind: ServiceMonitor
+  metadata: {name: kafka-metrics, namespace: interconn-opr}
+  spec: {endpoints: [{port: metrics}], selector: {matchLabels: {app: kafka}}}

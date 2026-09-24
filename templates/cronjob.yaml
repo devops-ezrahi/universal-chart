@@ -1,3 +1,4 @@
+{{- include "universal-chart.renderValues" . }}
 {{- range $name, $spec := .Values.cronjobs }}
 {{- /* jobTemplate is optional: a CronJob whose only required field is its
        schedule is valid, and dereferencing a nil jobTemplate here crashed the

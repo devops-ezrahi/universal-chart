@@ -30,19 +30,37 @@ def run_converter(src: Path, out: Path, *flags):
                    check=True, capture_output=True, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
 
 
-# A — flat by default; wiring only with --argocd-manifests; a flat run flags old wiring stale
-def test_flat_default_argocd_manifests_and_stale_wiring(tmp_path):
+# A — root wiring always written (--argocd-manifests still parses, as a no-op);
+# the pre-rename root file names are flagged stale and removed by --prune
+def test_root_wiring_only_with_argocd_manifests_true(tmp_path):
     src = tmp_path / "in" / "ns"
     src.mkdir(parents=True)
     (src / "app.yaml").write_text(yaml.safe_dump(dep("app")), encoding="utf-8")
     out = tmp_path / "out"
 
-    run_converter(tmp_path / "in", out, "--argocd-manifests")
-    assert (out / "root-application.yaml").is_file()
-
-    run_converter(tmp_path / "in", out)
+    run_converter(tmp_path / "in", out)  # default: values tree only
     assert (out / "ns" / "values" / "app.yaml").is_file()
-    assert "root-application.yaml" in (out / "report" / "stale_output.txt").read_text(encoding="utf-8")
+    assert not (out / "rootApplicationSet.yaml").exists()
+    assert not (out / "rootApplication.yaml.txt").exists()
+
+    for old in ("root-application.yaml", "root-applicationSet.yaml"):
+        (out / old).write_text("kind: Application\n", encoding="utf-8")
+    run_converter(tmp_path / "in", out, "--argocd-manifests", "true")
+    root = yaml.safe_load((out / "rootApplication.yaml.txt").read_text(encoding="utf-8"))
+    assert root["spec"]["source"]["directory"]["include"].startswith("{rootApplicationSet.yaml,")
+    assert (out / "rootApplicationSet.yaml").is_file()
+    stale = (out / "report" / "stale_output.txt").read_text(encoding="utf-8")
+    assert "root-application.yaml" in stale and "root-applicationSet.yaml" in stale
+
+    # A bare flag is true too; the old names go on --prune.
+    run_converter(tmp_path / "in", out, "--argocd-manifests", "--prune")
+    assert not (out / "root-application.yaml").exists()
+    assert (out / "rootApplication.yaml.txt").is_file()
+
+    # Turned off again, the wiring an earlier run wrote is stale.
+    run_converter(tmp_path / "in", out, "--argocd-manifests", "false", "--prune")
+    assert not (out / "rootApplication.yaml.txt").exists()
+    assert not (out / "rootApplicationSet.yaml").exists()
 
 
 def test_vanished_folder_without_signature_is_not_stale(tmp_path):
@@ -124,17 +142,25 @@ def test_redis_and_emptydir_lint():
     assert not any("sized" in w for w in c.warnings)
 
 
-# H — PDB / ServiceMonitor verbatim
-def test_pdb_and_servicemonitor_go_verbatim_to_extra_deploy():
+# H — PDB verbatim; ServiceMonitor / NetworkPolicy deliberately dropped
+def test_pdb_goes_verbatim_to_extra_deploy():
     c = ctx()
     pdb = {"apiVersion": "policy/v1", "kind": "PodDisruptionBudget", "metadata": {"name": "app-pdb"},
            "spec": {"minAvailable": 1, "selector": {"matchLabels": {"app": "x"}}}}
-    sm = {"apiVersion": "monitoring.coreos.com/v1", "kind": "ServiceMonitor", "metadata": {"name": "app-sm"},
-          "spec": {"endpoints": [{"port": "a"}, {"port": "b"}]}}
     conv.handle_pdb(pdb, c)
-    conv.handle_servicemonitor(sm, c)
-    assert "pdb" not in c.values and "serviceMonitor" not in c.values
-    assert [yaml.safe_load(e) for e in c.extra_deploy] == [pdb, sm]
+    assert "pdb" not in c.values
+    assert [yaml.safe_load(e) for e in c.extra_deploy] == [pdb]
+
+
+def test_servicemonitor_and_networkpolicy_are_dropped_with_one_line_each():
+    sm = {"apiVersion": "monitoring.coreos.com/v1", "kind": "ServiceMonitor", "metadata": {"name": "app-sm"}}
+    np = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "app-np"}}
+    cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "app-cm"}}
+    warnings = []
+    assert conv.filter_transient([sm, np, cm], warnings) == [cm]
+    assert len(warnings) == 2
+    assert warnings[0].startswith("ServiceMonitor/app-sm: dropped")
+    assert warnings[1].startswith("NetworkPolicy/app-np: dropped")
 
 
 # I — init container order

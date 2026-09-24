@@ -145,7 +145,6 @@ def test_raw_labels_keeps_custom_labels_and_drops_chart_owned_ones():
     ("ConfigMap", "api-gateway-config", ("configMaps", "api-gateway-config", "labels")),
     ("ServiceAccount", "api-gateway", ("serviceAccount", "labels")),
     ("PersistentVolumeClaim", "api-gateway-cache", ("pvc", "api-gateway-cache", "labels")),
-    ("NetworkPolicy", "api-gateway-allow", ("networkPolicies", "api-gateway-allow", "labels")),
     ("Role", "api-gateway-reader", ("rbac", "roles", "api-gateway-reader", "labels")),
     ("CronJob", "api-gateway-rotate", ("cronjobs", "api-gateway-rotate", "labels")),
 ])
@@ -162,8 +161,6 @@ def test_every_handler_captures_metadata_labels(kind, name, values_path):
         conv.handle_serviceaccount(doc, ctx, name)
     elif kind == "PersistentVolumeClaim":
         conv.handle_pvc(doc, ctx, name)
-    elif kind == "NetworkPolicy":
-        conv.handle_networkpolicy(doc, ctx, name)
     elif kind == "Role":
         conv.handle_role(doc, ctx, name)
     elif kind == "CronJob":

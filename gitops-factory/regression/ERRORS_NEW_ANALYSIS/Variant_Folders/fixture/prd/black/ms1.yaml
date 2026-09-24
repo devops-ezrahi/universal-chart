@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms1-black
+  namespace: prd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ms1-black
+  template:
+    metadata:
+      labels:
+        app: ms1-black
+    spec:
+      containers:
+        - name: ms1
+          image: registry.example.org/ms1:2.0.0
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: VARIANT
+              value: black
+            - name: DB_URL
+              value: http://db.prd.svc:5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms1-black
+  namespace: prd
+spec:
+  selector:
+    app: ms1-black
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

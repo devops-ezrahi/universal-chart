@@ -1,0 +1,77 @@
+suite: tpl in values
+templates:
+  - templates/deployment.yaml
+  - templates/job.yaml
+  - templates/configmap.yaml
+  - templates/ingress.yaml
+  - templates/extra-deploy.yaml
+release:
+  name: rel
+  namespace: ns
+values:
+  - tpl_values.yaml
+tests:
+  - it: renders names, image, env values, list items, labels and annotations
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: ns-app
+      - equal:
+          path: metadata.labels.team
+          value: team-ns
+      - equal:
+          path: metadata.annotations.owner
+          value: rel
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "reg.example/rel:2.0.0-ns"
+      - equal:
+          path: spec.template.spec.containers[0].args[1]
+          value: "--ns=ns"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: NS, value: ns}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PORT, value: "8080"}
+
+  - it: renders map keys, so a job can be named from the release
+    template: templates/job.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rel-migrate
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: rel-migrate
+
+  - it: renders ConfigMap keys and data, and an escaped literal survives exactly once
+    template: templates/configmap.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rel-config
+      - equal:
+          path: data.release
+          value: rel
+      - equal:
+          path: data.alert
+          value: "{{ $labels.pod }} is down"
+
+  - it: renders hosts inside lists of maps
+    template: templates/ingress.yaml
+    asserts:
+      - equal:
+          path: spec.rules[0].host
+          value: rel.example.com
+
+  - it: leaves extraDeploy to its own single tpl pass
+    template: templates/extra-deploy.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rel-extra
+      - equal:
+          path: data.literal
+          value: "{{keep}}"

@@ -19,6 +19,17 @@ into:
                                                 exclusively here, not duplicated
                                                 in the comprehensive file - one
                                                 per namespace)
+       plus <namespace>/defaults.yaml (what every release there shares).
+       <namespace> may be a variant folder (dev/yellow, dev/yellow/eu —
+       --env-group, or already present in the input) deploying into its first
+       path segment's namespace; values/ may hold grouping sub-folders. With
+       --env-group / --env-suffixes, values differing only by a group token or
+       an environment word are merged into one templated base value
+       ({{ .Values.color }}, {{ .Values.environment }}, {{ .Release.Namespace }})
+       whose per-folder value lives in defaults.yaml. The chart runs every value
+       through `tpl`, so a literal '{{' from the source is written escaped as
+       {{ "{{" }} (helm_safe_values). NetworkPolicy and ServiceMonitor are
+       deliberately NOT converted (DROPPED_KINDS; one report line each).
 
     2. One namespace-shared "release" (workload.type: none) that owns any
        resources living in shared.yaml, so they are never double-declared
@@ -27,15 +38,18 @@ into:
        release — which is why <namespace>/defaults.yaml is computed with it in
        the pool (see Pass 3 in main()).
 
-    3. (Only with --argocd-manifests — by default the output is the flat values
-       tree from 1-2 alone.) Two files at the tree ROOT, the ENTIRE ArgoCD wiring:
-         root-application.yaml      the one object you apply by hand
-         root-applicationSet.yaml   one Application per namespace DIRECTORY,
-                                    each deploying the ms-applicationSet chart
-                                    from the universal-chart repo
-       That chart renders the per-namespace ApplicationSet which actually fans
-       out over <namespace>/values/*.yaml and layers three values files:
-       <namespace>/defaults.yaml -> base/<file> -> <namespace>/values/<file>.
+    3. (Always.) Two files at the tree ROOT, the ENTIRE ArgoCD wiring:
+         rootApplication.yaml.txt   the one object you apply by hand
+                                    (`kubectl apply -f rootApplication.yaml.txt`;
+                                    .txt so no directory apply, ArgoCD's
+                                    included, ever deploys or manages it)
+         rootApplicationSet.yaml    one Application per namespace folder
+                                    (variant folders included), each deploying
+                                    the ms-applicationSet chart from the
+                                    universal-chart repo
+       That chart renders the per-folder ApplicationSet which actually fans
+       out over <folder>/values/**/*.yaml and layers three values files:
+       base/<file> -> <folder>/defaults.yaml -> <folder>/values/<file>.
        Adding a namespace is adding a directory; adding a microservice is
        adding a file. Neither needs a new manifest or another kubectl apply.
 
@@ -60,7 +74,7 @@ Conflict-free by construction
 ------------------------------
 Several kinds render with their RAW map key as the Kubernetes resource name
 (no release-name prefix) per the Universal Chart's templates: ConfigMap,
-Secret, PersistentVolumeClaim, NetworkPolicy, Role, RoleBinding, Route (extra),
+Secret, PersistentVolumeClaim, Role, RoleBinding, Route (extra),
 Service (extra), SecretStore, ExternalSecret and (cluster-scoped) ClusterRole,
 ClusterRoleBinding, StorageClass, PersistentVolume, SecurityContextConstraints,
 ClusterSecretStore. Those are exactly the ones that can collide once multiple
@@ -88,9 +102,8 @@ Usage
 
     # --chart defaults to '..' (this repo's root IS the Universal Chart); pass
     # --skip-verify to skip the helm-template render-verification step entirely
-    # (e.g. helm isn't installed), and --argocd-manifests for the root wiring:
-    python convert_to_universal_chart.py --input namespaces --output output \\
-        --chart .. --argocd-manifests
+    # (e.g. helm isn't installed):
+    python convert_to_universal_chart.py --input namespaces --output output --chart ..
 
 See README.md for the full end-to-end verification workflow.
 """
@@ -123,6 +136,16 @@ TRANSIENT_KINDS = {
     "ControllerRevision", "Binding",
 }
 
+# Kinds deliberately NOT converted. NetworkPolicy and ServiceMonitor are
+# platform concerns on the migration target (network isolation and scrape
+# config are owned there, not by each application's release), so carrying the
+# source cluster's copies would install policy nobody asked the release to own.
+# They are dropped at load time by filter_transient — one line per object in
+# conflicts_and_warnings.txt — and, because the round-trip fidelity check reads
+# the raw side through the same filter_transient, never counted as lost there.
+# The chart still has networkPolicies / serviceMonitor for hand-written values.
+DROPPED_KINDS = {"NetworkPolicy", "ServiceMonitor"}
+
 CLUSTER_SCOPED_KINDS = {
     "ClusterRole", "ClusterRoleBinding", "StorageClass",
     "PersistentVolume", "SecurityContextConstraints", "ClusterSecretStore",
@@ -134,7 +157,7 @@ WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet"}
 # values map-key (no `<release>-` prefix) — see templates/*.yaml. These are
 # exactly the ones the NamespaceRegistry / ClusterRegistry must dedupe.
 NS_RAW_NAME_KINDS = [
-    "ConfigMap", "Secret", "PersistentVolumeClaim", "NetworkPolicy",
+    "ConfigMap", "Secret", "PersistentVolumeClaim",
     "Role", "RoleBinding", "ServiceAccount", "Route", "Service",
     "SecretStore", "ExternalSecret",
 ]
@@ -168,7 +191,16 @@ def env_normalized_ms_name(namespace: str, ms_name: str) -> str:
     namespace 'myapp-tst' normalizes to 'jenkins' — shared release identity,
     one base/jenkins.yaml, across every such environment's copy. A
     coincidental match (e.g. a genuinely-named 'payments-tst' microservice
-    sitting in namespace 'myapp-prd', suffixes differing) is left alone."""
+    sitting in namespace 'myapp-prd', suffixes differing) is left alone.
+
+    --env-suffixes and --env-group switch on a second, broader rule (see
+    NAME_TOKENS): every listed token standing alone ANYWHERE in the name is
+    stripped, so 'filter-service-black-b2b-tst' and 'filter-service-yellow-b2b'
+    both become 'filter-service-b2b'. Opt-in, because it merges releases the
+    default rule deliberately keeps apart."""
+    if NAME_TOKENS:
+        ms_name = strip_name_tokens(ms_name, NAME_TOKENS)
+    namespace = k8s_ns(namespace)
     ns_suffix = namespace.rsplit("-", 1)[-1] if "-" in namespace else None
     if ns_suffix not in KNOWN_ENV_SUFFIXES:
         return ms_name
@@ -176,6 +208,254 @@ def env_normalized_ms_name(namespace: str, ms_name: str) -> str:
     if ms_base and ms_suffix == ns_suffix:
         return ms_base
     return ms_name
+
+
+# Tokens stripped from anywhere in a microservice name, before the
+# namespace-suffix rule above. Empty by default; main() fills it from every
+# --env-group token and from --env-suffixes (which also empties
+# KNOWN_ENV_SUFFIXES, replacing that rule).
+NAME_TOKENS: set[str] = set()
+
+
+def _token_re(tokens) -> "re.Pattern":
+    # A token counts only standing alone — delimited by a non-alphanumeric or
+    # the string edge — so 'dev' is never found inside 'devtools' and 'tst'
+    # never inside 'attest'. Longest first, so 'prod' does not eat 'production'.
+    alt = "|".join(re.escape(t) for t in sorted(tokens, key=len, reverse=True))
+    return re.compile(r"(?<![A-Za-z0-9])(?:" + alt + r")(?![A-Za-z0-9])")
+
+
+def strip_name_tokens(name: str, tokens) -> str:
+    """'filter-service-black-b2b-tst' minus {black, tst} -> 'filter-service-b2b'.
+    Returns `name` unchanged if nothing would be left."""
+    stripped = _token_re(tokens).sub("", name)
+    stripped = re.sub(r"[-_.]{2,}", lambda m: m.group(0)[0], stripped).strip("-_.")
+    return stripped or name
+
+
+# ---------------------------------------------------------------------------
+# Env groups (--env-group) — one base value instead of N per-namespace copies
+# ---------------------------------------------------------------------------
+# The same release in several namespaces often differs only by environment
+# words: a route host 'api.fac1.black.example.org' next to
+# 'api.fac2.yellow.example.org'. Without groups each namespace keeps its own
+# concrete copy in values/. With `--env-group color=black,yellow` both collapse
+# into ONE templated base value
+#
+#     api.{{ .Release.Namespace }}.{{ .Values.color }}.example.org
+#
+# and each release's values/ file carries its own `color: black`. The chart
+# tpl's every value, so this renders back to exactly the source string.
+#
+# The namespace is always a group once any --env-group is given; it needs no
+# injection because Helm already knows it. `--env-group namespace` turns on
+# just that axis.
+#
+# Placeholders are held as sentinels until the file is written (see
+# helm_safe_values): a source string's own '{{' must be escaped for the
+# chart's tpl pass, while ours must not be, and the sentinel keeps them apart.
+
+NAMESPACE_GROUP = "namespace"
+ENVIRONMENT_GROUP = "environment"
+_PH = "\x00{}\x00"
+_PH_RE = re.compile(r"\x00([^\x00]+)\x00")
+
+
+@dataclass
+class EnvGroup:
+    name: str
+    tokens: dict  # token found in a value -> value injected as .Values.<name>
+    # A folder group's token in a release's file name puts the release in a
+    # sub-folder of its namespace named after it (dev/ms1-yellow.yaml ->
+    # dev/yellow/). The implicit 'environment' group (--env-suffixes) never
+    # does: its token is already the namespace.
+    folder: bool = True
+
+    def token_in(self, text: str) -> "str | None":
+        found = [t for t in self.tokens if _token_re([t]).search(text)]
+        return found[0] if len(found) == 1 else None
+
+    @property
+    def placeholder(self) -> str:
+        return _PH.format(".Values." + self.name)
+
+
+def parse_env_group(spec: str, reserved: set) -> EnvGroup:
+    """'NAME=tok[:VALUE],...' — VALUE defaults to the token itself."""
+    name, _, right = spec.partition("=")
+    name = name.strip()
+    if not re.fullmatch(r"[a-z][A-Za-z0-9_]*", name):
+        sys.exit(f"--env-group {spec!r}: the group name must be a Helm value key "
+                 f"(a lowercase letter, then letters, digits or '_')")
+    if name in reserved:
+        sys.exit(f"--env-group {spec!r}: '{name}' is one of the chart's own top-level "
+                 f"values; injecting it would override that setting")
+    tokens: dict = {}
+    for piece in filter(None, (p.strip() for p in right.split(","))):
+        tok, _, val = piece.partition(":")
+        tok = tok.strip()
+        if not tok or tok in tokens:
+            sys.exit(f"--env-group {spec!r}: empty or duplicate token {tok!r}")
+        tokens[tok] = val.strip() or tok
+    if not tokens and name != NAMESPACE_GROUP:
+        sys.exit(f"--env-group {spec!r}: no tokens — use '{name}=tok1,tok2'")
+    return EnvGroup(name, tokens)
+
+
+def folder_values(key: str, groups: list) -> dict:
+    """The group values a folder stands for, written to its defaults.yaml:
+    'dev/yellow' -> {color: yellow, environment: dev}. A folder group's value
+    comes from the folder name, a non-folder group's (environment) from its
+    token in the namespace name."""
+    ns, _, rest = key.partition("/")
+    parts = set(rest.split("/")) if rest else set()
+    out = {}
+    for g in groups:
+        if g.name == NAMESPACE_GROUP:
+            continue
+        tok = next((t for t in g.tokens if t in parts), None) if g.folder else g.token_in(ns)
+        if tok:
+            out[g.name] = g.tokens[tok]
+    return out
+
+
+def combine_values(per_ns: dict, groups: list) -> "tuple[str, dict] | None":
+    """Express per-namespace strings {namespace: value} as one template.
+
+    Each namespace's value has its OWN namespace name replaced by
+    {{ .Release.Namespace }} — never another namespace's, so a URL pointing at
+    a neighbour namespace stays literal — and the one token of each group it
+    carries by that group's placeholder. A group is used only where its token
+    actually differs between namespaces: a word every copy shares is not an
+    environment difference and stays literal. Returns (template,
+    {group: {namespace: injected value}}) when every namespace ends up with the
+    same template, else None. Rendering the template with a namespace's
+    injected values gives back exactly that namespace's original string.
+    """
+    hits: dict = {}  # group -> {namespace: token}
+    for g in groups:
+        found = {}
+        for ns, val in per_ns.items():
+            present = [t for t in g.tokens if _token_re([t]).search(val)]
+            if len(present) > 1:
+                return None  # two of one group's tokens: ambiguous
+            if present:
+                found[ns] = present[0]
+        if len(set(found.values())) > 1:
+            hits[g.name] = found
+    templates, injection = set(), {}
+    for ns, val in per_ns.items():
+        subs = {k8s_ns(ns): _PH.format(".Release.Namespace")}
+        for g in groups:
+            tok = hits.get(g.name, {}).get(ns)
+            if tok:
+                subs[tok] = g.placeholder
+                injection.setdefault(g.name, {})[ns] = g.tokens[tok]
+        # One regex pass, so a placeholder is never itself re-substituted.
+        templates.add(_token_re(subs).sub(lambda m: subs[m.group(0)], val))
+    if len(templates) != 1:
+        return None
+    template = templates.pop()
+    injection = {g: m for g, m in injection.items() if _PH.format(".Values." + g) in template}
+    if any(len(m) != len(per_ns) for m in injection.values()):
+        return None  # a group placeholder some namespace could not fill
+    return template, injection
+
+
+def _string_leaves(d: dict, path: tuple = ()) -> dict:
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out.update(_string_leaves(v, path + (k,)))
+        elif isinstance(v, str):
+            out[path + (k,)] = v
+    return out
+
+
+def _pop_nested(d: dict, path: tuple) -> None:
+    """Delete d[path...] and any dict it leaves empty on the way up."""
+    if len(path) == 1:
+        d.pop(path[0], None)
+        return
+    child = d.get(path[0])
+    if isinstance(child, dict):
+        _pop_nested(child, path[1:])
+        if not child:
+            del d[path[0]]
+
+
+def combine_env_groups(name: str, entries: list, groups: list, base: dict,
+                       interactive: bool = False) -> "tuple[dict, list]":
+    """Lift every value that differs between one release's namespaces only by
+    group tokens into `base` as a template, dropping the concrete copies from
+    each instance. Candidates are string leaves of ctx.values plus literal env
+    vars (those live in ctx.full_env and never reach ctx.values).
+
+    Returns ({namespace: {group: value}}, [applied combination records])."""
+    def candidates(ctx) -> dict:
+        out = {p: ("values", v) for p, v in _string_leaves(ctx.values).items()}
+        for env, entry in (ctx.full_env or {}).items():
+            if isinstance(entry.get("value"), str) and "valueFrom" not in entry:
+                out[("env", env)] = ("env", entry["value"])
+        return out
+
+    per_instance = [(ns, ctx, candidates(ctx)) for ns, ctx in entries]
+    common = set.intersection(*(set(c) for _, _, c in per_instance))
+    injections: dict = {ns: {} for ns, _ in entries}
+    applied = []
+    for path in sorted(common):
+        kinds = {c[path][0] for _, _, c in per_instance}
+        per_ns = {ns: c[path][1] for ns, _, c in per_instance}
+        if len(kinds) != 1 or len(set(per_ns.values())) < 2:
+            continue
+        res = combine_values(per_ns, groups)
+        if res is None:
+            continue
+        template, injection = res
+        shown = _PH_RE.sub(r"{{ \1 }}", template)
+        if interactive and sys.stdin.isatty():
+            try:
+                if input(f"[{name}] {'.'.join(path)}: {per_ns} -> {shown!r}  combine? [Y/n] "
+                         ).strip().lower().startswith("n"):
+                    continue
+            except EOFError:
+                pass
+        if kinds == {"env"}:
+            base.setdefault("env", {})[path[1]] = {"value": template}
+            for _, ctx, _ in per_instance:
+                ctx.full_env.pop(path[1], None)
+        else:
+            set_nested(base, path, template)
+            for _, ctx, _ in per_instance:
+                _pop_nested(ctx.values, path)
+        for g, m in injection.items():
+            for ns, v in m.items():
+                injections[ns][g] = v
+        applied.append({"release": name, "path": ".".join(path), "template": shown,
+                        "injection": injection})
+    return injections, applied
+
+
+def helm_safe_values(data):
+    """Make converter output survive the chart's tpl pass unchanged.
+
+    The chart renders every value with `tpl`, so a source string's own '{{'
+    (a Prometheus alert, a Go template in a ConfigMap) would be evaluated — or
+    fail to parse. Escaping the opening delimiter makes tpl emit it literally;
+    env-group placeholders (sentinels until now) become real templates.
+    extraDeploy is skipped: the chart tpl's it separately and as_extra_deploy
+    already escaped it."""
+    def walk(v):
+        if isinstance(v, str):
+            return _PH_RE.sub(r"{{ \1 }}", v.replace("{{", '{{ "{{" }}'))
+        if isinstance(v, dict):
+            return {walk(k): walk(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        return v
+    if not isinstance(data, dict):
+        return walk(data)
+    return {k: (v if k == "extraDeploy" else walk(v)) for k, v in data.items()}
 
 # Directory/release names must be valid Helm release names & K8s resource
 # names (lowercase alphanumeric + '-', no leading underscore) — hence "shared"
@@ -206,8 +486,8 @@ CLUSTER_SHARED_DIR_NAME = "cluster-shared"
 #                                                 against.
 #   <output>/<namespace>/defaults.yaml            what is identical across every
 #                                                 release in this namespace.
-#   <output>/root-application.yaml                apply this, once, by hand.
-#   <output>/root-applicationSet.yaml             one Application per namespace
+#   <output>/rootApplication.yaml.txt             apply this, once, by hand.
+#   <output>/rootApplicationSet.yaml              one Application per namespace
 #                                                 directory — the whole wiring.
 #
 # release-slug is normally just the microservice's own name. It only becomes
@@ -231,7 +511,8 @@ CLUSTER_SHARED_DIR_NAME = "cluster-shared"
 # release in that namespace, the shared release included — same "each layer
 # only has what's different" idea as examples/gitops/STRUCTURE.md's
 # _base/defaults.yaml, just computed automatically instead of hand-written.
-# It's applied before base/, so it's always safe: a release that never had a
+# It's layered between base/ and values/ (base -> defaults -> values), and it's
+# always safe: a release that never had a
 # given key is never given it by defaults, since only keys present with an
 # IDENTICAL value in every release qualify. It is deliberately NOT subtracted
 # out of base/ content, since base/ is shared across namespaces and a delta
@@ -246,8 +527,19 @@ DEFAULTS_FILE_NAME = "defaults.yaml"
 # ROOT_APP_FILE_NAME by hand once deploys ROOT_APPSET_FILE_NAME, which deploys
 # one ms-applicationSet release per namespace directory, which fans out over
 # that namespace's values/*.yaml. Nothing else in the tree is a manifest.
-ROOT_APP_FILE_NAME = "root-application.yaml"
-ROOT_APPSET_FILE_NAME = "root-applicationSet.yaml"
+#
+# The root Application ends in .txt ON PURPOSE: it is the object a human
+# applies by hand, and nothing in git should deploy or manage it. ArgoCD's
+# directory source and `kubectl apply -f <dir>` both read only .yaml/.yml/.json,
+# so the .txt keeps it out of every directory apply; `kubectl apply -f
+# rootApplication.yaml.txt` still works because kubectl reads a file named
+# explicitly whatever its extension (it filters extensions only while walking a
+# directory). Written on every run — the flat tree plus these two files.
+ROOT_APP_FILE_NAME = "rootApplication.yaml.txt"
+ROOT_APPSET_FILE_NAME = "rootApplicationSet.yaml"
+# The names earlier runs used. Reported stale (and removed by --prune): a
+# leftover root-application.yaml would still deploy the old ApplicationSet.
+LEGACY_ROOT_FILE_NAMES = ("root-application.yaml", "root-applicationSet.yaml")
 # Written only under --cluster-scoped, and deployed by the root Application
 # alongside the root ApplicationSet rather than through the per-namespace
 # fan-out — see build_cluster_shared_application.
@@ -261,6 +553,52 @@ CLUSTER_SHARED_APP_FILE_NAME = "cluster-shared-application.yaml"
 # every fixture under it as a stale generated file.
 NON_NAMESPACE_OUTPUT_DIRS = {"report", "ERRORS_ANALYSIS"}
 
+# Variant folders: a namespace folder may hold sub-folders that are themselves
+# sets of releases deploying into the SAME namespace — prd/yellow/, prd/black/,
+# nested as deep as there are folder groups (prd/yellow/eu/), all sharing the
+# one base/. Created by folder --env-group tokens, or already present in the
+# input. A folder is keyed by its path ('prd/yellow') everywhere a key or a
+# folder is needed; k8s_ns() gives the Kubernetes namespace ('prd').
+def k8s_ns(namespace: str) -> str:
+    return namespace.split("/", 1)[0]
+
+
+def folder_suffix(namespace: str) -> str:
+    """'prd/yellow/eu' -> 'yellow-eu', '' for a plain namespace folder."""
+    return namespace.partition("/")[2].replace("/", "-")
+
+
+def is_input_ns(d: Path) -> bool:
+    return any(d.glob("*.yaml"))
+
+
+def is_output_ns(d: Path) -> bool:
+    return (d / VALUES_DIR_NAME).is_dir() or (d / DEFAULTS_FILE_NAME).is_file()
+
+
+def namespace_dirs_of(root: Path, is_ns=is_output_ns) -> list[tuple[str, Path]]:
+    """(key, directory) for every namespace folder under `root`, variant
+    sub-folders included: each top-level folder is a namespace, and any folder
+    below it that `is_ns` accepts is a variant. values/ is never descended."""
+    out = []
+    def walk(d: Path, top: bool) -> None:
+        if top or is_ns(d):
+            out.append((d.relative_to(root).as_posix(), d))
+        for c in sorted(d.iterdir()):
+            if c.is_dir() and c.name != VALUES_DIR_NAME:
+                walk(c, False)
+    for top in sorted(p for p in root.iterdir() if p.is_dir()
+                      and p.name not in (CLUSTER_SHARED_DIR_NAME, BASE_DIR_NAME)
+                      and p.name not in NON_NAMESPACE_OUTPUT_DIRS):
+        walk(top, True)
+    return out
+
+
+def values_files(values_dir: Path) -> list[Path]:
+    """Every release file under values/, sub-folders included: they are only
+    for grouping (values/group1/ms1.yaml), the release is still the file name."""
+    return sorted(values_dir.rglob("*.yaml")) if values_dir.is_dir() else []
+
 VOLATILE_ANNOTATION_PREFIXES = (
     "kubectl.kubernetes.io/last-applied-configuration",
     "kubernetes.io/created-by",
@@ -272,6 +610,10 @@ VOLATILE_ANNOTATION_PREFIXES = (
     # different on every source. Carried through it produces a permanent
     # non-empty ArgoCD diff, which trains operators to ignore drift.
     "deployment.kubernetes.io/revision",
+    # The SOURCE ArgoCD Application's ownership stamp. Carried through, the
+    # object claims to belong to an Application that is not the one deploying
+    # it now; ArgoCD writes its own on apply.
+    "argocd.argoproj.io/tracking-id",
 )
 
 VOLATILE_METADATA_KEYS = (
@@ -409,12 +751,19 @@ def clean_annotations(ann: Optional[dict]) -> dict:
     return {k: v for k, v in ann.items() if not k.startswith(VOLATILE_ANNOTATION_PREFIXES)}
 
 
-def filter_transient(docs: list[dict]) -> list[dict]:
-    """Drop controller-owned / generated objects that are not desired state."""
+def filter_transient(docs: list[dict], warnings: Optional[list[str]] = None) -> list[dict]:
+    """Drop controller-owned / generated objects that are not desired state,
+    and the DROPPED_KINDS (logged to `warnings` when given — the fidelity
+    check's raw index passes none, it only needs them gone)."""
     out = []
     for d in docs:
         kind = d.get("kind")
         if kind in TRANSIENT_KINDS:
+            continue
+        if kind in DROPPED_KINDS:
+            if warnings is not None:
+                warnings.append(f"{kind}/{(d.get('metadata') or {}).get('name')}: dropped — "
+                                f"{kind} is deliberately not converted (no values, no extraDeploy)")
             continue
         if kind == "Job":
             owners = (d.get("metadata") or {}).get("ownerReferences") or []
@@ -984,6 +1333,9 @@ class MicroserviceContext:
     saw_workload: bool = False
     saw_service: bool = False
     primary_sa_set: bool = False
+    # ServiceAccount names the pods in this file run as ('default' when a pod
+    # names none); None when the file has no pods. See handle_serviceaccount.
+    pod_sa_names: Optional[set] = None
     primary_route_set: bool = False
     primary_service_set: bool = False
     # Full (untrimmed) image/env, kept only so build_minimal_values can pull
@@ -1684,7 +2036,7 @@ def build_route_entry(doc: dict, ctx: MicroserviceContext) -> dict:
         entry["annotations"] = ann
     # THIS LINE IS THE DEFECT. Every other handler that emits an object calls
     # raw_labels — Service, ConfigMap, Secret, ExternalSecret, PVC,
-    # NetworkPolicy, Role, RoleBinding, ServiceAccount, ServiceMonitor, CronJob,
+    # Role, RoleBinding, ServiceAccount, CronJob,
     # Job, workloads, cluster-scoped. Route received a COMMENT saying labels
     # were handled here, and not the call. Both Route templates already render
     # `.labels` through universal-chart.objectLabels, so the chart was waiting
@@ -1890,11 +2242,8 @@ ESO_API_VERSION_OVERRIDE = ""
 # separate cluster-shared release — cluster-scoped objects are emitted into
 # the namespace that declared them instead. See handle_cluster_scoped.
 NAMESPACE_SCOPED_ONLY = True
-
-# FALSE by default; --argocd-manifests opts in. The default output is the FLAT
-# values tree only — base/, <ns>/defaults.yaml, <ns>/values/. The ArgoCD wiring
-# (root-application.yaml, root-applicationSet.yaml and, under --cluster-scoped,
-# cluster-shared/ + cluster-shared-application.yaml) is written only on request.
+# --argocd-manifests: write the root ApplicationSet / Application (and the
+# cluster-shared Application). Off = the values tree only.
 ARGOCD_MANIFESTS = False
 
 # --exclude / --keep: case-insensitive substrings matched against an object's
@@ -2088,25 +2437,6 @@ def handle_pvc(doc: dict, ctx: MicroserviceContext, name: str,
     ctx.values.setdefault("pvc", {})[name] = entry
 
 
-def handle_networkpolicy(doc: dict, ctx: MicroserviceContext, name: str) -> None:
-    spec = doc.get("spec", {}) or {}
-    entry = {}
-    if "podSelector" in spec:
-        entry["podSelector"] = spec["podSelector"]
-    if spec.get("policyTypes"):
-        entry["policyTypes"] = spec["policyTypes"]
-    if spec.get("ingress"):
-        entry["ingress"] = spec["ingress"]
-    if spec.get("egress"):
-        entry["egress"] = spec["egress"]
-    if raw_labels(doc):
-        entry["labels"] = raw_labels(doc)
-    ann = clean_annotations((doc.get("metadata") or {}).get("annotations"))
-    if ann:
-        entry["annotations"] = ann
-    ctx.values.setdefault("networkPolicies", {})[name] = entry
-
-
 def handle_role(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     entry = {"rules": doc.get("rules", [])}
     if raw_labels(doc):
@@ -2157,15 +2487,24 @@ def _carry_automount(ctx: MicroserviceContext, sa: dict) -> dict:
 def handle_serviceaccount(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     action = ctx.claim_actions["ServiceAccount"].get(name, "own")
     final = ctx.name_map["ServiceAccount"].get(name, name)
+    # A ServiceAccount no pod in this file runs as — typically the Vault auth SA
+    # a SecretStore names, which the importer files next to its only user —
+    # must not become the chart's `serviceAccount`: the chart's
+    # serviceAccountName helper would then move every pod here onto it. It is
+    # carried verbatim instead, and pods that ran as `default` are kept there
+    # (create: false) rather than handed a chart-made SA they never had.
+    unused_by_pods = ctx.pod_sa_names is not None and name not in ctx.pod_sa_names
+    if unused_by_pods and ctx.pod_sa_names == {"default"}:
+        ctx.values.setdefault("serviceAccount", {}).setdefault("create", False)
 
     if action == "reference_shared":
-        if not ctx.primary_sa_set:
+        if not ctx.primary_sa_set and not unused_by_pods:
             ctx.primary_sa_set = True
             ctx.values["serviceAccount"] = _carry_automount(
                 ctx, {"create": False, "name": final})
         return
 
-    if not ctx.primary_sa_set:
+    if not ctx.primary_sa_set and not unused_by_pods:
         ctx.primary_sa_set = True
         sa = {"create": True, "name": final}
         if raw_labels(doc):
@@ -2197,8 +2536,10 @@ def handle_serviceaccount(doc: dict, ctx: MicroserviceContext, name: str) -> Non
         extra = copy.deepcopy(doc)
         extra["metadata"]["name"] = final
         ctx.extra_deploy.append(as_extra_deploy(extra))
+        why = ("no pod in this release runs as it" if unused_by_pods else
+               "chart supports one managed ServiceAccount per release")
         ctx.warnings.append(
-            f"ServiceAccount/{name}: chart supports one managed ServiceAccount per release; "
+            f"ServiceAccount/{name}: {why}; "
             f"extra ServiceAccount emitted via extraDeploy as '{final}'"
         )
 
@@ -2267,17 +2608,6 @@ def handle_ingress(doc: dict, ctx: MicroserviceContext) -> None:
     if ann:
         ing["annotations"] = ann
     ctx.values["ingress"] = ing
-
-
-def handle_servicemonitor(doc: dict, ctx: MicroserviceContext) -> None:
-    """Verbatim via extraDeploy — see handle_pdb. The single `serviceMonitor`
-    slot also kept only the FIRST endpoint, so every other scraped port was
-    silently dropped."""
-    name = (doc.get("metadata") or {}).get("name")
-    ctx.extra_deploy.append(as_extra_deploy(doc))
-    ctx.warnings.append(
-        f"ServiceMonitor/{name}: emitted verbatim via extraDeploy (keeps its own name, "
-        f"selector and every endpoint, and allows more than one per release)")
 
 
 def handle_nad(doc: dict, ctx: MicroserviceContext) -> None:
@@ -2766,6 +3096,15 @@ def handle_cluster_scoped(doc: dict, kind: str, cluster_registry: ClusterRegistr
         cluster_values["scc"][name] = build_scc_entry(doc)
     elif kind == "ClusterSecretStore":
         cluster_values["clusterSecretStores"][name] = build_clustersecretstore_entry(doc)
+        # Same rule as record_eso_api_version, for the cluster-shared release:
+        # without it a v1beta1 source rendered as the chart's default v1.
+        version = ESO_API_VERSION_OVERRIDE or doc.get("apiVersion")
+        existing = cluster_values.get("externalSecretsApiVersion")
+        if existing and existing != version:
+            warnings.append(f"[cluster-scoped] ClusterSecretStore/{name}: apiVersion '{version}' differs "
+                            f"from '{existing}' already used in cluster-shared — '{existing}' wins")
+        elif version:
+            cluster_values["externalSecretsApiVersion"] = version
 
 
 # ---------------------------------------------------------------------------
@@ -2822,13 +3161,16 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
     if fullname_source and fullname_source[0] != ms_name:
         raw_name = fullname_source[0]
         ctx.values["fullnameOverride"] = raw_name
-        ctx.warnings.append(
-            f"its main resource is named '{raw_name}' in the raw manifest but the file is "
-            f"'{ms_name}.yaml' — pinned fullnameOverride to '{raw_name}' so the rendered "
-            f"workload/Service/ServiceAccount keep the raw name (Service DNS, pod names and "
-            f"StatefulSet PVC names all derive from it). Rename the file to match if you "
-            f"actually intended the resource to be renamed."
-        )
+        # 'ms1-black' in ms1.yaml is the --env-group stripping the token on
+        # purpose, not a misnamed file — the pin is expected, nothing to warn.
+        if not (NAME_TOKENS and strip_name_tokens(raw_name, NAME_TOKENS) == ms_name):
+            ctx.warnings.append(
+                f"its main resource is named '{raw_name}' in the raw manifest but the file is "
+                f"'{ms_name}.yaml' — pinned fullnameOverride to '{raw_name}' so the rendered "
+                f"workload/Service/ServiceAccount keep the raw name (Service DNS, pod names and "
+                f"StatefulSet PVC names all derive from it). Rename the file to match if you "
+                f"actually intended the resource to be renamed."
+            )
     if len(set(workload_names)) > 1:
         ctx.warnings.append(
             f"file declares {len(set(workload_names))} differently-named workloads "
@@ -2861,6 +3203,18 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
             ctx.name_map[kind][name] = final
             ctx.claim_actions[kind][name] = action
 
+    # Which ServiceAccounts the pods here actually run as — decided before pass 2
+    # because the SA doc can come before the workload doc in the file.
+    for doc in docs:
+        spec = doc.get("spec") or {}
+        if doc.get("kind") == "CronJob":
+            spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+        if doc.get("kind") in WORKLOAD_KINDS | {"CronJob", "Job"}:
+            pod = (spec.get("template") or {}).get("spec") or {}
+            if ctx.pod_sa_names is None:
+                ctx.pod_sa_names = set()
+            ctx.pod_sa_names.add(pod.get("serviceAccountName") or pod.get("serviceAccount") or "default")
+
     # Pass 2 — build the actual values.
     for doc in docs:
         kind = doc.get("kind")
@@ -2891,9 +3245,6 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
         elif kind == "PersistentVolumeClaim":
             if ctx.claim_actions["PersistentVolumeClaim"].get(name) != "reference_shared":
                 handle_pvc(doc, ctx, ctx.name_map["PersistentVolumeClaim"][name], known_pv_names)
-        elif kind == "NetworkPolicy":
-            if ctx.claim_actions["NetworkPolicy"].get(name) != "reference_shared":
-                handle_networkpolicy(doc, ctx, ctx.name_map["NetworkPolicy"][name])
         elif kind == "Role":
             if ctx.claim_actions["Role"].get(name) != "reference_shared":
                 handle_role(doc, ctx, ctx.name_map["Role"][name])
@@ -2911,8 +3262,6 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
             handle_pdb(doc, ctx)
         elif kind == "Ingress":
             handle_ingress(doc, ctx)
-        elif kind == "ServiceMonitor":
-            handle_servicemonitor(doc, ctx)
         elif kind == "VerticalPodAutoscaler":
             handle_vpa(doc, ctx)
         elif kind == "NetworkAttachmentDefinition":
@@ -2989,7 +3338,7 @@ def common_subtree(dicts: list[dict]) -> dict:
     Recursively finds the key/value pairs that are PRESENT, with the exact
     same value, in EVERY dict in `dicts`. Partial agreement (some but not
     all dicts share it) is deliberately excluded — Helm merges maps, so
-    promoting a key to a lower-precedence defaults file that only SOME
+    promoting a key to a defaults file that only SOME
     releases actually had would silently inject it into the releases that
     never declared it, changing their behavior. Nested dicts are compared
     key-by-key (recursively) rather than as opaque blobs, so e.g.
@@ -3067,11 +3416,11 @@ def write_base_file(base_dir: Path, slug: str, values: dict) -> None:
     header = (
         f"# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
         f"# Shared, environment-agnostic base for '{slug}' — reused by every namespace\n"
-        f"# that runs this microservice. Deliberately excludes image tags and env vars;\n"
-        f"# those live in each namespace's own values/<namespace>/{slug}.yaml.\n"
+        f"# that runs this microservice. What differs per folder (the image tag, any\n"
+        f"# value that is not the same everywhere) lives in <folder>/values/{slug}.yaml.\n"
         f"# Re-run the converter to regenerate after the source manifests change.\n\n"
     )
-    (base_dir / f"{slug}.yaml").write_text(header + dump_yaml(values), encoding="utf-8")
+    (base_dir / f"{slug}.yaml").write_text(header + dump_yaml(helm_safe_values(values)), encoding="utf-8")
 
 
 def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: str, namespace: str,
@@ -3096,6 +3445,8 @@ def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: s
     """
     values_dir = namespace_dir / VALUES_DIR_NAME
     values_dir.mkdir(parents=True, exist_ok=True)
+    # A file someone moved into a values/ sub-folder stays there.
+    target = next(iter(sorted(values_dir.rglob(f"{release_slug}.yaml"))), values_dir / f"{release_slug}.yaml")
 
     minimal = build_minimal_values(ctx)
     if minimal_extra:
@@ -3107,7 +3458,7 @@ def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: s
         f"# This is the client's single source of truth for day-2 tuning; safe to hand-edit\n"
         f"# and applied LAST (highest precedence) over base/{release_slug}.yaml.\n\n"
     )
-    (values_dir / f"{release_slug}.yaml").write_text(header_min + dump_yaml(minimal), encoding="utf-8")
+    target.write_text(header_min + dump_yaml(helm_safe_values(minimal)), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -3241,7 +3592,8 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               chart_path: str, values_repo_url: str, values_revision: str,
                               values_path: str = "", argocd_namespace: str = "argocd",
                               project: str = "default",
-                              destination_server: str = "https://kubernetes.default.svc") -> dict:
+                              destination_server: str = "https://kubernetes.default.svc",
+                              destination_name: str = "", nested: bool = False) -> dict:
     """One Application per NAMESPACE DIRECTORY in this tree.
 
     A git "directories" generator over the tree root: every top-level
@@ -3254,7 +3606,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     universal-chart repo, parameterised with that namespace's name and this
     values repo's URL/branch. That chart renders the ApplicationSet which
     actually fans out over <namespace>/values/*.yaml and layers
-    defaults -> <ns>/defaults -> base/<file> -> <ns>/values/<file>. Keeping
+    base/<file> -> <ns>/defaults -> <ns>/values/<file>. Keeping
     that second level in the chart rather than generating it here is the
     point: the layering rules live in ONE place, versioned with the chart
     they apply to, instead of being copied into every values repo this
@@ -3263,7 +3615,23 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     excluded = [BASE_DIR_NAME, CLUSTER_SHARED_DIR_NAME] + sorted(NON_NAMESPACE_OUTPUT_DIRS)
     directories = [{"path": _values_repo_path(values_path, "*")}]
     directories += [{"path": _values_repo_path(values_path, d), "exclude": True} for d in excluded]
-    return {
+    generator = {"repoURL": values_repo_url, "revision": values_revision, "directories": directories}
+    ns_param, app_name, folder = "{{path.basename}}", "{{path.basename}}", None
+    if nested:
+        # Variant folders (prd/yellow, prd/yellow/eu) sit at any depth, and
+        # every namespace folder — plain or variant — has a defaults.yaml, so
+        # one files generator on '**/defaults.yaml' finds them all. The
+        # pattern works under both ArgoCD globbing modes: legacy lets '*'
+        # cross '/', the new one reads '**' as any depth.
+        # ponytail: a microservice literally named 'defaults' would also match; rename it if it ever exists.
+        generator = {"repoURL": values_repo_url, "revision": values_revision,
+                     "files": [{"path": _values_repo_path(values_path, f"**/{DEFAULTS_FILE_NAME}")}]}
+        segments = [p for p in values_path.split("/") if p]
+        rel = '.path.path' + (f' | trimPrefix "{"/".join(segments)}/"' if segments else "")
+        ns_param = "{{ index .path.segments %d }}" % len(segments)
+        folder = "{{ %s }}" % rel
+        app_name = '{{ %s | replace "/" "-" }}' % rel
+    appset = {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "ApplicationSet",
         "metadata": {
@@ -3273,13 +3641,11 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
             "annotations": {"generated-by": "convert_to_universal_chart.py"},
         },
         "spec": {
-            "generators": [
-                {"git": {"repoURL": values_repo_url, "revision": values_revision,
-                         "directories": directories}}
-            ],
+            **({"goTemplate": True, "goTemplateOptions": ["missingkey=error"]} if nested else {}),
+            "generators": [{"git": generator}],
             "template": {
                 "metadata": {
-                    "name": "{{path.basename}}",
+                    "name": app_name,
                     "labels": {"app": name, "managed-by": "universal-chart-converter"},
                 },
                 "spec": {
@@ -3290,19 +3656,22 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                             "targetRevision": chart_revision,
                             "path": appset_chart_path,
                             "helm": {"parameters": [
-                                {"name": "namespace", "value": "{{path.basename}}"},
+                                {"name": "namespace", "value": ns_param},
+                                *([{"name": "folder", "value": folder}] if folder else []),
                                 {"name": "originRepoURL", "value": values_repo_url},
                                 {"name": "originBranch", "value": values_revision},
                                 {"name": "originPath", "value": values_path},
                                 {"name": "project", "value": project},
                                 {"name": "destinationServer", "value": destination_server},
+                                *([{"name": "destinationName", "value": destination_name}]
+                                  if destination_name else []),
                                 {"name": "chartRepoURL", "value": chart_repo_url},
                                 {"name": "chartRevision", "value": chart_revision},
                                 {"name": "chartPath", "value": chart_path},
                             ]},
                         },
                     ],
-                    "destination": {"server": destination_server, "namespace": argocd_namespace},
+                    "destination": _destination(destination_server, destination_name, argocd_namespace),
                     "syncPolicy": {
                         "automated": {"prune": True, "selfHeal": True},
                         "syncOptions": ["ServerSideApply=true"],
@@ -3311,12 +3680,19 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
             },
         },
     }
+    return appset
+
+
+def _destination(server: str, name: str, namespace: str) -> dict:
+    """ArgoCD destination: a registered cluster NAME (--argocd-cluster) wins over the URL."""
+    return {"name": name, "namespace": namespace} if name else {"server": server, "namespace": namespace}
 
 
 def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_path: str, chart_revision: str,
                                      values_repo_url: str, values_revision: str, values_path: str = "",
                                      argocd_namespace: str = "argocd", project: str = "default",
-                                     destination_server: str = "https://kubernetes.default.svc") -> dict:
+                                     destination_server: str = "https://kubernetes.default.svc",
+                                     destination_name: str = "") -> dict:
     """The one release that is NOT part of the per-namespace fan-out.
 
     It gets its own Application, sitting at the tree root next to the root
@@ -3346,7 +3722,7 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
                 },
                 {"repoURL": values_repo_url, "targetRevision": values_revision, "ref": "values"},
             ],
-            "destination": {"server": destination_server, "namespace": namespace},
+            "destination": _destination(destination_server, destination_name, namespace),
             "syncPolicy": {
                 "automated": {"prune": True, "selfHeal": True},
                 "syncOptions": ["CreateNamespace=true", "ServerSideApply=true"],
@@ -3366,7 +3742,7 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
 # the WHOLE run claim the same (kind, name) regardless of namespace.
 
 def helm_template(chart: Path, release: str, namespace: str, value_files: list[Path]) -> list[dict]:
-    cmd = ["helm", "template", release, str(chart), "--namespace", namespace]
+    cmd = ["helm", "template", release, str(chart), "--namespace", k8s_ns(namespace)]
     for vf in value_files:
         cmd += ["-f", str(vf)]
     # encoding="utf-8" is NOT optional, and its absence was a real data-corruption
@@ -3391,7 +3767,7 @@ def helm_template(chart: Path, release: str, namespace: str, value_files: list[P
     return [d for d in yaml.safe_load_all(result.stdout) if d]
 
 
-def verify_no_conflicts(chart: Path, output_dir: Path) -> tuple[int, list[str]]:
+def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozenset()) -> tuple[int, list[str]]:
     """Renders every generated release and returns (releases_rendered, conflicts).
 
     Each top-level entry under output_dir (other than NON_NAMESPACE_OUTPUT_DIRS,
@@ -3399,7 +3775,7 @@ def verify_no_conflicts(chart: Path, output_dir: Path) -> tuple[int, list[str]]:
     values/ tree written by write_microservice_output — releases are
     discovered by globbing values/*.yaml exactly as the ms-applicationSet
     chart's git "files" generator does, and layered through the same chain it
-    builds: defaults.yaml -> <ns>/defaults.yaml -> base/<file> ->
+    builds: base/<file> -> <ns>/defaults.yaml ->
     <ns>/values/<file>. Every release goes through that one chain, 'shared'
     included — which is why <ns>/defaults.yaml is computed across the shared
     release too (see main()), so nothing can be promoted into it that shared
@@ -3408,6 +3784,10 @@ def verify_no_conflicts(chart: Path, output_dir: Path) -> tuple[int, list[str]]:
     Both defaults files and base/<file> MUST exist for every values file:
     ArgoCD fails the whole sync on a valueFiles entry that is not there, so a
     missing one is reported here as a conflict rather than silently skipped.
+
+    `skip`: stale files from an earlier run (see find_stale_output). They are
+    reported separately; judging them here would fail this run for objects it
+    did not produce.
     """
     ns_claims: dict[str, dict[tuple[str, str], str]] = defaultdict(dict)
     cluster_claims: dict[tuple[str, str], str] = {}
@@ -3415,18 +3795,24 @@ def verify_no_conflicts(chart: Path, output_dir: Path) -> tuple[int, list[str]]:
     rendered = 0
 
     base_dir = output_dir / BASE_DIR_NAME
-    for ns_dir in sorted(p for p in output_dir.iterdir() if p.is_dir()):
-        namespace = ns_dir.name
-        if namespace in (CLUSTER_SHARED_DIR_NAME, BASE_DIR_NAME) or namespace in NON_NAMESPACE_OUTPUT_DIRS:
-            continue
+    for namespace, ns_dir in namespace_dirs_of(output_dir):
         values_dir = ns_dir / VALUES_DIR_NAME
         if not values_dir.is_dir():
             continue
         ns_defaults_vf = ns_dir / DEFAULTS_FILE_NAME
-        for vf in sorted(values_dir.glob("*.yaml")):
+        # values/ sub-folders are only for grouping: the release is the file
+        # name, so one name in two folders is two Applications with one name.
+        for stem, n in Counter(vf.stem for vf in values_files(values_dir)).items():
+            if n > 1:
+                conflicts.append(f"DUPLICATE RELEASE in '{namespace}': {n} files named '{stem}.yaml' "
+                                 f"under {VALUES_DIR_NAME}/ — sub-folders do not namespace a release, "
+                                 f"rename or remove all but one.")
+        for vf in values_files(values_dir):
+            if vf in skip:
+                continue
             release = vf.stem
             base_vf = base_dir / f"{release}.yaml"
-            chain = [ns_defaults_vf, base_vf, vf]
+            chain = [base_vf, ns_defaults_vf, vf]
             missing = [f for f in chain if not f.exists()]
             if missing:
                 conflicts.append(
@@ -3465,14 +3851,19 @@ def verify_no_conflicts(chart: Path, output_dir: Path) -> tuple[int, list[str]]:
                         cluster_claims[key] = owner
                 else:
                     key = (kind, name)
-                    if key in ns_claims[namespace] and ns_claims[namespace][key] != release:
-                        conflicts.append(f"NAMESPACE CONFLICT in '{namespace}': {kind}/{name} claimed by both "
-                                         f"'{ns_claims[namespace][key]}' and '{release}'")
+                    # --variants: prd/yellow and prd/black share namespace
+                    # 'prd', so their releases are checked against each other.
+                    claims, owner = ns_claims[k8s_ns(namespace)], release
+                    if "/" in namespace:
+                        owner = f"{namespace.split('/', 1)[1]}/{release}"
+                    if key in claims and claims[key] != owner:
+                        conflicts.append(f"NAMESPACE CONFLICT in '{k8s_ns(namespace)}': {kind}/{name} claimed by both "
+                                         f"'{claims[key]}' and '{owner}'")
                     else:
-                        ns_claims[namespace][key] = release
+                        claims[key] = owner
 
     cluster_shared_dir = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME
-    if cluster_shared_dir.exists():
+    if cluster_shared_dir.exists() and cluster_shared_dir / "cluster-shared-values.yaml" not in skip:
         vf = cluster_shared_dir / "cluster-shared-values.yaml"
         docs = helm_template(chart, CLUSTER_SHARED_DIR_NAME, "platform-shared", [vf])
         rendered += 1
@@ -3526,12 +3917,15 @@ def find_stale_output(output_dir: Path, expected_values: dict[str, set], expecte
     # cluster-wide artefacts behind, and they are not inert: the root
     # Application still deploys cluster-shared-application.yaml by name, so a
     # surviving one would STILL be applied — precisely the object a
-    # namespace-limited tenant cannot apply. A flat run (no --argocd-manifests)
-    # likewise flags every piece of wiring an earlier --argocd-manifests run
-    # wrote, since nothing in a flat tree is supposed to be a manifest.
-    leftovers = []
-    if NAMESPACE_SCOPED_ONLY or not ARGOCD_MANIFESTS:
+    # namespace-limited tenant cannot apply. The root files under their old
+    # names (LEGACY_ROOT_FILE_NAMES) are flagged too.
+    leftovers = [output_dir / n for n in LEGACY_ROOT_FILE_NAMES]
+    if NAMESPACE_SCOPED_ONLY:
         leftovers += [output_dir / CLUSTER_SHARED_APP_FILE_NAME, output_dir / CLUSTER_SHARED_DIR_NAME]
+    elif not ARGOCD_MANIFESTS:
+        leftovers.append(output_dir / CLUSTER_SHARED_APP_FILE_NAME)
+    # A run without --argocd-manifests writes no wiring, so an earlier run's
+    # root files would keep deploying a tree that no longer matches.
     if not ARGOCD_MANIFESTS:
         leftovers += [output_dir / ROOT_APP_FILE_NAME, output_dir / ROOT_APPSET_FILE_NAME]
     for leftover in leftovers:
@@ -3540,10 +3934,7 @@ def find_stale_output(output_dir: Path, expected_values: dict[str, set], expecte
         elif leftover.is_dir():
             stale += sorted(f for f in leftover.rglob("*") if f.is_file())
 
-    for ns_dir in sorted(p for p in output_dir.iterdir() if p.is_dir()):
-        namespace = ns_dir.name
-        if namespace in (CLUSTER_SHARED_DIR_NAME, BASE_DIR_NAME) or namespace in NON_NAMESPACE_OUTPUT_DIRS:
-            continue
+    for namespace, ns_dir in namespace_dirs_of(output_dir):
         # A namespace directory whose input namespace is gone entirely: every
         # generated file under it is stale, not just the per-release ones.
         # Only when it carries a generation signature, though — with --output
@@ -3556,7 +3947,7 @@ def find_stale_output(output_dir: Path, expected_values: dict[str, set], expecte
             continue
         values_dir = ns_dir / VALUES_DIR_NAME
         if values_dir.is_dir():
-            stale += [f for f in sorted(values_dir.glob("*.yaml"))
+            stale += [f for f in values_files(values_dir)
                       if f.stem not in expected_values[namespace]]
         # Everything the PREVIOUS layout wrote per namespace: the releases/
         # pointer tree the old git "files" generator enumerated, and the
@@ -4210,7 +4601,8 @@ def fidelity_error_breakdown(report: list[str]) -> list[str]:
     ] + [""]
 
 
-def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path) -> tuple[list[str], dict]:
+def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
+                        skip: frozenset = frozenset()) -> tuple[list[str], dict]:
     """Round-trip check: does the rendered output still say what the raw input said?
 
     Returns (report_lines, stats). Renders independently of verify_no_conflicts
@@ -4228,7 +4620,7 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path) -> tuple
     # namespace (see the dedupe note in this section's header comment).
     cluster_index: dict[tuple[str, str], dict] = {}
     cluster_shared_vf = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME / "cluster-shared-values.yaml"
-    if cluster_shared_vf.exists():
+    if cluster_shared_vf.exists() and cluster_shared_vf not in skip:
         try:
             for doc in helm_template(chart, CLUSTER_SHARED_DIR_NAME, "platform-shared", [cluster_shared_vf]):
                 kind, name = doc.get("kind"), (doc.get("metadata") or {}).get("name")
@@ -4238,36 +4630,45 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path) -> tuple
             stats["render_failures"] += 1
             report.append(f"RENDER FAILURE cluster-shared: {exc}")
 
-    for ns_dir in sorted(p for p in output_dir.iterdir() if p.is_dir()):
-        namespace = ns_dir.name
-        if namespace in (CLUSTER_SHARED_DIR_NAME, BASE_DIR_NAME) or namespace in NON_NAMESPACE_OUTPUT_DIRS:
+    # Compared per KUBERNETES namespace: variant folders (dev/yellow, dev/black)
+    # are all namespace 'dev', and so is the raw input they came from.
+    out_folders: dict[str, list[Path]] = defaultdict(list)
+    for key, d in namespace_dirs_of(output_dir):
+        out_folders[k8s_ns(key)].append(d)
+    raw_folders: dict[str, list[Path]] = defaultdict(list)
+    for key, d in namespace_dirs_of(input_dir, is_input_ns):
+        raw_folders[k8s_ns(key)].append(d)
+    for namespace, ns_dirs in sorted(out_folders.items()):
+        if namespace not in raw_folders:
             continue
-        values_dir = ns_dir / VALUES_DIR_NAME
-        raw_ns_dir = input_dir / namespace
-        if not values_dir.is_dir() or not raw_ns_dir.is_dir():
-            continue
-
-        ns_defaults_vf = ns_dir / DEFAULTS_FILE_NAME
 
         # Render every release in this namespace, in the ApplicationSet's own
         # value-file order, and index what came out by (kind, name).
         rendered_index: dict[tuple[str, str], tuple[str, dict]] = {}
-        for vf in sorted(values_dir.glob("*.yaml")):
-            release = vf.stem
-            base_vf = base_dir / f"{release}.yaml"
-            value_files = [f for f in (ns_defaults_vf, base_vf, vf) if f.exists()]
-            try:
-                docs = helm_template(chart, release, namespace, value_files)
-            except RuntimeError as exc:
-                stats["render_failures"] += 1
-                report.append(f"RENDER FAILURE {namespace}/{release}: {exc}")
-                continue
-            for doc in docs:
-                kind, name = doc.get("kind"), (doc.get("metadata") or {}).get("name")
-                if kind and name:
-                    rendered_index[(kind, name)] = (release, doc)
+        for ns_dir in ns_dirs:
+            values_dir = ns_dir / VALUES_DIR_NAME
+            ns_defaults_vf = ns_dir / DEFAULTS_FILE_NAME
+            for vf in values_files(values_dir):
+                if vf in skip:
+                    continue
+                release = vf.stem
+                base_vf = base_dir / f"{release}.yaml"
+                value_files = [f for f in (base_vf, ns_defaults_vf, vf) if f.exists()]
+                try:
+                    docs = helm_template(chart, release, namespace, value_files)
+                except RuntimeError as exc:
+                    stats["render_failures"] += 1
+                    report.append(f"RENDER FAILURE {namespace}/{release}: {exc}")
+                    continue
+                for doc in docs:
+                    kind, name = doc.get("kind"), (doc.get("metadata") or {}).get("name")
+                    if kind and name:
+                        rendered_index[(kind, name)] = (release, doc)
 
-        raw_index = load_raw_index(raw_ns_dir)
+        raw_index: dict[tuple[str, str], list[tuple[str, dict]]] = defaultdict(list)
+        for raw_dir in raw_folders[namespace]:
+            for k, v in load_raw_index(raw_dir).items():
+                raw_index[k] += v
         raw_total = sum(len(v) for v in raw_index.values())
         # The raw file behind this namespace's shared release, env suffix and
         # all (shared-prd.yaml) — resolved the same way main() resolves it.
@@ -4692,6 +5093,14 @@ def cross_reference_checks(namespace: str, docs: list[dict], nad_names: set) -> 
 # Main
 # ---------------------------------------------------------------------------
 
+def _bool_arg(v: str) -> bool:
+    if str(v).lower() in ("true", "yes", "1", "on"):
+        return True
+    if str(v).lower() in ("false", "no", "0", "off"):
+        return False
+    raise argparse.ArgumentTypeError(f"expected true or false, got {v!r}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--input", default="namespaces", help="root folder containing <namespace>/<microservice>.yaml")
@@ -4720,43 +5129,77 @@ def main() -> None:
     ap.add_argument("--cluster-shared-namespace", default="platform-shared")
     ap.add_argument("--argocd-project", default="default",
                      help="ArgoCD AppProject every generated Application/ApplicationSet belongs to.")
-    ap.add_argument("--argocd-namespace", default="argocd",
+    ap.add_argument("--argocd-namespace", "--argocd-destination-namespace", default="argocd",
                      help="namespace ArgoCD itself runs in — where the root Application, the root "
                           "ApplicationSet and the per-namespace ApplicationSets are created. The "
                           "workloads they deploy still land in their own namespaces.")
+    ap.add_argument("--argocd-cluster", default="",
+                     help="deploy to the ArgoCD cluster registered under this NAME instead of "
+                          "--destination-server's URL (destination.name rather than .server).")
     ap.add_argument("--destination-server", default="https://kubernetes.default.svc",
                      help="cluster API URL every generated Application deploys to. The default is "
                           "the in-cluster address, correct when ArgoCD manages its own cluster; "
                           "point it at a registered remote cluster's URL otherwise.")
+    # Variant sub-folders in the input are detected on their own now.
+    ap.add_argument("--variants", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--cluster-scoped", action="store_true",
                      help="opt back in to cluster-wide output. By DEFAULT the converter stays "
-                          "inside the namespace boundary: no global defaults.yaml at the tree root, "
-                          "and no cluster-shared release — a ClusterRole/ClusterRoleBinding is "
+                          "inside the namespace boundary: no cluster-shared release — a ClusterRole/ClusterRoleBinding is "
                           "copied into the namespace that declared it under a namespace-prefixed "
                           "name, since two namespaces emitting the same cluster-scoped name would "
                           "be two releases fighting over one object. Pass this only when you "
                           "actually hold cluster-wide rights and want the deduplicated "
-                          "cluster-shared release plus the tree-root defaults.yaml. Either way "
+                          "cluster-shared release. Either way "
                           "those objects stay cluster-scoped and need cluster rights to APPLY; "
                           "relocations and drops are listed in conflicts_and_warnings.txt.")
     ap.add_argument("--root-app-name", default="platform-root",
                      help="name of the generated root app-of-apps Application "
-                          "(<output>/root-application.yaml) — the single object you apply by hand "
+                          "(<output>/rootApplication.yaml.txt) — the single object you apply by hand "
                           "to bootstrap every generated ApplicationSet. Give two output trees "
                           "deployed to the same cluster different names so they don't collide.")
-    ap.add_argument("--argocd-manifests", action="store_true",
-                     help="also write the ArgoCD wiring: root-application.yaml, "
-                          "root-applicationSet.yaml and, under --cluster-scoped, cluster-shared/ + "
-                          "cluster-shared-application.yaml. By DEFAULT only the flat values tree "
-                          "(base/, <ns>/defaults.yaml, <ns>/values/) is written.")
+    ap.add_argument("--root-set-name", default="",
+                     help="name of the root ApplicationSet (default: '<--root-app-name>-set').")
+    # Kept so existing command lines still parse: the wiring it used to opt into
+    # (rootApplication.yaml.txt, rootApplicationSet.yaml and, under
+    # --cluster-scoped, cluster-shared/ + cluster-shared-application.yaml) is
+    # now written on every run.
+    ap.add_argument("--argocd-manifests", nargs="?", const=True, default=False, type=_bool_arg,
+                     metavar="true|false",
+                     help=f"write the ArgoCD wiring: {ROOT_APPSET_FILE_NAME}, {ROOT_APP_FILE_NAME} "
+                          f"(the root Application you apply by hand) and, under --cluster-scoped, "
+                          f"{CLUSTER_SHARED_APP_FILE_NAME}. Off by default: only the values tree "
+                          f"(base/, <folder>/defaults.yaml, <folder>/values/) is written, and wiring "
+                          f"left by an earlier run is reported stale. A bare --argocd-manifests "
+                          f"means true.")
     ap.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
                      help="skip whole stacks: a microservice file with any object whose name or "
                           "label/annotation VALUE contains PATTERN (case-insensitive) is skipped "
                           "entirely, and matching objects are removed from shared.yaml. Data "
-                          "payloads are never matched. Repeatable.")
+                          "payloads are never matched. Repeatable, or comma-separated.")
     ap.add_argument("--keep", action="append", default=[], metavar="PATTERN",
                      help="exception to --exclude: an object matching a --keep PATTERN is never "
-                          "excluded. Repeatable.")
+                          "excluded. Repeatable, or comma-separated.")
+    ap.add_argument("--env-suffixes", default="", metavar="TOK,TOK",
+                     help="strip these environment words from ANYWHERE in a microservice's "
+                          "file name ('pay-fac1-api' -> 'pay-api' with 'fac1'), so the copies in "
+                          "different namespaces share one base/ file. Replaces the default "
+                          "rule, which strips only a trailing suffix equal to the namespace's. "
+                          "Values differing by these words become {{ .Values.environment }}, "
+                          "set per namespace in its defaults.yaml; they never make folders.")
+    ap.add_argument("--env-group", action="append", default=[], metavar="NAME=TOK[:VALUE],...",
+                     help="a release whose file name carries one of these words moves into a "
+                          "folder of that name inside its namespace (dev/ms1-yellow.yaml -> "
+                          "dev/yellow/values/ms1.yaml, release 'ms1'), and values that differ "
+                          "only by them merge into one templated base value: "
+                          "'a.black.org'/'a.yellow.org' -> 'a.{{ .Values.color }}.org', with "
+                          "'color: yellow' in dev/yellow/defaults.yaml. A word also given to "
+                          "--env-suffixes is the namespace's, not a folder. The namespace name "
+                          "becomes {{ .Release.Namespace }}; '--env-group namespace' enables only "
+                          "that. Repeatable; a second group nests (dev/yellow/eu/).")
+    ap.add_argument("--interactive", action="store_true",
+                     help="with --env-group, ask before each combination (needs a terminal).")
+    ap.add_argument("--no-interactive", action="store_false", dest="interactive",
+                     help=argparse.SUPPRESS)
     ap.add_argument("--chart", default="..",
                      help="path to the Universal Chart, used for the render-verification step "
                           "(default: this repo's root, one level up)")
@@ -4772,8 +5215,8 @@ def main() -> None:
     ap.add_argument("--prune", action="store_true",
                      help="delete generated files left over from a previous run whose input or "
                           "options have since changed (stale values/, releases/ and base/ entries, "
-                          "and the ArgoCD wiring of an earlier --argocd-manifests run when this one "
-                          "is flat). Stale files are ALWAYS reported; this deletes them. Off by "
+                          "and root-application.yaml / root-applicationSet.yaml from before the "
+                          "root files were renamed). Stale files are ALWAYS reported; this deletes them. Off by "
                           "default because removing a values file makes ArgoCD prune the workload "
                           "it deploys.")
     ap.add_argument("--verify-fidelity", action="store_true",
@@ -4789,10 +5232,33 @@ def main() -> None:
                           "finding is real.")
     args = ap.parse_args()
 
-    global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, ARGOCD_MANIFESTS, EXCLUDE_PATTERNS, KEEP_PATTERNS
+    global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
-    EXCLUDE_PATTERNS, KEEP_PATTERNS = args.exclude, args.keep
+    EXCLUDE_PATTERNS, KEEP_PATTERNS = (
+        [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
+        for opt in (args.exclude, args.keep))
+    chart_keys = set((yaml.safe_load((Path(args.chart) / "values.yaml").read_text(encoding="utf-8"))
+                      if (Path(args.chart) / "values.yaml").is_file() else None) or {})
+    env_groups = [parse_env_group(spec, chart_keys) for spec in args.env_group]
+    suffixes = [t.strip() for t in args.env_suffixes.split(",") if t.strip()]
+    if suffixes:
+        KNOWN_ENV_SUFFIXES.clear()  # the list replaces the default trailing-suffix rule
+        NAME_TOKENS.update(suffixes)
+        # Env suffixes are an implicit group: values differing by them become
+        # {{ .Values.environment }} ('env' is the chart's env-var map). A
+        # suffix token listed in a --env-group too is the namespace's, not a
+        # folder's, so it leaves that group.
+        for g in env_groups:
+            g.tokens = {t: v for t, v in g.tokens.items() if t not in suffixes}
+        env_groups = [g for g in env_groups if g.tokens or g.name == NAMESPACE_GROUP]
+        if not any(g.name == ENVIRONMENT_GROUP for g in env_groups):
+            env_groups.append(EnvGroup(ENVIRONMENT_GROUP, {t: t for t in suffixes}, folder=False))
+    for g in env_groups:
+        if g.name in (ENVIRONMENT_GROUP, NAMESPACE_GROUP):
+            g.folder = False
+    folder_groups = [g for g in env_groups if g.folder]
+    NAME_TOKENS.update(t for g in env_groups for t in g.tokens)
     # Namespace-scoped is the DEFAULT: it is the assumption that holds for the
     # widest range of clusters, and it fails safe. Defaulting to cluster-wide
     # output produces a cluster-shared Application that a namespace-limited
@@ -4815,12 +5281,13 @@ def main() -> None:
     all_warnings: list[str] = []
     summary = {"namespaces": {}, "totals": {"microservices": 0, "warnings": 0}}
 
-    namespace_dirs = sorted(p for p in input_dir.iterdir() if p.is_dir())
+    namespace_dirs = namespace_dirs_of(input_dir, is_input_ns)
 
     # Pass 1 — build every microservice's values (in memory, nothing written
     # yet). Needed up front because defaults.yaml is computed FROM the full
     # set of already-built values, both globally and per namespace.
     per_namespace_ms: dict[str, list[tuple[str, MicroserviceContext]]] = {}
+    out_ms: dict[str, list[tuple[str, MicroserviceContext]]] = {}  # per OUTPUT folder
     per_namespace_shared: dict[str, MicroserviceContext] = {}
     per_namespace_warnings: dict[str, list[str]] = {}
     # Names Kubernetes would reject. Collected across the WHOLE run and
@@ -4836,8 +5303,8 @@ def main() -> None:
     # built, and a PVC's static volumeName is checked against PVs that may live
     # in a different file or a different namespace.
     loaded: dict[str, tuple[Optional[list[dict]], list[tuple[str, list[dict]]], list[str]]] = {}
-    for ns_dir in namespace_dirs:
-        namespace = ns_dir.name
+    ms_meta: dict[str, list[tuple[str, str]]] = {}  # namespace -> [(file stem, variant folder)]
+    for namespace, ns_dir in namespace_dirs:
         ns_warnings: list[str] = []
 
         # The shared file may carry the namespace's own environment suffix
@@ -4857,7 +5324,7 @@ def main() -> None:
         shared_docs = None
         if shared_path is not None:
             raw_shared = filter_transient(
-                [sanitize_object(d, ns_warnings) for d in load_multidoc(shared_path)])
+                [sanitize_object(d, ns_warnings) for d in load_multidoc(shared_path)], ns_warnings)
             shared_docs = [d for d in raw_shared if not is_excluded(d)]
             if len(shared_docs) != len(raw_shared):
                 ns_warnings.append(f"{shared_path.name}: {len(raw_shared) - len(shared_docs)} "
@@ -4867,14 +5334,31 @@ def main() -> None:
         for ms_file in sorted(ns_dir.glob("*.yaml")):
             if ms_file == shared_path:  # loaded above as the shared release
                 continue
-            docs = filter_transient([sanitize_object(d, ns_warnings) for d in load_multidoc(ms_file)])
+            docs = filter_transient([sanitize_object(d, ns_warnings) for d in load_multidoc(ms_file)],
+                                    ns_warnings)
             hit = next((d for d in docs if is_excluded(d)), None)
             if hit is not None:
                 ns_warnings.append(
                     f"{ms_file.name}: excluded by --exclude (matched {hit.get('kind')}/"
                     f"{(hit.get('metadata') or {}).get('name')}) — no base/, values/ or release written")
                 continue
-            ms_docs.append((env_normalized_ms_name(namespace, ms_file.stem), docs))
+            ms_docs.append((ms_file.stem, docs))
+        # The variant folder each file lands in: one level per folder group
+        # whose token its name carries (ms1-yellow -> yellow/).
+        stems = [stem for stem, _ in ms_docs]
+        folders = ["/".join(t for t in (g.token_in(stem) for g in folder_groups) if t) for stem in stems]
+        # Two files normalizing to one name in the SAME folder would be two
+        # releases writing one values/ file — those keep their own file names.
+        normalized = [env_normalized_ms_name(namespace, stem) for stem in stems]
+        clashes = {k for k, c in Counter(zip(folders, normalized)).items() if c > 1}
+        for i, (stem, docs) in enumerate(ms_docs):
+            if normalized[i] != stem and ((folders[i], normalized[i]) in clashes
+                                          or normalized[i] == SHARED_DIR_NAME):
+                ns_warnings.append(f"{stem}.yaml: would normalize to '{normalized[i]}', which another "
+                                   f"release in this namespace also claims — kept as '{stem}'")
+            else:
+                ms_docs[i] = (normalized[i], docs)
+        ms_meta[namespace] = list(zip(stems, folders))
         loaded[namespace] = (shared_docs, ms_docs, ns_warnings)
 
     known_pv_names = {(d.get("metadata") or {}).get("name")
@@ -4882,8 +5366,7 @@ def main() -> None:
                       for docs in [shared_docs or []] + [docs for _, docs in ms_docs]
                       for d in docs if d.get("kind") == "PersistentVolume"}
 
-    for ns_dir in namespace_dirs:
-        namespace = ns_dir.name
+    for namespace, ns_dir in namespace_dirs:
         shared_docs, ms_docs, ns_warnings = loaded[namespace]
         ns_registry = NamespaceRegistry(namespace)
 
@@ -4914,10 +5397,13 @@ def main() -> None:
             all_warnings.extend(f"[{namespace}/{SHARED_DIR_NAME}] {w}" for w in shared_ctx.warnings)
 
         ms_contexts: list[tuple[str, MicroserviceContext]] = []
-        for ms_name, docs in ms_docs:
+        for (ms_name, docs), (stem, folder) in zip(ms_docs, ms_meta[namespace]):
+            # ms1-yellow and ms1-black are both 'ms1' but two owners.
             ctx = build_microservice(namespace, ms_name, docs, ns_registry, cluster_registry, cluster_values,
-                                     ns_warnings, owner_label=ms_name, known_pv_names=known_pv_names)
+                                     ns_warnings, owner_label=stem if folder else ms_name,
+                                     known_pv_names=known_pv_names)
             ms_contexts.append((ms_name, ctx))
+            out_ms.setdefault(f"{namespace}/{folder}" if folder else namespace, []).append((ms_name, ctx))
             all_warnings.extend(f"[{namespace}/{ms_name}] {w}" for w in ctx.warnings)
             errs, warns = validate_resource_names(namespace, ms_name, ctx.values)
             name_errors += errs
@@ -4932,7 +5418,7 @@ def main() -> None:
             if namespace in per_namespace_shared else [c for _, c in ms_contexts]
         nad_names = set().union(*(c.nad_names for c in contexts))
         ns_warnings.extend(cross_reference_checks(
-            namespace, (shared_docs or []) + [d for _, docs in ms_docs for d in docs], nad_names))
+            k8s_ns(namespace), (shared_docs or []) + [d for _, docs in ms_docs for d in docs], nad_names))
 
     if name_errors:
         sys.exit("\n".join(
@@ -4944,7 +5430,7 @@ def main() -> None:
     # Pass 2 — there is no GLOBAL defaults layer.
     #
     # The ms-applicationSet chart layers exactly three files per release:
-    # <ns>/defaults.yaml -> base/<file> -> <ns>/values/<file>. A tree-root
+    # base/<file> -> <ns>/defaults.yaml -> <ns>/values/<file>. A tree-root
     # defaults.yaml has nowhere to be applied from, and adding it back would
     # be actively unsafe rather than merely useless: 'shared' now goes through
     # that same fixed chain (it is a values/shared.yaml like any other
@@ -4996,7 +5482,7 @@ def main() -> None:
     # accidental intersection of unrelated resource pools; the fork keeps each
     # namespace's shared content whole under base/<namespace>-shared.yaml.
     groups: dict[str, list[tuple[str, MicroserviceContext]]] = {}
-    for namespace, ms_list in per_namespace_ms.items():
+    for namespace, ms_list in out_ms.items():
         for name, ctx in ms_list:
             groups.setdefault(name, []).append((namespace, ctx))
 
@@ -5007,6 +5493,7 @@ def main() -> None:
     # left over from a previous run whose input has since changed (see
     # find_stale_output).
     expected_values: dict[str, set] = {}
+    env_group_applied: list[dict] = []
     for name, entries in groups.items():
         if len(entries) == 1:
             namespace, ctx = entries[0]
@@ -5014,12 +5501,27 @@ def main() -> None:
             release_slugs[(namespace, name)] = name
             continue
         shared_base = common_subtree([ctx.values for _, ctx in entries])
+        injections = {}
+        if env_groups:
+            injections, applied = combine_env_groups(name, entries, env_groups, shared_base,
+                                                     args.interactive)
+            env_group_applied += applied
+            all_warnings += [f"[{name}] env-group: {a['path']} -> {a['template']!r}"
+                             + (f", injected {a['injection']}" if a["injection"] else "")
+                             for a in applied]
         write_base_file(base_dir, name, shared_base)
         for namespace, ctx in entries:
             release_slugs[(namespace, name)] = name
             remainder = subtract_defaults(ctx.values, shared_base)
+            # The group values this release's templates read come from its
+            # folder's defaults.yaml (folder_values); only a value that
+            # disagrees with the folder rides in the release's own values/.
+            own = {g: v for g, v in injections.get(namespace, {}).items()
+                   if folder_values(namespace, env_groups).get(g) != v}
+            extra = deep_merge(own, remainder)
+            if extra:
+                minimal_extras[(namespace, name)] = extra
             if remainder:
-                minimal_extras[(namespace, name)] = remainder
                 all_warnings.append(
                     f"[{namespace}/{name}] shares base/{name}.yaml with its other namespaces' "
                     f"copies; {sorted(remainder.keys())} differ and were pushed into this "
@@ -5048,15 +5550,15 @@ def main() -> None:
     # No per-namespace ArgoCD manifest is written at all any more: the two
     # files at the tree root are the entire wiring, and a namespace directory
     # is discovered by the root ApplicationSet simply by existing.
-    for ns_dir in namespace_dirs:
-        namespace = ns_dir.name
+    out_keys = set(out_ms) | set(per_namespace_shared) | {k for k, d in namespace_dirs if is_input_ns(d)}
+    for namespace in sorted(out_keys):
         out_ns_dir = output_dir / namespace
-        ms_contexts = per_namespace_ms.get(namespace, [])
+        ms_contexts = out_ms.get(namespace, [])
         ns_warnings = per_namespace_warnings.get(namespace, [])
         shared_ctx = per_namespace_shared.get(namespace)
 
         # 'shared' is in the pool, not excluded from it. Every release in this
-        # namespace — shared included — reads this exact file as the lowest
+        # namespace — shared included — reads this exact file as the middle
         # layer of the chart's fixed three-file chain, and common_subtree only
         # ever promotes a key that is present with an IDENTICAL value in every
         # member of the pool. Including shared is therefore what makes the
@@ -5072,18 +5574,19 @@ def main() -> None:
         if shared_ctx is not None:
             defaults_pool.append(shared_ctx.values)
         namespace_defaults = common_subtree(defaults_pool)
+        namespace_defaults.update(folder_values(namespace, env_groups))
 
         out_ns_dir.mkdir(parents=True, exist_ok=True)
         header_ns_defaults = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             f"# Namespace defaults for '{namespace}': values identical across every\n"
-            "# release in THIS namespace, the shared release included. Applied FIRST\n"
-            "# (lowest precedence), beneath base/<release>.yaml and this namespace's\n"
-            "# own values/<release>.yaml.\n"
+            "# release in THIS folder, the shared release included, plus the group\n"
+            "# values (--env-group / --env-suffixes) the folder stands for. Applied\n"
+            "# over base/<release>.yaml, beneath this folder's values/<release>.yaml.\n"
             "# Re-run the converter to regenerate after the source manifests change.\n\n"
         )
         (out_ns_dir / DEFAULTS_FILE_NAME).write_text(
-            header_ns_defaults + dump_yaml(namespace_defaults), encoding="utf-8"
+            header_ns_defaults + dump_yaml(helm_safe_values(namespace_defaults)), encoding="utf-8"
         )
 
         expected_values.setdefault(namespace, set())
@@ -5114,7 +5617,8 @@ def main() -> None:
     # same way every other unresolvable collision in this converter is.
     app_names: dict[tuple[str, str], str] = {}
     for (namespace, ms_name), slug in sorted(release_slugs.items()):
-        key = (slug, namespace.rsplit("-", 1)[-1])
+        key = (slug, k8s_ns(namespace).rsplit("-", 1)[-1]
+               + (f"-{folder_suffix(namespace)}" if "/" in namespace else ""))
         if key in app_names and app_names[key] != namespace:
             all_warnings.append(
                 f"[{namespace}/{ms_name}] ArgoCD Application name '{key[0]}-{key[1]}' collides with "
@@ -5131,11 +5635,7 @@ def main() -> None:
     has_cluster_values = not NAMESPACE_SCOPED_ONLY and (
        any(cluster_values[k] for k in ("storageClasses", "persistentVolumes", "scc", "clusterSecretStores")) or
        cluster_values["rbac"]["clusterRoles"] or cluster_values["rbac"]["clusterRoleBindings"])
-    if has_cluster_values and not ARGOCD_MANIFESTS:
-        all_warnings.append(
-            "--cluster-scoped deduplicated cluster-scoped objects, but cluster-shared/ is part of "
-            "the ArgoCD wiring and is only written with --argocd-manifests — pass it to get them")
-    if has_cluster_values and ARGOCD_MANIFESTS:
+    if has_cluster_values:
         cluster_dir = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME
         cluster_dir.mkdir(parents=True, exist_ok=True)
         header = (
@@ -5143,12 +5643,13 @@ def main() -> None:
             "# Cluster-scoped resources deduplicated across the ENTIRE run — deploy exactly ONCE.\n"
             "workload:\n  type: none\nservice:\n  enabled: false\n\n"
         )
-        (cluster_dir / "cluster-shared-values.yaml").write_text(header + dump_yaml(cluster_values), encoding="utf-8")
+        (cluster_dir / "cluster-shared-values.yaml").write_text(header + dump_yaml(helm_safe_values(cluster_values)), encoding="utf-8")
+    if has_cluster_values and ARGOCD_MANIFESTS:
         app = build_cluster_shared_application(
             args.cluster_shared_namespace, args.chart_repo_url, args.chart_path, args.chart_revision,
             args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
-            destination_server=args.destination_server)
+            destination_server=args.destination_server, destination_name=args.argocd_cluster)
         # At the tree ROOT, next to the root ApplicationSet: that is where the
         # root Application looks for it by name, and cluster-shared/ itself is
         # excluded from the root ApplicationSet's directory generator because
@@ -5156,6 +5657,8 @@ def main() -> None:
         (output_dir / CLUSTER_SHARED_APP_FILE_NAME).write_text(dump_yaml(app), encoding="utf-8")
 
     summary["totals"]["warnings"] = len(all_warnings)
+    if env_groups:
+        summary["env_group_combinations"] = env_group_applied
     report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / "conversion_report.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     # Read by name_fidelity_check.py, which otherwise reports every deliberate
@@ -5179,24 +5682,25 @@ def main() -> None:
               f"+ {output_dir}/{ROOT_APPSET_FILE_NAME}")
         print(f"Bootstrap with:                     kubectl apply -f {output_dir}/{ROOT_APP_FILE_NAME}")
     else:
-        print("ArgoCD wiring:                      not written (flat values tree; pass --argocd-manifests)")
+        print("ArgoCD wiring:                      not written (pass --argocd-manifests true)")
 
     # The whole ArgoCD wiring, written once everything it deploys exists on
     # disk: one ApplicationSet that discovers the namespace directories, and one
     # Application that deploys it. Only with --argocd-manifests.
     if ARGOCD_MANIFESTS:
         root_appset = build_root_applicationset(
-            f"{args.root_app_name}-set", args.chart_repo_url, args.appset_chart_path, args.chart_revision,
+            args.root_set_name or f"{args.root_app_name}-set", args.chart_repo_url, args.appset_chart_path, args.chart_revision,
             args.chart_path, args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
-            destination_server=args.destination_server)
+            destination_server=args.destination_server, destination_name=args.argocd_cluster,
+            nested=any("/" in k for k in out_keys))
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"
             f"# '{args.appset_chart_path}' chart, which in turn fans out over that\n"
             "# namespace's values/*.yaml. A new namespace is a new directory here and\n"
             "# nothing else — no manifest to add, no apply to run.\n"
-            "# Deployed by root-application.yaml; do not apply it by hand.\n\n"
+            f"# Deployed by {ROOT_APP_FILE_NAME}; do not apply it by hand.\n\n"
         )
         (output_dir / ROOT_APPSET_FILE_NAME).write_text(appset_header + dump_yaml(root_appset), encoding="utf-8")
 
@@ -5205,7 +5709,9 @@ def main() -> None:
                                            project=args.argocd_project)
         root_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
-            "# ROOT app-of-apps: the ONE object you apply by hand. Bootstrapping is:\n"
+            "# ROOT app-of-apps: the ONE object you apply by hand. It is .txt so that\n"
+            "# nothing applying this directory (ArgoCD included) ever picks it up; kubectl\n"
+            "# reads it fine when the file is named explicitly. Bootstrapping is:\n"
             "#\n"
             f"#     kubectl apply -f {output_dir.name}/{ROOT_APP_FILE_NAME}\n"
             "#\n"
@@ -5230,8 +5736,8 @@ def main() -> None:
         stale_releases = [f for f in stale if f.parent.name == VALUES_DIR_NAME]
         stale_report.write_text(
             "Generated files with no counterpart in this run's input — left over from a\n"
-            "previous run whose input or options have since changed (including the ArgoCD\n"
-            "wiring of an earlier --argocd-manifests run, when this run is flat). The\n"
+            "previous run whose input or options have since changed (including the root\n"
+            "files under their old names root-application.yaml / root-applicationSet.yaml). The\n"
             "converter only ever writes, so re-running does NOT remove these; pass --prune\n"
             "to delete them.\n\n"
             "The <namespace>/values/*.yaml ones are the dangerous kind: the\n"
@@ -5271,7 +5777,7 @@ def main() -> None:
 
     print(f"\nVerifying against {chart} — rendering every release with `helm template`...")
     try:
-        rendered, conflicts = verify_no_conflicts(chart, output_dir)
+        rendered, conflicts = verify_no_conflicts(chart, output_dir, frozenset(stale))
     except RuntimeError as e:
         sys.exit(f"\n{e}")
 
@@ -5297,7 +5803,7 @@ def main() -> None:
 
     print(f"\nRound-trip fidelity check — comparing the rendered output back against {input_dir}...")
     try:
-        fidelity_report, fidelity_stats = verify_raw_fidelity(chart, input_dir, output_dir)
+        fidelity_report, fidelity_stats = verify_raw_fidelity(chart, input_dir, output_dir, frozenset(stale))
     except RuntimeError as e:
         sys.exit(f"\n{e}")
 

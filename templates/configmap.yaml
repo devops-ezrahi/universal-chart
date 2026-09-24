@@ -1,3 +1,4 @@
+{{- include "universal-chart.renderValues" . }}
 {{- range $name, $spec := .Values.configMaps }}
 ---
 apiVersion: v1

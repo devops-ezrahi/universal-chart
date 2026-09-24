@@ -1,3 +1,4 @@
+{{- include "universal-chart.renderValues" . }}
 {{- with .Values.route }}
 {{- if .enabled }}
 apiVersion: route.openshift.io/v1

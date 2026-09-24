@@ -33,10 +33,10 @@ foreach ($L in @("$Ns\defaults.yaml", "base\nightly-report.yaml", "base\db-migra
 }
 
 Write-Host ""
-Write-Host "== 3. helm template, layered defaults -> base -> values =="
+Write-Host "== 3. helm template, layered base -> defaults -> values =="
 foreach ($Slug in @('nightly-report', 'db-migrate')) {
     $Files = @()
-    foreach ($L in @("$Ns\defaults.yaml", "base\$Slug.yaml", "$Ns\values\$Slug.yaml")) {
+    foreach ($L in @("base\$Slug.yaml", "$Ns\defaults.yaml", "$Ns\values\$Slug.yaml")) {
         $P = Join-Path $Out $L
         if (Test-Path $P) { $Files += @('-f', $P) }
     }

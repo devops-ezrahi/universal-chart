@@ -1,0 +1,31 @@
+global: {team: platform, port: "8080"}
+nameOverride: "{{ .Release.Namespace }}-app"
+labels: {team: "team-{{ .Release.Namespace }}"}
+annotations: {owner: "{{ .Release.Name }}"}
+image: {repository: "reg.example/{{ .Release.Name }}", tag: "{{ .Chart.AppVersion }}-{{ .Release.Namespace }}"}
+args: ["serve", "--ns={{ .Release.Namespace }}"]
+env:
+  NS: {value: "{{ .Release.Namespace }}"}
+  PORT: {value: "{{ .Values.global.port }}"}
+jobs:
+  "{{ .Release.Name }}-migrate": {command: ["migrate"]}
+configMaps:
+  "{{ .Release.Name }}-config":
+    data:
+      release: "{{ .Release.Name }}"
+      alert: '{{ "{{" }} $labels.pod }} is down'
+ingress:
+  enabled: true
+  hosts:
+    - host: "{{ .Release.Name }}.example.com"
+      paths: [{path: /}]
+service:
+  ports: {http: {port: "{{ .Values.global.port }}"}}
+extraDeploy:
+  - |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: {{ .Release.Name }}-extra
+    data:
+      literal: '{{ "{{" }}keep}}'

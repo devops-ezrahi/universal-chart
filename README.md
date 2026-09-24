@@ -135,6 +135,7 @@ universal-chart/
     ├── app1-fullstack-webapp.yaml    # Full-stack app with Ingress, HPA, secrets
     ├── app2-postgres-statefulset.yaml# StatefulSet with PVCs, probes, RBAC
     ├── 3-apps-usage.yaml             # 3-app ArgoCD ApplicationSet pattern
+    ├── converted/                    # Converter output: flat/ and grouped/ (--env-group) trees
     └── gitops/                       # Ready-to-use GitOps repo structure
         ├── applicationset.yaml       # ArgoCD ApplicationSet
         ├── STRUCTURE.md              # GitOps layout explanation
@@ -782,20 +783,28 @@ repo shaped like this:
   <namespace>/
     defaults.yaml                # what every release in this namespace has in common
     values/<release>.yaml        # image tag + literal env + this namespace's tweaks
-  root-application.yaml          # the one object applied by hand
-  root-applicationSet.yaml       # one Application per namespace directory
+    values/<group>/<release>.yaml  # optional grouping sub-folder (release name unchanged)
+    <variant>/                   # optional variant folder, e.g. prd/yellow (nests: prd/yellow/eu):
+      defaults.yaml              #   deploys into <namespace>, shares base/, carries its group value
+      values/<release>.yaml
+  rootApplication.yaml.txt       # with --argocd-manifests true: applied by hand (kubectl apply -f rootApplication.yaml.txt)
+  rootApplicationSet.yaml        # with --argocd-manifests true: one Application per namespace / variant folder
 ```
 
+The root Application ends in `.txt` so that nothing applying the directory —
+Argo CD included — ever deploys or manages it; `kubectl apply -f` reads a file
+it is given by name regardless of extension.
+
 `ms-applicationSet/` is a small standalone chart in this repo, deployed **once
-per namespace directory** by that repo's `root-applicationSet.yaml`. It renders
-one ArgoCD `ApplicationSet` whose git *files* generator globs
-`<namespace>/values/*.yaml` and creates one Application per match, each
+per namespace (or variant) folder** by that repo's `rootApplicationSet.yaml`.
+It renders one ArgoCD `ApplicationSet` whose git *files* generator globs
+`<folder>/values/<valuesGlob>` and creates one Application per match, each
 rendering this chart with three value files layered lowest → highest:
 
 ```
-$Values/<namespace>/defaults.yaml
 $Values/base/{{ .path.filename }}
-$Values/<namespace>/values/{{ .path.filename }}
+$Values/<folder>/defaults.yaml
+$Values/<folder>/values/{{ .path.filename }}
 ```
 
 Adding a microservice is adding a file; adding a namespace is adding a
@@ -809,14 +818,40 @@ helm template appset ms-applicationSet \
 ```
 
 `namespace`, `originRepoURL` and `originBranch` are required; `originPath`,
-`project`, `destinationServer`, `chartRepoURL`, `chartRevision` and `chartPath`
+`folder` (a variant folder such as `prd/yellow`, deploying into `namespace`;
+empty = the namespace folder itself), `valuesGlob` (default `*.yaml`; use
+`**/*.yaml` with Argo CD's new git-file globbing), `project`,
+`destinationServer`, `destinationName` (a registered cluster name, wins over
+`destinationServer`), `chartRepoURL`, `chartRevision` and `chartPath`
 have defaults in its `values.yaml`. The generated ApplicationSets carry
 `ignoreDifferences` for the pod-security fields OpenShift admission mutates on
 the live object, so Applications do not flip OutOfSync every reconcile.
 
 Values repos in this shape are produced by
 [gitops-factory](gitops-factory/) (in this repo), which
-converts raw per-namespace manifest dumps into exactly this layout.
+converts raw per-namespace manifest dumps into exactly this layout
+(NetworkPolicies and ServiceMonitors in the dump are deliberately not
+converted).
+
+### Every value goes through `tpl`
+
+The chart renders every string value in `.Values` with Helm's `tpl` once,
+before any template reads it (`universal-chart.renderValues`; `extraDeploy`
+is rendered by its own template). That is what lets a shared `base/` file say
+`host: api.{{ .Values.environment }}.example.org` or
+`{{ .Release.Namespace }}` and each folder's `defaults.yaml` supply
+`environment: dev`. A value that must contain a literal `{{` — an
+Alertmanager or Go template inside a ConfigMap — has to be escaped:
+
+```yaml
+configMaps:
+  alert-templates:
+    data:
+      slack.tmpl: '{{ "{{" }} define "slack.title" }}...'
+```
+
+A rendered value is always a string (`"3"`, `"true"`), as if it had been
+quoted.
 
 ---
 

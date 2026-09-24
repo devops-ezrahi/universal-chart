@@ -126,10 +126,9 @@
    Constants — mirror convert_to_universal_chart.py exactly
    ========================================================================== */
 const VALUES_DIR_NAME = "values";
-const VALUES_MINIMAL_DIR_NAME = "values-minimal";
-const RELEASES_DIR_NAME = "releases";
+const BASE_DIR_NAME = "base";
 const DEFAULTS_FILE_NAME = "defaults.yaml";
-const NON_NAMESPACE_DIRS = new Set(["applicationsets", "report", "cluster-shared"]);
+const NON_NAMESPACE_DIRS = new Set([BASE_DIR_NAME, "report", "cluster-shared", "ERRORS_ANALYSIS"]);
 
 /* ==========================================================================
    Merge / diff logic — ported 1:1 from convert_to_universal_chart.py's
@@ -278,50 +277,71 @@ async function getSubdir(dirHandle, name, create) {
   }
 }
 
-async function readNamespace(nsHandle) {
+/* The converter's tree: base/<release>.yaml (shared by every folder that runs
+   the release) and, per folder, defaults.yaml + values/<release>.yaml. A folder
+   is a namespace (dev/) or a variant inside one (dev/yellow/, dev/yellow/eu/);
+   values/ may group files in sub-folders. Keys are folder paths ("dev/yellow"). */
+async function readNamespace(nsHandle, app) {
   const ns = { handle: nsHandle, defaults: {}, microservices: {} };
   const defaultsText = await readFileText(nsHandle, DEFAULTS_FILE_NAME);
   if (defaultsText !== null) ns.defaults = loadYaml(defaultsText);
 
-  const valuesDir = await getSubdir(nsHandle, VALUES_DIR_NAME, true);
-  const minimalDir = await getSubdir(nsHandle, VALUES_MINIMAL_DIR_NAME, true);
-  const releasesDir = await getSubdir(nsHandle, RELEASES_DIR_NAME, true);
-  ns.valuesDir = valuesDir;
-  ns.minimalDir = minimalDir;
-  ns.releasesDir = releasesDir;
-
-  if (valuesDir) {
-    for await (const [name, handle] of valuesDir.entries()) {
-      if (handle.kind !== "file" || !name.endsWith("-values.yaml")) continue;
-      const msName = name.slice(0, -"-values.yaml".length);
-      ns.microservices[msName] = ns.microservices[msName] || {};
-      ns.microservices[msName].values = loadYaml(await (await handle.getFile()).text());
-      ns.microservices[msName].valuesFileName = name;
+  ns.valuesDir = await getSubdir(nsHandle, VALUES_DIR_NAME, false);
+  async function collect(dir) {
+    for await (const [name, handle] of dir.entries()) {
+      if (handle.kind === "directory") {
+        await collect(handle);
+      } else if (name.endsWith(".yaml")) {
+        const msName = name.slice(0, -".yaml".length);
+        ns.microservices[msName] = {
+          values: app.base[msName] || {},
+          minimal: loadYaml(await (await handle.getFile()).text()),
+          minimalDir: dir,
+        };
+      }
     }
   }
-  if (minimalDir) {
-    for await (const [name, handle] of minimalDir.entries()) {
-      if (handle.kind !== "file" || !name.endsWith("-values-minimal.yaml")) continue;
-      const msName = name.slice(0, -"-values-minimal.yaml".length);
-      ns.microservices[msName] = ns.microservices[msName] || {};
-      ns.microservices[msName].minimal = loadYaml(await (await handle.getFile()).text());
-      ns.microservices[msName].minimalFileName = name;
-    }
-  }
+  if (ns.valuesDir) await collect(ns.valuesDir);
   return ns;
 }
 
 async function readAppTree(dirHandle) {
-  const app = { name: dirHandle.name, handle: dirHandle, globalDefaults: {}, namespaces: {} };
-  const defaultsText = await readFileText(dirHandle, DEFAULTS_FILE_NAME);
-  if (defaultsText !== null) app.globalDefaults = loadYaml(defaultsText);
-
-  for await (const [name, handle] of dirHandle.entries()) {
-    if (handle.kind === "directory" && !NON_NAMESPACE_DIRS.has(name)) {
-      app.namespaces[name] = await readNamespace(handle);
+  const app = { name: dirHandle.name, handle: dirHandle, base: {}, namespaces: {} };
+  app.baseDir = await getSubdir(dirHandle, BASE_DIR_NAME, false);
+  if (app.baseDir) {
+    for await (const [name, handle] of app.baseDir.entries()) {
+      if (handle.kind === "file" && name.endsWith(".yaml")) {
+        app.base[name.slice(0, -".yaml".length)] = loadYaml(await (await handle.getFile()).text());
+      }
     }
   }
+
+  async function walk(handle, key, top) {
+    const isFolder = top || (await getSubdir(handle, VALUES_DIR_NAME, false)) !== null
+      || (await readFileText(handle, DEFAULTS_FILE_NAME)) !== null;
+    if (isFolder) app.namespaces[key] = await readNamespace(handle, app);
+    for await (const [name, child] of handle.entries()) {
+      if (child.kind === "directory" && name !== VALUES_DIR_NAME) await walk(child, `${key}/${name}`, false);
+    }
+  }
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind === "directory" && !NON_NAMESPACE_DIRS.has(name)) await walk(handle, name, true);
+  }
   return app;
+}
+
+async function nsValuesDir(ns) {
+  return ns.valuesDir || (ns.valuesDir = await getSubdir(ns.handle, VALUES_DIR_NAME, true));
+}
+
+async function writeBaseFile(app, msName, values) {
+  app.baseDir = app.baseDir || await getSubdir(app.handle, BASE_DIR_NAME, true);
+  await writeFileText(app.baseDir, `${msName}.yaml`, dumpYaml(values));
+  app.base[msName] = values;
+  // Shared: every folder running this release sees the new base.
+  for (const ns of Object.values(app.namespaces)) {
+    if (ns.microservices[msName]) ns.microservices[msName].values = values;
+  }
 }
 
 /* ==========================================================================
@@ -329,7 +349,7 @@ async function readAppTree(dirHandle) {
    ========================================================================== */
 
 const state = {
-  apps: [],           // [{name, handle, globalDefaults, namespaces: {...}}]
+  apps: [],           // [{name, handle, base: {...}, namespaces: {"dev/yellow": {...}}}]
   activeAppIndex: -1,
   activeNamespace: null,
   activeMicroservice: null,   // null = nothing selected; {__new: true} = new-microservice form
@@ -350,15 +370,15 @@ function activeMs() {
     : null;
 }
 function layerBase() {
-  const app = activeApp(), ns = activeNs();
-  return deepMerge(app ? app.globalDefaults : {}, ns ? ns.defaults : {});
+  const ns = activeNs();
+  return ns ? ns.defaults : {};
 }
 function effectiveValues(msName) {
   const ns = activeNs();
   if (!ns) return {};
   const ms = ns.microservices[msName] || {};
-  let merged = layerBase();
-  merged = deepMerge(merged, ms.values || {});
+  // Same chain as the ms-applicationSet chart: base/ -> defaults -> values/.
+  let merged = deepMerge(ms.values || {}, layerBase());
   merged = deepMerge(merged, ms.minimal || {});
   return merged;
 }
@@ -409,7 +429,7 @@ function renderSidebar() {
   if (!app) return;
 
   const gd = el("div", { class: "note info" }, [
-    `Global defaults.yaml: ${Object.keys(app.globalDefaults).length} top-level key(s)`,
+    `base/: ${Object.keys(app.base).length} shared release file(s)`,
   ]);
   sidebar.appendChild(gd);
 
@@ -482,7 +502,7 @@ function renderMicroserviceEditor(main, msName) {
   const header = el("div", { class: "ms-header" }, [
     el("div", {}, [
       el("div", { class: "title", text: isNew ? "New microservice" : msName }),
-      el("div", { class: "path", text: isNew ? `${activeApp().name}/${state.activeNamespace}/` : `${activeApp().name}/${state.activeNamespace}/values/${ms.valuesFileName || msName + "-values.yaml"}` }),
+      el("div", { class: "path", text: isNew ? `${activeApp().name}/${state.activeNamespace}/` : `${activeApp().name}/base/${msName}.yaml + ${state.activeNamespace}/values/…/${msName}.yaml` }),
     ]),
   ]);
   main.appendChild(header);
@@ -491,7 +511,7 @@ function renderMicroserviceEditor(main, msName) {
   const panels = {};
   const tabDefs = isNew
     ? [["form", "Create"]]
-    : [["effective", "Effective (merged)"], ["values", "Values"], ["minimal", "Minimal"], ["form", "Form editor"]];
+    : [["effective", "Effective (merged)"], ["values", "Base (shared)"], ["minimal", "Values (this folder)"], ["form", "Form editor"]];
   for (const [key, label] of tabDefs) {
     const tab = el("div", {
       class: "view-tab" + (state.activeView === key ? " active" : ""),
@@ -548,10 +568,10 @@ async function saveRawValues(msName, which, parsed) {
   const ns = activeNs();
   const ms = ns.microservices[msName];
   if (which === "values") {
-    await writeFileText(ns.valuesDir, ms.valuesFileName || `${msName}-values.yaml`, dumpYaml(parsed));
-    ms.values = parsed;
+    await writeBaseFile(activeApp(), msName, parsed);  // base/ — shared by every folder
   } else {
-    await writeFileText(ns.minimalDir, ms.minimalFileName || `${msName}-values-minimal.yaml`, dumpYaml(parsed));
+    ms.minimalDir = ms.minimalDir || await nsValuesDir(ns);
+    await writeFileText(ms.minimalDir, `${msName}.yaml`, dumpYaml(parsed));
     ms.minimal = parsed;
   }
 }
@@ -681,22 +701,26 @@ function formEditorPanel(msName) {
           if (n) setPath(minimal, `env.${n}.value`, v);
         });
 
-        const base = layerBase();
-        const trimmedValues = subtractDefaults(values, base);
-        const omitted = flattenKeys(values).filter((k) => !flattenKeys(trimmedValues).includes(k));
+        // base/<name>.yaml is SHARED by every folder running this release, so
+        // (like values_editor.py) nothing is trimmed from it against THIS
+        // folder's defaults.yaml — only reported. A new release whose base
+        // already exists reuses it and writes just its own values/ file.
+        const app = activeApp();
+        const reuseBase = isNew && app.base[name] !== undefined;
+        const baseValues = reuseBase ? app.base[name] : deepMerge(app.base[name] || {}, values);
+        const covered = flattenKeys(values).filter((k) => !flattenKeys(subtractDefaults(values, layerBase())).includes(k));
+        const ms = ns.microservices[name] || {};
+        const newMinimal = deepMerge(ms.minimal || {}, minimal);
 
-        await writeFileText(ns.valuesDir, `${name}-values.yaml`, dumpYaml(trimmedValues));
-        await writeFileText(ns.minimalDir, `${name}-values-minimal.yaml`, dumpYaml(minimal));
-        if (isNew) await writeFileText(ns.releasesDir, `${name}.yaml`, dumpYaml({ release: name }));
+        if (!reuseBase) await writeBaseFile(app, name, baseValues);
+        const valuesDir = ms.minimalDir || await nsValuesDir(ns);
+        await writeFileText(valuesDir, `${name}.yaml`, dumpYaml(newMinimal));
 
-        ns.microservices[name] = ns.microservices[name] || {};
-        ns.microservices[name].values = trimmedValues;
-        ns.microservices[name].minimal = minimal;
-        ns.microservices[name].valuesFileName = `${name}-values.yaml`;
-        ns.microservices[name].minimalFileName = `${name}-values-minimal.yaml`;
+        ns.microservices[name] = Object.assign(ms, { values: baseValues, minimal: newMinimal, minimalDir: valuesDir });
 
         let msg = isNew ? `Created ${name}.` : `Saved ${name}.`;
-        if (omitted.length) msg += ` Omitted (already in defaults.yaml): ${omitted.join(", ")}`;
+        if (reuseBase) msg += ` Reused the existing base/${name}.yaml (another folder runs it).`;
+        if (covered.length) msg += ` Already supplied by defaults.yaml (kept in the shared base): ${covered.join(", ")}`;
         showStatus(status, "success", msg);
 
         state.activeMicroservice = name;

@@ -42,7 +42,10 @@ PY = sys.executable
 
 
 def say(msg: str = "") -> None:
-    print(msg, flush=True)
+    # A cp1252 Windows console cannot print everything the converter emits;
+    # a '?' beats a UnicodeEncodeError that hides the real failure.
+    print(msg.encode(sys.stdout.encoding or "utf-8", "replace").decode(sys.stdout.encoding or "utf-8"),
+          flush=True)
 
 
 def banner(step: int, title: str, what_it_does: str) -> None:
@@ -97,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         banner(1, "CONVERT", "raw manifests -> Helm values, and check for conflicts")
         cmd = [PY, str(HERE / "convert_to_universal_chart.py"),
                "--input", str(src), "--output", str(out),
-               "--chart", str(chart), "--verify-fidelity", "--argocd-manifests"]
+               "--chart", str(chart), "--verify-fidelity", "--argocd-manifests", "true"]
         if a.cluster_scoped:
             cmd.append("--cluster-scoped")
         code, output = run(cmd)

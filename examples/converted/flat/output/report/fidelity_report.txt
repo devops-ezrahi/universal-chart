@@ -1,0 +1,45 @@
+Round-trip fidelity report — raw input vs `helm template` of the converted output.
+
+RUN IDENTITY — counts below describe THIS run and no other.
+  run id:         e885d8fd1904-63ddd3d09556
+  converter:      e885d8fd1904  (convert_to_universal_chart.py)
+  input:          63ddd3d09556  (..\examples\converted\flat\input)
+  output:         ..\examples\converted\flat\output
+  Compare two fidelity reports ONLY when their run ids match. A differing
+  run id means the converter, the input, or both changed — so a count that
+  moved between them may be more data rather than a regression, and the two
+  numbers are not evidence about each other. Do not maintain a summary of
+  this report by hand; the breakdown below is generated from these same
+  lines, in this same run, and is the only summary that cannot drift.
+
+Legend:
+  INFO   an object that legitimately moved (shared release, cluster-shared,
+         renamed on collision) — expected, not a loss.
+  ERROR  an object rendered by no release at all, an object with no raw
+         source, or a field the conversion LOST or CHANGED.
+
+Fields the chart derives itself (selector labels, pod-template labels, Helm's
+own metadata labels) are excluded by design — see _fidelity_ignored_path.
+Fields the render ADDED are counted but not listed: a Helm chart filling in a
+Kubernetes default the raw dump omitted is normal and harmless.
+
+objects matched:            8
+  of those, relocated:      4
+fields LOST (raw -> render): 0
+fields CHANGED:             0
+fields ADDED (chart default, informational): 44
+objects in raw but rendered by nothing:      0
+objects rendered with no raw source:         0
+render failures:            0
+dangling references (rename lost a reference): 0
+
+ERROR BREAKDOWN BY CATEGORY (generated from the lines below): none
+
+
+=== dev — 4 raw objects vs 6 rendered ===
+  INFO   ServiceAccount/ms1: created by the chart for release 'ms1' (serviceAccount.create) — no raw source expected
+  INFO   ServiceAccount/ms2: created by the chart for release 'ms2' (serviceAccount.create) — no raw source expected
+
+=== prd — 4 raw objects vs 6 rendered ===
+  INFO   ServiceAccount/ms1: created by the chart for release 'ms1' (serviceAccount.create) — no raw source expected
+  INFO   ServiceAccount/ms2: created by the chart for release 'ms2' (serviceAccount.create) — no raw source expected

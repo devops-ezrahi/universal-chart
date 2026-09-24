@@ -14,17 +14,21 @@ Operates on ONE APP's output tree — what one convert_to_universal_chart.py
       base/<microservice>.yaml             # shared, environment-agnostic —
                                             # reused by every namespace that
                                             # runs this microservice
-      <namespace>/
-        defaults.yaml                      # this namespace only
-        values/<microservice>.yaml         # image tag + literal env only
-      root-application.yaml                # the ArgoCD wiring — generated,
-      root-applicationSet.yaml             # not edited from here
+      <namespace>/                         # or a variant folder, e.g. dev/yellow
+                                            # (--namespace dev/yellow); it deploys
+                                            # into the first path segment
+        defaults.yaml                      # this folder only (plus its group
+                                            # values: color, environment, ...)
+        values/<microservice>.yaml         # image tag + literal env only; may sit
+                                            # in a grouping sub-folder (values/g1/)
+      rootApplication.yaml.txt             # the ArgoCD wiring — generated,
+      rootApplicationSet.yaml              # not edited from here
 
 Commands
 --------
     list        List every namespace + microservice under an app-dir.
     show        Print the fully-merged EFFECTIVE values for one microservice
-                (namespace defaults -> base -> minimal), i.e. exactly what
+                (base -> namespace defaults -> minimal), i.e. exactly what
                 would be deployed — the same three-layer chain the
                 ms-applicationSet chart builds.
     new         Scaffold a brand-new microservice's base + minimal files.
@@ -69,6 +73,8 @@ from convert_to_universal_chart import (  # noqa: E402  (reuse, never redefine)
     DEFAULTS_FILE_NAME,
     VALUES_DIR_NAME,
     dump_yaml,
+    k8s_ns,
+    namespace_dirs_of,
     split_image,
     subtract_defaults,
 )
@@ -99,8 +105,11 @@ def deep_merge(base: dict, override: dict) -> dict:
 
 
 def namespace_dirs(app_dir: Path) -> list[Path]:
-    skip = {"report", "cluster-shared", BASE_DIR_NAME}
-    return sorted(p for p in app_dir.iterdir() if p.is_dir() and p.name not in skip)
+    """Every folder holding a values/ or defaults.yaml: <namespace>/ and its
+    variant folders at any depth (prd/yellow, prd/yellow/eu). Refer to one by
+    its path relative to app_dir ('prd/yellow')."""
+    return [d for _, d in namespace_dirs_of(app_dir)
+            if (d / VALUES_DIR_NAME).is_dir() or (d / DEFAULTS_FILE_NAME).is_file()]
 
 
 def load_layers(app_dir: Path, namespace: str) -> dict:
@@ -119,16 +128,18 @@ def microservice_paths(app_dir: Path, namespace: str, name: str) -> tuple[Path, 
     """
     ns_dir = app_dir / namespace
     base_path = app_dir / BASE_DIR_NAME / f"{name}.yaml"
-    minimal_path = ns_dir / VALUES_DIR_NAME / f"{name}.yaml"
+    # values/ sub-folders only group files: find it wherever it sits.
+    minimal_path = next(iter(sorted((ns_dir / VALUES_DIR_NAME).rglob(f"{name}.yaml"))),
+                        ns_dir / VALUES_DIR_NAME / f"{name}.yaml")
     return base_path, minimal_path
 
 
 def effective_values(app_dir: Path, namespace: str, name: str) -> dict:
-    """The chart's three-layer chain, in order: <ns>/defaults.yaml ->
-    base/<name>.yaml -> <ns>/values/<name>.yaml."""
+    """The chart's three-layer chain, in order: base/<name>.yaml ->
+    <ns>/defaults.yaml -> <ns>/values/<name>.yaml."""
     base_path, minimal_path = microservice_paths(app_dir, namespace, name)
-    merged = load_layers(app_dir, namespace)
-    merged = deep_merge(merged, load_yaml(base_path))
+    merged = load_yaml(base_path)
+    merged = deep_merge(merged, load_layers(app_dir, namespace))
     merged = deep_merge(merged, load_yaml(minimal_path))
     return merged
 
@@ -189,12 +200,12 @@ def cmd_list(args: argparse.Namespace) -> None:
         sys.exit(f"App directory not found: {app_dir}")
     print(f"{app_dir}")
     for ns_dir in namespace_dirs(app_dir):
-        namespace = ns_dir.name
+        namespace = ns_dir.relative_to(app_dir).as_posix()
         values_dir = ns_dir / VALUES_DIR_NAME
         if not values_dir.is_dir():
             continue
         ns_defaults = load_yaml(ns_dir / DEFAULTS_FILE_NAME)
-        names = sorted(p.stem for p in values_dir.glob("*.yaml"))
+        names = sorted(p.stem for p in values_dir.rglob("*.yaml"))
         print(f"  {namespace}/  (namespace defaults.yaml: {len(ns_defaults)} top-level key(s))")
         for name in names:
             shared = "" if (app_dir / BASE_DIR_NAME / f"{name}.yaml").exists() else "  [no base/ file]"
@@ -208,7 +219,7 @@ def cmd_show(args: argparse.Namespace) -> None:
         sys.exit(f"No such microservice: {args.namespace}/{args.name} under {app_dir}")
     merged = effective_values(app_dir, args.namespace, args.name)
     print(f"# Effective values for {args.namespace}/{args.name}")
-    print("# (namespace defaults -> base/ -> namespace's values/, merged in that order)")
+    print("# (base/ -> namespace defaults -> namespace's values/, merged in that order)")
     print(dump_yaml(merged))
 
 
@@ -389,12 +400,12 @@ def cmd_validate(args: argparse.Namespace) -> None:
     rendered = 0
     base_dir = app_dir / BASE_DIR_NAME
     for ns_dir in namespace_dirs(app_dir):
-        namespace = ns_dir.name
+        namespace = ns_dir.relative_to(app_dir).as_posix()
         values_dir = ns_dir / VALUES_DIR_NAME
         if not values_dir.is_dir():
             continue
         ns_defaults_vf = ns_dir / DEFAULTS_FILE_NAME
-        for vf in sorted(values_dir.glob("*.yaml")):
+        for vf in sorted(values_dir.rglob("*.yaml")):
             name = vf.stem
             merged = effective_values(app_dir, namespace, name)
 
@@ -406,8 +417,8 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
             if args.chart:
                 base_vf = base_dir / f"{name}.yaml"
-                value_files = [f for f in (ns_defaults_vf, base_vf) if f.exists()] + [vf]
-                cmd = ["helm", "template", name, args.chart, "--namespace", namespace]
+                value_files = [f for f in (base_vf, ns_defaults_vf) if f.exists()] + [vf]
+                cmd = ["helm", "template", name, args.chart, "--namespace", k8s_ns(namespace)]
                 for f in value_files:
                     cmd += ["-f", str(f)]
                 result = subprocess.run(cmd, capture_output=True, text=True)

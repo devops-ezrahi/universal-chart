@@ -1,0 +1,10 @@
+# Auto-generated MINIMAL override for 'ms2' — image + literal env,
+# plus (if present) this namespace's own structural difference from the
+# shared base/ms2.yaml (see conflicts_and_warnings.txt).
+# This is the client's single source of truth for day-2 tuning; safe to hand-edit
+# and applied LAST (highest precedence) over base/ms2.yaml.
+
+image:
+  repository: registry.example.org/ms2
+  tag: 1.0.0
+replicaCount: 1

@@ -24,7 +24,7 @@ whenever the input was homogeneous enough for them to be common.
 WHAT GUARDS IT NOW
 ------------------
 There is no global defaults layer at all any more. The ms-applicationSet chart
-layers exactly three files per release — <ns>/defaults.yaml -> base/<file> ->
+layers exactly three files per release — base/<file> -> <ns>/defaults.yaml ->
 <ns>/values/<file> — and nothing is subtracted against a layer that is not in
 that chain. These tests hold the general invariant the defect violated rather
 than the specific line that violated it:
@@ -189,7 +189,11 @@ def test_every_value_file_the_chart_references_is_actually_on_disk(tmp_path):
         for vf in source["helm"]["valueFiles"]:
             rel = vf.split("$Values/", 1)[1]
             for values_file in sorted(values_dir.glob("*.yaml")):
+                # ArgoCD's git files generator: .path.path is the file's folder
+                # (repo-relative), .path.filename its name.
                 resolved = re.sub(r"\{\{\s*\.path\.filename\s*\}\}", values_file.name, rel)
+                resolved = re.sub(r"\{\{\s*\.path\.path\s*\}\}",
+                                  values_file.parent.relative_to(out).as_posix(), resolved)
                 assert (out / resolved).exists(), (
                     f"{ns_dir.name}: the chart references {vf} -> {resolved}, "
                     f"which the converter never wrote")
@@ -217,7 +221,7 @@ def test_cluster_scoped_mode_keeps_every_common_value_too(tmp_path):
 
 # ---------------------------------------------------------------------------
 # SECOND CASE — the 'shared' release. It now goes through the SAME three-file
-# chain as every other release (<ns>/defaults.yaml -> base/ -> <ns>/values/),
+# chain as every other release (base/ -> <ns>/defaults.yaml -> <ns>/values/),
 # which is only safe because <ns>/defaults.yaml is computed with the shared
 # release in the pool. common_subtree promotes a key only when it is present
 # with an identical value in EVERY member of that pool, so a defaults layer can

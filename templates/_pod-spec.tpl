@@ -131,7 +131,7 @@ containers:
 {{- /* ── Volumes (map-based) ─────────────────────── */}}
 {{- with .Values.volumes }}
 volumes:
-  {{- include "universal-chart.mapToList" (list . $) | nindent 2 }}
+  {{- include "universal-chart.mapToList" . | nindent 2 }}
 {{- end }}
 
 {{- /* ── Scheduling ───────────────────────────────── */}}
@@ -190,12 +190,12 @@ MAIN CONTAINER — all possible container spec fields
 
   {{- with .Values.ports }}
   ports:
-    {{- include "universal-chart.mapToList" (list . $) | nindent 4 }}
+    {{- include "universal-chart.mapToList" . | nindent 4 }}
   {{- end }}
 
   {{- with .Values.env }}
   env:
-    {{- include "universal-chart.mapToList" (list . $) | nindent 4 }}
+    {{- include "universal-chart.mapToList" . | nindent 4 }}
   {{- end }}
 
   {{- with .Values.envFrom }}
@@ -249,7 +249,7 @@ MAIN CONTAINER — all possible container spec fields
 
   {{- with .Values.volumeMounts }}
   volumeMounts:
-    {{- include "universal-chart.mapToList" (list . $) | nindent 4 }}
+    {{- include "universal-chart.mapToList" . | nindent 4 }}
   {{- end }}
 
   {{- with .Values.volumeDevices }}
@@ -338,7 +338,7 @@ containers:
     {{- end }}
     {{- with .job.env }}
     env:
-      {{- include "universal-chart.mapToList" (list . $) | nindent 6 }}
+      {{- include "universal-chart.mapToList" . | nindent 6 }}
     {{- end }}
     {{- with .job.envFrom }}
     envFrom:
@@ -353,7 +353,7 @@ containers:
     {{- end }}
     {{- with .job.volumeMounts }}
     volumeMounts:
-      {{- include "universal-chart.mapToList" (list . $) | nindent 6 }}
+      {{- include "universal-chart.mapToList" . | nindent 6 }}
     {{- end }}
   {{- range $name, $spec := .job.sidecars }}
   - name: {{ $name }}
@@ -361,7 +361,7 @@ containers:
   {{- end }}
 {{- with .job.volumes }}
 volumes:
-  {{- include "universal-chart.mapToList" (list . $) | nindent 2 }}
+  {{- include "universal-chart.mapToList" . | nindent 2 }}
 {{- end }}
 {{- with .Values.nodeSelector }}
 nodeSelector:

@@ -18,17 +18,25 @@ The large mock dump `namespaces/` is not committed either — generate it with
 
 | Option / behaviour | What it does |
 |---|---|
-| *(default)* flat tree | Only `base/`, `<ns>/defaults.yaml`, `<ns>/values/` are written. |
-| `--argocd-manifests` | Also writes `root-application.yaml`, `root-applicationSet.yaml` and, under `--cluster-scoped`, `cluster-shared/` + `cluster-shared-application.yaml`. A flat run reports these as stale (`--prune` deletes them). |
-| `--exclude PATTERN` / `--keep PATTERN` | Skip whole stacks by case-insensitive substring over object names and label/annotation values (never data). `--keep` wins. Repeatable. |
+| `--argocd-manifests true` | Also writes the Argo CD wiring: `rootApplicationSet.yaml` + `rootApplication.yaml.txt` at the tree root (plus, under `--cluster-scoped`, `cluster-shared-application.yaml`). Off by default: then only `base/`, `<folder>/defaults.yaml`, `<folder>/values/` (and `cluster-shared/values/` under `--cluster-scoped`) are written, and wiring left by an earlier run is reported stale. A bare `--argocd-manifests` means `true`. The root Application is `.txt` on purpose — you apply it by hand, and no directory apply (Argo CD's included) ever picks it up. Files under the old names `root-application.yaml` / `root-applicationSet.yaml` are reported stale (`--prune` deletes them). |
+| `--exclude PATTERN` / `--keep PATTERN` | Skip whole stacks by case-insensitive substring over object names and label/annotation values (never data). `--keep` wins. Repeatable or comma-separated (`--exclude kafka,zookeeper`). |
+| `--env-group NAME=tok[:VALUE],...` | A release whose file name carries one of these words moves into a folder of that name inside its namespace: `dev/ms1-yellow.yaml` → `dev/yellow/values/ms1.yaml` (release `ms1`); files without one stay in `dev/values/`. Values of one release that differ only by these words (plus the namespace name) become ONE templated value in `base/` — `filter.dev.yellow.example.org` → `filter.{{ .Release.Namespace }}.{{ .Values.color }}.example.org` — and each folder's `defaults.yaml` says `color: yellow`. A second group nests (`dev/yellow/eu/`). `--env-group namespace` enables only the namespace axis; `--interactive` asks before each combination. Repeatable. The chart renders every value with `tpl`, so the output renders back byte-for-byte (`--verify-fidelity --fidelity-strict` proves it). |
+| Variant folders | `dev/yellow/` and `dev/black/` (made by `--env-group`, or already in the input — detected on their own) both deploy into namespace `dev` and share the one `base/`. Argo CD names gain the folder (`ms1-dev-yellow`); releases of two folders in one namespace are checked against each other. The root ApplicationSet finds every folder through its `defaults.yaml`. `values_editor.py` handles it too (`--namespace dev/yellow`). |
+| `values/` sub-folders | `values/group1/ms1.yaml` is only grouping: the release is still `ms1`, reads `base/ms1.yaml`, and a re-run rewrites the file where it is. A file name may appear once per namespace folder (verification fails on duplicates). With Argo CD's new git-file globbing set the ms-applicationSet `valuesGlob` to `**/*.yaml`. |
+| `--env-suffixes tok,tok` | Strip these words from anywhere in a file name, replacing the default rule (strip a trailing suffix equal to the namespace's). They never make folders: values differing by them become `{{ .Values.environment }}` (`env` is the chart's env-var map), with `environment: dev` in every folder's `defaults.yaml`. A word given to both `--env-suffixes` and `--env-group` counts as a suffix. |
+| `--root-set-name`, `--argocd-destination-namespace`, `--argocd-cluster` | Name the root ApplicationSet; alias of `--argocd-namespace`; deploy to a registered cluster *name* instead of `--destination-server`'s URL. |
+| `{{` in source data | Escaped in every values file (`{{ "{{" }}`) so the chart's `tpl` pass leaves an Alertmanager/Go template in a ConfigMap literal. |
 | Shared promotion | ConfigMaps/Secrets/etc. declared byte-identically by several microservices move into the namespace `shared` release under their original name (Services/Routes excluded). Recorded in `report/renames.json`. |
 | Cross-reference warnings | Pods referencing a ConfigMap/Secret/SA nobody creates, an SA with no RoleBinding, or a missing NetworkAttachmentDefinition. Report-only. |
-| Other | PDB, ServiceMonitor and NetworkAttachmentDefinition pass through `extraDeploy` verbatim; `initContainerOrder` preserves init container order; a PVC `volumeName` whose PV is not in the dump is dropped; redis/emptyDir/nodePort lint warnings; multi-line strings render as `\|` blocks. |
+| NetworkPolicy / ServiceMonitor | **Not converted.** Dropped at load time with one line per object in `report/conflicts_and_warnings.txt` (`NetworkPolicy/<name>: dropped — ...`); never in values or `extraDeploy`, and the fidelity / name checks do not count them as lost. The chart's own `networkPolicies` / `serviceMonitor` keys still work for hand-written values. `namespace_importer.py` no longer fetches them. |
+| Unused ServiceAccount | A ServiceAccount in a microservice file that none of its pods runs as (e.g. a SecretStore's Vault SA) goes to `extraDeploy` instead of becoming the chart's `serviceAccount` — which would move the pods onto it. Pods on `default` stay there (`serviceAccount.create: false`). |
+| Other | PDB and NetworkAttachmentDefinition pass through `extraDeploy` verbatim; `initContainerOrder` preserves init container order; a PVC `volumeName` whose PV is not in the dump is dropped; redis/emptyDir/nodePort lint warnings; multi-line strings render as `\|` blocks. |
 
 ## Files
 
 | File | Purpose |
 |---|---|
+| `namespace_importer.py` | Pulls a namespace (or one app / one resource / a list of topology URLs) from a live cluster with `oc` and writes the converter's input: `<output>/<namespace>/<microservice>.yaml` + `shared.yaml`, cleaned of runtime metadata. An ExternalSecret brings its SecretStore/ClusterSecretStore (`spec.secretStoreRef`) along, with the store's Vault CA ConfigMap/Secret (`caProvider`) and ServiceAccount (`auth.kubernetes.serviceAccountRef`); each goes to `shared.yaml` only when more than one microservice file needs it, otherwise into that microservice's file — written once either way. |
 | `convert_to_universal_chart.py` | The whole pipeline in one script: raw YAML in, Helm values + the two root ArgoCD manifests out, then (unless `--skip-verify`) every generated release is rendered for real with `helm template` and checked so no two releases claim the same Kubernetes resource. |
 | `values_editor.py` | Values-authoring/editing CLI for microservices you're adding or tuning **by hand** (not converted from a raw dump) — defaults.yaml-aware, so it never asks you to duplicate what a lower layer already covers. See [values_editor.py — hand-authoring microservices](#values_editorpy--hand-authoring-microservices). |
 | `ui/multi-app-manager.html` | The same idea as `values_editor.py`, as a browser UI — open multiple apps' output trees side by side, browse/edit visually, no install. See [ui/multi-app-manager.html — browser UI](#uimulti-app-managerhtml--browser-ui). |
@@ -57,17 +65,22 @@ output/
     <release-slug>.yaml                # usually just the microservice's own name — see release-slug below
   <namespace>/                         # one directory per namespace — its EXISTENCE is what deploys it
     defaults.yaml                      # NAMESPACE defaults — identical across every release in this
-                                        # namespace, the 'shared' release included
-    values/                            # image + literal env + minor per-namespace tweaks ONLY — FLAT,
+                                        # namespace, the 'shared' release included, plus group values
+                                        # (environment: dev) from --env-suffixes / --env-group
+    values/                            # image + literal env + minor per-namespace tweaks ONLY —
                                         # hand-editable, one file per release-slug. Its existence is what
                                         # deploys the release: this directory IS the fan-out.
       <release-slug>.yaml
-  root-application.yaml                # only with --argocd-manifests — the ONE object you apply by hand
-  root-applicationSet.yaml             # only with --argocd-manifests — one Application per namespace directory
-  cluster-shared/                      # only with --argocd-manifests AND --cluster-scoped
+      <group>/<release-slug>.yaml      # optional grouping sub-folder; the release is still <release-slug>
+    <variant>/                         # optional variant folder (dev/yellow, nested dev/yellow/eu) —
+      defaults.yaml                    # same shape, deploys into <namespace>, shares base/; its
+      values/<release-slug>.yaml       # defaults.yaml carries the group value (color: yellow)
+  rootApplication.yaml.txt             # --argocd-manifests true: the ONE object you apply by hand (.txt: never picked up by a directory apply)
+  rootApplicationSet.yaml              # --argocd-manifests true: one Application per namespace (and variant) folder
+  cluster-shared/                      # only with --cluster-scoped
     values/
       cluster-shared-values.yaml       # ClusterRole/ClusterRoleBinding/StorageClass/PV/SCC/ClusterSecretStore, deduped globally
-  cluster-shared-application.yaml      # only with --argocd-manifests AND --cluster-scoped
+  cluster-shared-application.yaml      # only with --cluster-scoped
   report/
     conversion_report.json
     conflicts_and_warnings.txt         # every auto-resolved naming conflict, explained
@@ -81,12 +94,27 @@ The entire deployment wiring is the two files at the tree root, plus the
 chart that lives in the Universal Chart repo:
 
 ```
-kubectl apply -f output/root-application.yaml        # once, by hand
-  └─ deploys root-applicationSet.yaml                # git directories generator over output/*
-       └─ one Application per <namespace>/ directory, each deploying ms-applicationSet
-            └─ one ApplicationSet per namespace       # git files generator over <ns>/values/*.yaml
+kubectl apply -f output/rootApplication.yaml.txt     # once, by hand
+  └─ deploys rootApplicationSet.yaml                 # git directories generator over output/*
+       │                                             # (git files generator on '**/defaults.yaml'
+       │                                             #  when variant folders exist)
+       └─ one Application per <namespace>/ folder, each deploying ms-applicationSet
+            └─ one ApplicationSet per folder          # git files generator over <folder>/values/<valuesGlob>
                  └─ one Application per release, rendering the Universal Chart
 ```
+
+`kubectl apply -f` reads a file it is given by name whatever its extension; it
+filters on `.yaml`/`.yml`/`.json` only while walking a directory, so
+`kubectl apply -f output/` skips it (checked with kubectl 1.36). Argo CD's
+directory source applies the same filter,
+which is why the root Application is `.txt`: it can sit in the repo it
+bootstraps without Argo CD ever deploying or managing it.
+
+The root ApplicationSet passes the `ms-applicationSet` chart `namespace`,
+`folder` (the variant folder path, e.g. `prd/yellow`; empty for a plain
+namespace), `originRepoURL`/`originBranch`/`originPath` and, with
+`--argocd-cluster`, `destinationName`. `valuesGlob` (default `*.yaml`) is the
+chart's own knob for Argo CD's new git-file globbing (`**/*.yaml`).
 
 Three consequences worth stating plainly:
 
@@ -95,7 +123,7 @@ Three consequences worth stating plainly:
 * **The layering rules live in the chart, not in this output.** One place,
   versioned alongside the chart that applies them, instead of a copy baked into
   every values repo this converter ever writes.
-* **`root-application.yaml` names the files it deploys outright** and does not
+* **`rootApplication.yaml.txt` names the files it deploys outright** and does not
   recurse. ArgoCD matches directory globs against paths relative to `source.path`
   and a single `*` spans directory levels
   ([argo-cd#7319](https://github.com/argoproj/argo-cd/issues/7319)), so a pattern
@@ -176,21 +204,30 @@ release being compared — never a majority, never "most of them." Helm merges
 maps, so if defaults.yaml supplied a value that some release never actually
 had, that release would silently inherit it. Requiring 100% agreement makes
 that impossible: nothing a release didn't already effectively have gets added
-back by a lower-precedence file. Comparison is recursive per-key, not
+by the defaults layer. Comparison is recursive per-key, not
 whole-block — `resources.requests.cpu` can be promoted even if
 `resources.limits` differs per release, and lists/scalars must match exactly
 (never partially merged).
 
 Layering order, built by the `ms-applicationSet` chart (lowest → highest
-precedence): `<namespace>/defaults.yaml` → `base/<release-slug>.yaml` →
-`<namespace>/values/<release-slug>.yaml`. Every release goes through that one
-chain.
+precedence): `base/<release-slug>.yaml` → `<folder>/defaults.yaml` →
+`<folder>/values/<release-slug>.yaml`. Every release goes through that one
+chain. (It used to be defaults → base → values; defaults now sits above the
+shared `base/`, so a namespace's common value wins over the cross-namespace
+base.)
+
+Every value is rendered through Helm's `tpl` by the chart, which is what lets
+`base/` hold `{{ .Values.environment }}` / `{{ .Values.color }}` /
+`{{ .Release.Namespace }}` and each folder's `defaults.yaml` fill them in. The
+flip side: a literal `{{` coming from the source (an Alertmanager template in a
+ConfigMap) is written escaped as `{{ "{{" }}` in the values files, and anything
+you add by hand needs the same escaping.
 
 ### Why `shared` is in the defaults pool
 
 `shared.yaml` is meant to be a namespace-wide resource pool — the natural
 place to put a Route/Ingress/PVC/ServiceAccount that several microservices
-rely on, not just ConfigMaps and NetworkPolicies. That only works if `shared`
+rely on, not just ConfigMaps. That only works if `shared`
 renders from *exactly* what it declares, nothing else.
 
 Because there is now one fixed chain for every release, `shared` reads
@@ -212,7 +249,8 @@ by construction. The cost is a smaller defaults layer in any namespace that
 has a `shared.yaml` — the right trade, since a defaults file is an
 optimisation and rendering objects nobody asked for is a defect.
 
-There is no global (tree-root) `defaults.yaml`. The chart layers three files
+There is no global (tree-root) `defaults.yaml`. The chart layers three files —
+`base/<file>` → `<folder>/defaults.yaml` → `<folder>/values/<file>` —
 and none of them is a tree-root one, so such a file would be applied by
 nothing; and computing one safely would mean intersecting an entire run's
 microservices with every namespace's `shared` release, which leaves
@@ -239,7 +277,7 @@ supplies.
 python values_editor.py list --app-dir output/payments-app
 
 # Print the fully-merged EFFECTIVE values for one microservice — global
-# defaults -> namespace defaults -> base/ -> this namespace's values/,
+# base/ -> namespace defaults -> this namespace's values/,
 # exactly what would actually deploy.
 python values_editor.py show --app-dir output/payments-app \
     --namespace dev --name checkout
@@ -283,11 +321,13 @@ anything else stays a plain string.
 
 ## ui/multi-app-manager.html — browser UI
 
-> **Known gap:** this file has not yet been updated for the `base/` +
-> per-namespace `values/` layout described above — it still reads/writes the
-> older `values/`+`values-minimal/` per-namespace shape. Use `values_editor.py`
-> for now if you're hand-authoring against a freshly-converted app; the UI is
-> a planned follow-up.
+It reads the converter's tree: the shared `base/`, and every folder —
+namespace (`dev/`) or variant (`dev/yellow/`) — with its `defaults.yaml` and
+`values/` (group sub-folders included). **Base (shared)** edits
+`base/<release>.yaml`, which every folder running that release reads;
+**Values (this folder)** edits the folder's own file where it sits. A new
+microservice whose `base/` file already exists reuses it and only writes the
+folder's values file, like `values_editor.py new`.
 
 The same idea as `values_editor.py`, as a single self-contained HTML file —
 open it directly in **Chrome or Edge** (no server, no install, no build
@@ -307,8 +347,8 @@ Within an app: the sidebar lists namespaces (with how many keys each
 **"+ New microservice"** entry. Selecting a microservice gives you four
 views:
 
-- **Effective (merged)** — read-only, exactly what `values_editor.py show`
-  prints: namespace defaults → base → minimal, merged.
+- **Effective (merged)** — read-only, meant to match `values_editor.py show`
+  (base → namespace defaults → values, the same chain the chart builds).
 - **Values** / **Minimal** — the raw YAML for that file, editable directly,
   saved straight back to disk.
 - **Form editor** — structured fields mirroring `values_editor.py new`'s
@@ -351,7 +391,7 @@ node ui/e2e-test.js <path-to-an-app-dir-copy>
 
 Several Universal Chart resource kinds render with the **raw values map-key**
 as the Kubernetes resource name (no `<release>-` prefix): ConfigMap, Secret,
-PVC, NetworkPolicy, Role, RoleBinding, and (cluster-scoped) ClusterRole,
+PVC, Role, RoleBinding, SecretStore, ExternalSecret, and (cluster-scoped) ClusterRole,
 ClusterRoleBinding, StorageClass, PersistentVolume, SecurityContextConstraints.
 Those are exactly the ones that collide once every microservice becomes its
 own Helm release. The converter resolves this deterministically:
@@ -453,7 +493,7 @@ python generate_mock_environment.py --output namespaces --seed 42
 #      - renders every generated release for real with `helm template` and
 #        checks no two releases claim the same Kubernetes object
 python convert_to_universal_chart.py --input namespaces --output output \
-    --chart .. --argocd-manifests \
+    --chart .. --argocd-manifests true \
     --chart-repo-url  https://github.com/devops-ezrahi/universal-chart.git \
     --values-repo-url https://git.example.com/gitops/microservices-values.git
 ```
@@ -470,8 +510,8 @@ Converted 350 microservices across 5 namespaces.
 Auto-resolved conflicts / warnings: 55 (see output/report/conflicts_and_warnings.txt)
 Base (shared) values written under: output/base/
 Minimal values written under:       output/<namespace>/values/
-ArgoCD wiring:                      output/root-application.yaml + output/root-applicationSet.yaml
-Bootstrap with:                     kubectl apply -f output/root-application.yaml
+ArgoCD wiring:                      output/rootApplication.yaml.txt + output/rootApplicationSet.yaml
+Bootstrap with:                     kubectl apply -f output/rootApplication.yaml.txt
 
 Verifying against .. — rendering every release with `helm template`...
 Rendered 356 releases.
@@ -505,11 +545,11 @@ script exits non-zero.
    `--values-repo-url`, preserving the layout exactly as generated. The
    directory names ARE the namespace names; the root ApplicationSet discovers
    them by listing the repo.
-3. `kubectl apply -f output/root-application.yaml` against your ArgoCD
-   namespace. That is the whole bootstrap. It deploys
-   `root-applicationSet.yaml`, which creates one Application per namespace
-   directory, each rendering the `ms-applicationSet` chart, which fans out
-   over that namespace's `values/*.yaml`. Nothing else is applied by hand,
+3. `kubectl apply -f output/rootApplication.yaml.txt` against your ArgoCD
+   namespace (name the file explicitly — see above). That is the whole
+   bootstrap. It deploys `rootApplicationSet.yaml`, which creates one
+   Application per namespace (and variant) folder, each rendering the
+   `ms-applicationSet` chart, which fans out over that folder's `values/`. Nothing else is applied by hand,
    ever — adding a namespace or a microservice afterwards is a git commit.
 4. Set `--argocd-project`, `--argocd-namespace` and `--destination-server` to
    match your ArgoCD install. They default to `default`, `argocd` and the
@@ -535,17 +575,25 @@ python convert_to_universal_chart.py --input namespaces --output output
 The mock fixture above exists to stress-test the converter at scale; onboarding a
 real app follows the exact same input contract, just with real data:
 
-1. **Dump the namespace's desired state.** For each namespace you're onboarding:
+1. **Dump the namespace's desired state.** The easy way is
+   `namespace_importer.py`, which splits the namespace into per-microservice
+   files and a `shared.yaml` for you (and brings each ExternalSecret's
+   SecretStore, Vault CA and ServiceAccount along):
+   ```bash
+   python namespace_importer.py -n <namespace> -o namespaces [--kubeconfig <file>]
+   ```
+   By hand, for each namespace you're onboarding:
    ```bash
    oc get deployment,statefulset,daemonset,service,route,configmap,secret,pvc,\
-   serviceaccount,role,rolebinding,networkpolicy,hpa,pdb,ingress,servicemonitor,\
+   serviceaccount,role,rolebinding,hpa,pdb,ingress,secretstore,externalsecret,\
    cronjob,job -n <namespace> -o yaml > namespaces/<namespace>/<microservice>.yaml
    ```
+   (NetworkPolicies and ServiceMonitors are not converted; leave them out.)
    Do this **per microservice** if the namespace hosts several distinct apps (one
    file per deployable unit), using label selectors (`-l app=<name>`) to split a
    namespace-wide dump into per-microservice files. Anything genuinely shared by
    every microservice in the namespace (a CA-bundle ConfigMap, a shared
-   NetworkPolicy, a namespace-wide RoleBinding) goes in `namespaces/<namespace>/shared.yaml`
+   SecretStore, a namespace-wide RoleBinding) goes in `namespaces/<namespace>/shared.yaml`
    instead — don't duplicate it into every microservice file, the converter
    already handles de-duplication FROM `shared.yaml` but can't guess which
    raw-dump copy was "the shared one" if you don't tell it via that filename.
@@ -568,7 +616,7 @@ real app follows the exact same input contract, just with real data:
    `--input` at your real `namespaces/` tree:
    ```bash
    python convert_to_universal_chart.py --input namespaces --output output \
-       --chart .. --argocd-manifests \
+       --chart .. \
        --chart-repo-url  https://<your-git-host>/gitops/universal-chart.git \
        --values-repo-url https://<your-git-host>/gitops/microservices-values.git
    ```
@@ -591,10 +639,12 @@ real app follows the exact same input contract, just with real data:
    - `[cluster-scoped]` conflicts with DIFFERING content — these are never
      auto-resolved and need a human decision about which definition is correct
      before you deploy either namespace.
-   - `chart supports one managed ServiceAccount per release` — extra
-     ServiceAccounts land in `extraDeploy`; double check nothing downstream
-     (a RoleBinding subject, a pod's `serviceAccountName`) still expects the
-     chart to manage it directly.
+   - `chart supports one managed ServiceAccount per release` / `no pod in this
+     release runs as it` — extra ServiceAccounts land in `extraDeploy`; double
+     check nothing downstream (a RoleBinding subject, a pod's
+     `serviceAccountName`) still expects the chart to manage it directly.
+   - `NetworkPolicy/<name>: dropped` / `ServiceMonitor/<name>: dropped` — not
+     converted by design; recreate them on the target platform if needed.
 
 5. **Let the render-verification step do its job** (it runs automatically unless
    you passed `--skip-verify`) — if it exits non-zero, do not proceed to step 6
@@ -602,17 +652,16 @@ real app follows the exact same input contract, just with real data:
 
 6. **Review the generated values by hand once, for the first onboarding of any
    given app.** In particular:
-   - `<microservice>-values.yaml` is marked auto-generated / do-not-edit — treat
-     it as such and re-run the converter instead of hand-patching it.
-   - `<microservice>-values-minimal.yaml` is explicitly the safe, hand-editable
+   - `base/<slug>.yaml` is auto-generated / do-not-edit — treat it as such
+     and re-run the converter instead of hand-patching it.
+   - `<folder>/values/<slug>.yaml` is explicitly the safe, hand-editable
      override layer (image tag + literal env vars only) — this is where day-2
      changes belong (e.g. a config value a developer needs to tweak without
      re-running the whole conversion).
-   - `defaults.yaml` (global) and `<namespace>/defaults.yaml` are also
-     auto-generated / do-not-edit — see [defaults.yaml — factoring out
-     what's common](#defaultsyaml--factoring-out-whats-common). If a value
-     you expected in a microservice's own file isn't there, check both
-     defaults files before assuming it's missing.
+   - `<folder>/defaults.yaml` is also auto-generated / do-not-edit — see
+     [defaults.yaml — factoring out what's common](#defaultsyaml--factoring-out-whats-common).
+     If a value you expected in a microservice's own file isn't there, check
+     it (and `base/`) before assuming it's missing.
    - If the app needs something the converter has no first-class handling for
      (a CRD, an unusual resource kind), it'll have been passed through as raw
      YAML under `extraDeploy` with a warning — confirm that's actually fine

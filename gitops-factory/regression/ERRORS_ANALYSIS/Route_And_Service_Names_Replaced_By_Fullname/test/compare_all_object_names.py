@@ -42,12 +42,12 @@ for ns_dir in sorted(d for d in glob.glob(os.path.join(OUT, "*")) if os.path.isd
         rel = os.path.splitext(os.path.basename(vf))[0]
         # The ms-applicationSet chart layers the SAME three files for every
         # release the namespace's values/ directory holds, 'shared' included:
-        # <ns>/defaults.yaml -> base/<slug>.yaml -> <ns>/values/<slug>.yaml.
+        # base/<slug>.yaml -> <ns>/defaults.yaml -> <ns>/values/<slug>.yaml.
         # That is safe for 'shared' because the defaults file is computed with
         # the shared release in the pool, so it can never supply a key shared
         # did not already declare identically.
-        chain = [os.path.join(ns_dir, "defaults.yaml"),
-                 os.path.join(OUT, "base", rel + ".yaml"), vf]
+        chain = [os.path.join(OUT, "base", rel + ".yaml"),
+                 os.path.join(ns_dir, "defaults.yaml"), vf]
         files = [f for f in chain if os.path.exists(f)]
         args = ["helm", "template", rel, CHART]
         for f in files:

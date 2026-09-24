@@ -115,12 +115,9 @@ def test_showcase_has_no_orphaned_or_invented_objects(tmp_path):
     cluster-shared release, which is what the source cluster actually had.
 
     The namespace-scoped conflict is asserted directly by the test below, so
-    switching modes here does not sweep it under the carpet.
-
-    --argocd-manifests too: cluster-shared/ is part of the ArgoCD wiring, which
-    the converter only writes on request since the fork merge."""
+    switching modes here does not sweep it under the carpet."""
     counts, report = _convert_with_fidelity(
-        SHOWCASE_INPUT, tmp_path / "out", extra=("--cluster-scoped", "--argocd-manifests"))
+        SHOWCASE_INPUT, tmp_path / "out", extra=("--cluster-scoped",))
     problems = {k: v for k, v in counts.items() if v != 0}
     assert not problems, f"showcase fidelity regressions: {problems}\n\n{report}"
 

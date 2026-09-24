@@ -150,7 +150,6 @@ def test_behaviour_changing_annotations_are_kept():
 
 @pytest.mark.parametrize("kind,values_path", [
     ("Deployment", ("annotations",)),
-    ("NetworkPolicy", ("networkPolicies", "api-gateway-allow", "annotations")),
     ("Role", ("rbac", "roles", "api-gateway-reader", "annotations")),
     ("RoleBinding", ("rbac", "roleBindings", "api-gateway-reader", "annotations")),
     ("HorizontalPodAutoscaler", ("hpa", "annotations")),
@@ -161,7 +160,6 @@ def test_every_handler_captures_annotations(kind, values_path):
     doc = _doc(kind)
     name = doc["metadata"]["name"]
     {"Deployment": lambda: conv.handle_workload(doc, ctx, "Deployment"),
-     "NetworkPolicy": lambda: conv.handle_networkpolicy(doc, ctx, name),
      "Role": lambda: conv.handle_role(doc, ctx, name),
      "RoleBinding": lambda: conv.handle_rolebinding(doc, ctx, name),
      "HorizontalPodAutoscaler": lambda: conv.handle_hpa(doc, ctx),

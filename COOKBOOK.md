@@ -72,6 +72,28 @@ Two consequences worth knowing:
   that both define `rbac.clusterRoles.my-role` are fighting over ONE cluster
   object. The converter refuses the run and tells you to deploy it once.
 
+### Rule 3 — every value is rendered with `tpl`; escape a literal `{{`
+
+Before any template reads `.Values`, the chart runs every string value through
+Helm's `tpl` once (`universal-chart.renderValues`; `extraDeploy` is rendered by
+its own template). So values may use `{{ .Release.Namespace }}` or any other
+value, which is how a gitops-factory `base/` file says
+`host: api.{{ .Values.environment }}.example.org` and each folder's
+`defaults.yaml` sets `environment: dev`.
+
+A value that must CONTAIN `{{` literally (an Alertmanager/Go template in a
+ConfigMap) is written escaped, or `tpl` will try to execute it:
+
+```yaml
+configMaps:
+  alert-templates:
+    data:
+      slack.tmpl: '{{ "{{" }} define "slack.title" }}...'   # renders {{ define "slack.title" }}...
+```
+
+A rendered value is always a string (`"3"`, `"true"`), as if quoted.
+gitops-factory's converter does this escaping for you.
+
 ### Values keys added recently — quick reference
 
 Each is documented in its own section; this is the index.
@@ -1404,6 +1426,10 @@ pdb:
 
 ## 27. NetworkPolicy
 
+> gitops-factory's converter does **not** generate `networkPolicies` from a raw
+> dump — NetworkPolicies in the source are deliberately dropped (one line each in
+> `conflicts_and_warnings.txt`). The key below is for values you write yourself.
+
 Restrict traffic at the pod level:
 
 ```yaml
@@ -1498,6 +1524,10 @@ rbac:
 ---
 
 ## 29. ServiceMonitor
+
+> gitops-factory's converter does **not** generate `serviceMonitor` from a raw
+> dump — ServiceMonitors in the source are deliberately dropped. The key below is
+> for values you write yourself.
 
 Tells Prometheus to scrape your app:
 
@@ -2057,9 +2087,15 @@ clusterSecretStores:
 > reasoning as `storageClasses`/`scc` elsewhere in this chart) — only put an entry
 > here if THIS release is genuinely meant to own that cluster-wide definition (e.g.
 > a platform/namespace-shared release), not per application microservice. If you're
-> generating values with [`gitops-factory`](https://github.com/devops-ezrahi/gitops-factory)'s `convert_to_universal_chart.py`, route
-> `ClusterSecretStore` through its cluster-scoped dedup path rather than declaring
-> it per microservice.
+> generating values with [`gitops-factory`](gitops-factory/)'s `convert_to_universal_chart.py`, route
+> `ClusterSecretStore` through its cluster-scoped dedup path (`--cluster-scoped`)
+> rather than declaring it per microservice.
+>
+> `gitops-factory/namespace_importer.py` pulls the store an `ExternalSecret`
+> references (`spec.secretStoreRef`) together with its Vault CA
+> (`caProvider` ConfigMap/Secret) and its `auth.kubernetes.serviceAccountRef`
+> ServiceAccount, and files them in the namespace's `shared.yaml` when more than
+> one microservice uses the store, otherwise in that microservice's own file.
 
 ### ExternalSecret — sync remote keys into a real Secret
 

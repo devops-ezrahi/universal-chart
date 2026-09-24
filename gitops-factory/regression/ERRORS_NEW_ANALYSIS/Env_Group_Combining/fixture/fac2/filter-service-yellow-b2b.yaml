@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: filter-service-yellow-b2b
+  namespace: fac2
+  labels:
+    app: filter-service-yellow-b2b
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: filter-service-yellow-b2b
+  template:
+    metadata:
+      labels:
+        app: filter-service-yellow-b2b
+    spec:
+      containers:
+        - name: filter
+          image: registry.example.org/filter:1.4.2
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: COLOR
+              value: yellow
+            - name: SELF_URL
+              value: http://api.fac2.svc:8080
+            - name: NEIGHBOUR_URL
+              value: http://db.fac1.svc:5432
+          envFrom:
+            - configMapRef:
+                name: filter-alerts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: filter-service-yellow-b2b
+  namespace: fac2
+spec:
+  selector:
+    app: filter-service-yellow-b2b
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: filter-service-yellow-b2b
+  namespace: fac2
+spec:
+  host: filter.fac2.yellow.example.org
+  to:
+    kind: Service
+    name: filter-service-yellow-b2b
+  port:
+    targetPort: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filter-alerts
+  namespace: fac2
+data:
+  ALERT: "{{ $labels.pod }} is down in fac2"

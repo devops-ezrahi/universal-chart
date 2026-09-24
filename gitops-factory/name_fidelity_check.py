@@ -18,6 +18,11 @@ from collections import defaultdict
 
 import yaml
 
+from convert_to_universal_chart import (  # the converter's own tree rules, never re-derived
+    BASE_DIR_NAME, CLUSTER_SHARED_DIR_NAME, DEFAULTS_FILE_NAME, VALUES_DIR_NAME,
+    is_input_ns, k8s_ns, namespace_dirs_of, values_files,
+)
+
 # Objects the chart is entitled to create even though no raw manifest declares
 # them, and objects the raw dump carries that are never desired state. Both
 # sides are excluded from the comparison so it reports NAMING changes rather
@@ -25,6 +30,10 @@ import yaml
 CHART_CREATED_KINDS = {"ServiceAccount"}
 TRANSIENT_KINDS = {"ReplicaSet", "Pod", "Endpoints", "EndpointSlice", "Event",
                    "ControllerRevision", "Binding"}
+# Kinds the converter drops on purpose (its DROPPED_KINDS, logged one line per
+# object in conflicts_and_warnings.txt) — absent from the render by design, so
+# not a naming change.
+DROPPED_KINDS = {"NetworkPolicy", "ServiceMonitor"}
 # Kinds with no namespace. They are compared once, globally — see main().
 CLUSTER_SCOPED_KINDS = {"ClusterRole", "ClusterRoleBinding", "StorageClass",
                         "PersistentVolume", "SecurityContextConstraints",
@@ -32,15 +41,17 @@ CLUSTER_SCOPED_KINDS = {"ClusterRole", "ClusterRoleBinding", "StorageClass",
 
 
 def raw_names(input_dir: pathlib.Path):
+    # Keyed by KUBERNETES namespace: variant folders (dev/yellow) are 'dev'.
     out = defaultdict(set)
-    for ns_dir in sorted(p for p in input_dir.iterdir() if p.is_dir()):
+    for key, ns_dir in namespace_dirs_of(input_dir, is_input_ns):
+        ns = k8s_ns(key)
         for f in sorted(ns_dir.glob("*.yaml")):
             for d in yaml.safe_load_all(f.read_text(encoding="utf-8")):
-                if not d or d.get("kind") in TRANSIENT_KINDS:
+                if not d or d.get("kind") in TRANSIENT_KINDS | DROPPED_KINDS:
                     continue
                 meta = d.get("metadata") or {}
                 if meta.get("name"):
-                    out[ns_dir.name].add((d["kind"], meta["name"]))
+                    out[ns].add((d["kind"], meta["name"]))
                 # Container names live inside the pod spec and are addressed by
                 # name too (kubectl logs -c, metrics labels), so they count.
                 for path in (("spec", "template", "spec"),
@@ -51,41 +62,40 @@ def raw_names(input_dir: pathlib.Path):
                     if isinstance(cur, dict):
                         for c in (cur.get("containers") or []):
                             if c.get("name"):
-                                out[ns_dir.name].add(("Container", c["name"]))
+                                out[ns].add(("Container", c["name"]))
     return out
 
 
 def rendered_names(out_dir: pathlib.Path, chart: pathlib.Path):
     out = defaultdict(set)
-    for ns_dir in sorted(p for p in out_dir.iterdir() if p.is_dir()):
-        vdir = ns_dir / "values"
-        if not vdir.is_dir():
-            continue
-        for vf in sorted(vdir.glob("*.yaml")):
+    # cluster-shared/ is not a namespace folder but holds the cluster-scoped
+    # objects of a --cluster-scoped run, which are compared globally.
+    folders = namespace_dirs_of(out_dir)
+    if (out_dir / CLUSTER_SHARED_DIR_NAME).is_dir():
+        folders.append((CLUSTER_SHARED_DIR_NAME, out_dir / CLUSTER_SHARED_DIR_NAME))
+    for key, ns_dir in folders:
+        ns = k8s_ns(key)
+        for vf in values_files(ns_dir / VALUES_DIR_NAME):
             slug = vf.stem
-            chain = []
-            if not slug.endswith("shared"):
-                for d in (out_dir / "defaults.yaml", ns_dir / "defaults.yaml"):
-                    if d.exists():
-                        chain.append(d)
-            base = out_dir / "base" / f"{slug}.yaml"
-            if base.exists():
-                chain.append(base)
-            chain.append(vf)
+            # Same chain the ApplicationSet builds, for every release (shared
+            # included): base -> <folder>/defaults.yaml -> values. Rendered IN
+            # the namespace, so {{ .Release.Namespace }} resolves as deployed.
+            chain = [f for f in (out_dir / BASE_DIR_NAME / f"{slug}.yaml",
+                                 ns_dir / DEFAULTS_FILE_NAME, vf) if f.exists()]
             args = []
             for f in chain:
                 args += ["-f", str(f)]
-            proc = subprocess.run(["helm", "template", slug, str(chart), *args],
-                                  capture_output=True, text=True)
+            proc = subprocess.run(["helm", "template", slug, str(chart), "--namespace", ns, *args],
+                                  capture_output=True, text=True, encoding="utf-8")
             if proc.returncode != 0:
-                print(f"  RENDER FAILED {ns_dir.name}/{slug}:\n{proc.stderr}")
+                print(f"  RENDER FAILED {key}/{slug}:\n{proc.stderr}")
                 continue
             for d in yaml.safe_load_all(proc.stdout):
                 if not d:
                     continue
                 meta = d.get("metadata") or {}
                 if meta.get("name"):
-                    out[ns_dir.name].add((d["kind"], meta["name"]))
+                    out[ns].add((d["kind"], meta["name"]))
                 for path in (("spec", "template", "spec"),
                              ("spec", "jobTemplate", "spec", "template", "spec")):
                     cur = d
@@ -94,7 +104,7 @@ def rendered_names(out_dir: pathlib.Path, chart: pathlib.Path):
                     if isinstance(cur, dict):
                         for c in (cur.get("containers") or []):
                             if c.get("name"):
-                                out[ns_dir.name].add(("Container", c["name"]))
+                                out[ns].add(("Container", c["name"]))
     return out
 
 
@@ -159,8 +169,8 @@ def main():
     # Without this, any corpus containing one collision leaves the gate
     # permanently red, and a gate that always fails is one nobody reads.
     renames = load_renames(out)
-    expected_new = {(r["namespace"], r["kind"], r["to"]) for r in renames}
-    renamed_from = {(r["namespace"], r["kind"], r["from"]) for r in renames}
+    expected_new = {(k8s_ns(r["namespace"]), r["kind"], r["to"]) for r in renames}
+    renamed_from = {(k8s_ns(r["namespace"]), r["kind"], r["from"]) for r in renames}
 
     lost, invented, deliberate = [], [], []
     for ns in sorted(set(raw_ns) | set(got_ns)):

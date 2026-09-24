@@ -1,3 +1,4 @@
+{{- include "universal-chart.renderValues" . }}
 {{- $fullName := include "universal-chart.fullname" . }}
 {{- $serviceType := .Values.service.type }}
 1. Application deployed: {{ $fullName }}

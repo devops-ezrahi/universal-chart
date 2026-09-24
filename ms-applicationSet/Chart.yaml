@@ -4,7 +4,7 @@ description: >-
   One ArgoCD ApplicationSet per namespace, fanning out over that namespace's
   values/*.yaml in a gitops values repo and deploying each one with the
   Universal Chart. Rendered once per namespace directory by the values repo's
-  own root-applicationSet.yaml.
+  own rootApplicationSet.yaml.
 type: application
 version: 1.0.0
 appVersion: "1.0.0"

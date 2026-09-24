@@ -1,3 +1,4 @@
+{{- include "universal-chart.renderValues" . }}
 {{- range $name, $spec := .Values.jobs }}
 {{- include "universal-chart.validateVolumeMounts" (dict
       "label" (printf "job %s" $name)

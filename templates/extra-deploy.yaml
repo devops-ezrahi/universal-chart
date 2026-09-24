@@ -1,3 +1,4 @@
+{{- include "universal-chart.renderValues" . }}
 {{/*
 extraDeploy — inject any raw Kubernetes YAML, with full Helm templating support.
 

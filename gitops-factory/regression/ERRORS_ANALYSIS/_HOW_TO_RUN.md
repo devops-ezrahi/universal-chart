@@ -101,7 +101,7 @@ python convert_to_universal_chart.py `
 | `--fidelity-strict` | With the above, exit non-zero if anything was lost/altered/invented. **Use this as your pass/fail gate per fix.** A clean conversion reports zero findings, so any finding is real. |
 | `--skip-verify` | Skips the `helm template` render-verification step. Faster, but you lose the ownership-conflict proof. Do not use while fixing rendering defects. |
 | `--prune` | Deletes stale generated files. **Leave OFF** — it would remove release pointers and make ArgoCD prune live workloads. |
-| `--cluster-scoped` | Opt back in to a deduplicated cluster-shared release + tree-root `defaults.yaml`. Default is namespace-scoped (fails safe). Relevant to the `_FOUND_Global_Defaults_Subtracted_But_Never_Written` folder. |
+| `--cluster-scoped` | Opt back in to a deduplicated cluster-shared release (there is no tree-root `defaults.yaml` any more). Default is namespace-scoped (fails safe). Relevant to the `_FOUND_Global_Defaults_Subtracted_But_Never_Written` folder. |
 | `--external-secrets-api-version` | Pin every SecretStore/ExternalSecret to one apiVersion, e.g. `external-secrets.io/v1beta1`. Needed when the target on-prem ESO only serves v1beta1 and would reject v1. |
 | `--chart-repo-url` / `--values-repo-url` / `--values-path` | Only affect the generated ArgoCD Application manifests, not fidelity. Ignore for this work. |
 
@@ -166,14 +166,18 @@ mode in roughly half of these defects:
 cd C:\repos\homelab\universal\gitops-factory
 
 helm template testrelease ..\Universal-chart `
+    -f output-showcase\base\<microservice>.yaml `
+    -f output-showcase\<namespace>\defaults.yaml `
     -f output-showcase\<namespace>\values\<microservice>.yaml `
     > $env:TEMP\rendered.yaml
 
 Select-String -Path $env:TEMP\rendered.yaml -Pattern "persistentVolumeClaimRetentionPolicy" -Context 0,3
 ```
 
-Check which values files a release actually composes before rendering — base + per-namespace
-overrides are layered, so a single `-f` may not reproduce what ArgoCD assembles:
+That is the chain ArgoCD assembles, lowest to highest: `base/<file>` ->
+`<folder>/defaults.yaml` -> `<folder>/values/<file>` (a folder may be a variant
+folder such as `dev\yellow`, and `values\` may hold grouping sub-folders).
+A single `-f` does not reproduce it. To see which files exist:
 
 ```powershell
 Get-ChildItem output-showcase -Recurse -Filter *.yaml | Select-Object FullName

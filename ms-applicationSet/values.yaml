@@ -1,5 +1,5 @@
 # The three required values are supplied per-namespace by the values repo's
-# root-applicationSet.yaml (helm parameters), not set here.
+# rootApplicationSet.yaml (helm parameters), not set here.
 namespace: ""          # REQUIRED - the namespace directory in the values repo == the k8s namespace
 originRepoURL: ""      # REQUIRED - the values (gitops) repo holding base/ and <namespace>/
 originBranch: ""       # REQUIRED - revision of that repo
@@ -9,8 +9,17 @@ originBranch: ""       # REQUIRED - revision of that repo
 # default) means the repo root IS the values tree.
 originPath: ""
 
+# The namespace's folder under originPath. Empty = the namespace itself. A
+# variant folder ("prd/yellow", "prd/yellow/eu") deploys into `namespace` and
+# appends what follows the namespace to every generated name ("ms1-prd-yellow-eu").
+folder: ""
+# Glob under <namespace>/values/. The default also finds files in sub-folders
+# with ArgoCD's legacy git-file globbing; use "**/*.yaml" with the new one.
+valuesGlob: "*.yaml"
+
 project: default
 destinationServer: https://kubernetes.default.svc
+destinationName: ""   # a registered cluster name; wins over destinationServer when set
 
 # The Universal Chart itself - what each generated Application renders.
 chartRepoURL: https://github.com/devops-ezrahi/universal-chart.git
