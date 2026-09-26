@@ -6,15 +6,15 @@
 
 workload:
   type: deployment
+
 containerName: app
+
 env:
   DB_URL:
     value: http://db.{{ .Values.environment }}.svc:5432
   ENVIRONMENT:
     value: '{{ .Values.environment }}'
-image:
-  repository: registry.example.org/ms2
-nameOverride: ms2
+
 service:
   enabled: true
   name: ms2

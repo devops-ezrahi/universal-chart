@@ -4,10 +4,12 @@
 # This is the client's single source of truth for day-2 tuning; safe to hand-edit
 # and applied LAST (highest precedence) over base/ms2.yaml.
 
-env:
-  COLOR:
-    value: none
 image:
   repository: registry.example.org/ms2
   tag: 1.0.0
+
 replicaCount: 1
+
+env:
+  COLOR:
+    value: none

@@ -6,7 +6,9 @@
 
 workload:
   type: deployment
+
 containerName: app
+
 env:
   COLOR:
     value: '{{ .Values.color }}'
@@ -14,10 +16,7 @@ env:
     value: http://db.{{ .Values.environment }}.svc:5432
   ENVIRONMENT:
     value: '{{ .Values.environment }}'
-fullnameOverride: ms1-{{ .Values.color }}
-image:
-  repository: registry.example.org/ms1
-nameOverride: ms1
+
 service:
   enabled: true
   name: ms1-{{ .Values.color }}
@@ -26,3 +25,5 @@ service:
       port: 8080
       targetPort: 8080
   type: ClusterIP
+
+fullnameOverride: ms1-{{ .Values.color }}
