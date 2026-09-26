@@ -64,7 +64,7 @@ output/
     shared.yaml                        # owns everything from shared.yaml (per namespace it first appears in)
     <release-slug>.yaml                # usually just the microservice's own name — see release-slug below
   <namespace>/                         # one directory per namespace — its EXISTENCE is what deploys it
-    defaults.yaml                      # NAMESPACE defaults — identical across every release in this
+    defaults.yaml                      # NAMESPACE defaults — group values + labels identical across every release in this
                                         # namespace, the 'shared' release included, plus group values
                                         # (environment: dev) from --env-suffixes / --env-group
     values/                            # image + literal env + minor per-namespace tweaks ONLY —
@@ -195,8 +195,13 @@ from another.
 
 **The algorithm** (`common_subtree` in the converter): across every release in
 one namespace — the `shared` release included — recursively find the key/value
-pairs that are byte-identical in literally every one of them. That becomes
-`output/<namespace>/defaults.yaml`.
+pairs that are byte-identical in literally every one of them. Of those, only
+the labels (`commonLabels`, `podLabels` — `DEFAULTS_KEYS`) are kept, plus the
+folder's group values (`environment: dev`, `color: yellow`); that becomes
+`output/<namespace>/defaults.yaml`. Everything else common is already in
+`base/` or in every `values/` file — neither is subtracted against this layer —
+so copying it here only made a second source of truth that editors read as
+"set once for the namespace" when it was not.
 
 **Why this is safe to do automatically**: a key is only ever promoted to a
 defaults file if it is *present, with the exact same value*, in **every**
