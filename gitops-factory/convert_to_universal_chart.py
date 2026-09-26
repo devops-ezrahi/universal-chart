@@ -637,7 +637,30 @@ def load_multidoc(path: Path) -> list[dict]:
 # fundamentally IS (deployment / statefulset / daemonset / none), so reading it
 # first is what makes the rest of the file make sense — and sorted purely
 # alphabetically it lands at the very BOTTOM, under every incidental key.
-TOP_LEVEL_KEY_ORDER = ["workload"]
+#
+# The rest of the list runs by importance — what it runs, how many, then its
+# container, networking, config, scaling, and its names/stamps near the end —
+# and mirrors devops-portal's src/client/modules/argocd/catalog.ts (FEATURES
+# registration order), so a tree converted here and one written by the portal
+# lay a file out the same way. Change both together.
+TOP_LEVEL_KEY_ORDER = [
+    "workload", "image", "imagePullSecrets", "replicaCount", "revisionHistoryLimit",
+    "progressDeadlineSeconds", "minReadySeconds", "podManagementPolicy", "serviceName", "strategy",
+    "containerName", "command", "args", "workingDir", "restartPolicy", "terminationGracePeriodSeconds",
+    "containerRestartPolicy", "terminationMessagePath", "terminationMessagePolicy",
+    "env", "envFrom", "ports", "resources", "livenessProbe", "readinessProbe", "startupProbe",
+    "containerRestartRules", "lifecycle",
+    "volumes", "volumeMounts", "pvc", "volumeClaimTemplates", "persistentVolumeClaimRetentionPolicy",
+    "persistentVolumes", "storageClasses",
+    "service", "services", "ingress", "route", "routes", "networkPolicies",
+    "configMaps", "secrets", "secretStores", "clusterSecretStores", "externalSecretsApiVersion",
+    "externalSecrets", "checksums", "cronjobs", "jobs", "hpa", "vpa", "pdb",
+    "nodeSelector", "tolerations", "topologySpreadConstraints", "priorityClassName", "runtimeClassName",
+    "schedulerName", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
+    "hostAliases", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
+    "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations",
+    "podAnnotations", "podLabels", "labels", "sidecars", "initContainers", "initContainerOrder",
+]
 
 
 def _sorted_deep(obj: Any) -> Any:
@@ -714,7 +737,7 @@ class _ValuesDumper(yaml.SafeDumper):
 _ValuesDumper.add_representer(str, _represent_str_quoting_go_numerics)
 
 
-def dump_yaml(data: Any) -> str:
+def dump_yaml(data: Any, spaced: bool = False) -> str:
     """Emit values YAML.
 
     `allow_unicode=True` is the second half of the encoding fix (the first is
@@ -731,14 +754,17 @@ def dump_yaml(data: Any) -> str:
     """
     if not data:
         return "{}\n"
-    if isinstance(data, dict) and any(k in data for k in TOP_LEVEL_KEY_ORDER):
-        ordered = {k: _sorted_deep(data[k]) for k in TOP_LEVEL_KEY_ORDER if k in data}
-        ordered.update(_sorted_deep({k: v for k, v in data.items()
-                                      if k not in TOP_LEVEL_KEY_ORDER}))
-        return yaml.dump(ordered, Dumper=_ValuesDumper, sort_keys=False,
+    if not isinstance(data, dict):
+        return yaml.dump(data, Dumper=_ValuesDumper, sort_keys=True,
                          default_flow_style=False, width=100, allow_unicode=True)
-    return yaml.dump(data, Dumper=_ValuesDumper, sort_keys=True,
-                     default_flow_style=False, width=100, allow_unicode=True)
+    keys = [k for k in TOP_LEVEL_KEY_ORDER if k in data]
+    keys += sorted(k for k in data if k not in TOP_LEVEL_KEY_ORDER)
+    chunks = [yaml.dump({k: _sorted_deep(data[k])}, Dumper=_ValuesDumper, sort_keys=False,
+                        default_flow_style=False, width=100, allow_unicode=True)
+              for k in keys]
+    # A values file gets a blank line between top-level keys, so each section
+    # reads as its own block; manifests (extraDeploy, Argo apps) stay tight.
+    return ("\n" if spaced else "").join(chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -1631,13 +1657,15 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
     if c.get("imagePullPolicy"):
         image["pullPolicy"] = c["imagePullPolicy"]
     ctx.full_image = image
-    # The comprehensive base/ file omits the tag AND the digest — both are the
-    # minimal override's job (see build_minimal_values), so a day-2 version bump
-    # only ever touches the namespace's own values/<slug>.yaml, not base/. A
-    # digest is the same kind of value as a tag here: the version pin. Left in
-    # base/, re-pinning one namespace would drag every other namespace sharing
-    # that base file along with it.
-    v["image"] = {k: val for k, val in image.items() if k not in ("tag", "digest")}
+    # The comprehensive base/ file omits the repository, tag AND digest — all
+    # three are the minimal override's job (see build_minimal_values), so a
+    # day-2 version bump only ever touches the namespace's own
+    # values/<slug>.yaml, not base/. A digest is the same kind of value as a
+    # tag here: the version pin. The repository travels with it — written once,
+    # beside its tag, rather than in base and again in every values file.
+    # pullPolicy is structural and stays in base.
+    if image.get("pullPolicy"):
+        v["image"] = {"pullPolicy": image["pullPolicy"]}
 
     for k in ("command", "args", "workingDir"):
         if c.get(k):
@@ -2811,17 +2839,16 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
         job_template["containerRestartPolicy"] = main["restartPolicy"]
     if main.get("image"):
         repo, tag, digest = split_image(main["image"])
-        # Tag and digest deliberately excluded here — same reasoning as
-        # handle_main_container: they're the minimal override's job (see
+        # Repository, tag and digest deliberately excluded here — same reasoning
+        # as handle_main_container: they're the minimal override's job (see
         # sub_full_image below / build_minimal_values), not base/'s.
-        job_template["image"] = {"repository": repo}
-        # pullPolicy IS structural, so unlike tag/digest it belongs in base.
+        # pullPolicy IS structural, so unlike them it belongs in base.
         # Without it jobPodSpec falls back to the RELEASE-level
         # .Values.image.pullPolicy, so a CronJob asking for `Always` silently
         # inherits the main workload's `IfNotPresent` and never re-pulls — on a
         # mutable tag that means it runs whatever the node last cached.
         if main.get("imagePullPolicy"):
-            job_template["image"]["pullPolicy"] = main["imagePullPolicy"]
+            job_template["image"] = {"pullPolicy": main["imagePullPolicy"]}
         ctx.sub_full_image[("cronjobs", sub_name)] = {
             k: v for k, v in (("repository", repo), ("tag", tag), ("digest", digest)) if v
         }
@@ -2914,10 +2941,9 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
         entry["containerRestartPolicy"] = main["restartPolicy"]
     if main.get("image"):
         repo, tag, digest = split_image(main["image"])
-        # Tag and digest excluded — see the matching comment in handle_cronjob.
-        entry["image"] = {"repository": repo}
+        # Repository, tag and digest excluded — see the matching comment in handle_cronjob.
         if main.get("imagePullPolicy"):
-            entry["image"]["pullPolicy"] = main["imagePullPolicy"]
+            entry["image"] = {"pullPolicy": main["imagePullPolicy"]}
         ctx.sub_full_image[("jobs", sub_name)] = {
             k: v for k, v in (("repository", repo), ("tag", tag), ("digest", digest)) if v
         }
@@ -3413,7 +3439,7 @@ def write_base_file(base_dir: Path, slug: str, values: dict) -> None:
         f"# value that is not the same everywhere) lives in <folder>/values/{slug}.yaml.\n"
         f"# Re-run the converter to regenerate after the source manifests change.\n\n"
     )
-    (base_dir / f"{slug}.yaml").write_text(header + dump_yaml(helm_safe_values(values)), encoding="utf-8")
+    (base_dir / f"{slug}.yaml").write_text(header + dump_yaml(helm_safe_values(values), spaced=True), encoding="utf-8")
 
 
 def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: str, namespace: str,
@@ -3451,7 +3477,7 @@ def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: s
         f"# This is the client's single source of truth for day-2 tuning; safe to hand-edit\n"
         f"# and applied LAST (highest precedence) over base/{release_slug}.yaml.\n\n"
     )
-    target.write_text(header_min + dump_yaml(helm_safe_values(minimal)), encoding="utf-8")
+    target.write_text(header_min + dump_yaml(helm_safe_values(minimal), spaced=True), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -5579,7 +5605,7 @@ def main() -> None:
             "# Re-run the converter to regenerate after the source manifests change.\n\n"
         )
         (out_ns_dir / DEFAULTS_FILE_NAME).write_text(
-            header_ns_defaults + dump_yaml(helm_safe_values(namespace_defaults)), encoding="utf-8"
+            header_ns_defaults + dump_yaml(helm_safe_values(namespace_defaults), spaced=True), encoding="utf-8"
         )
 
         expected_values.setdefault(namespace, set())
@@ -5636,7 +5662,7 @@ def main() -> None:
             "# Cluster-scoped resources deduplicated across the ENTIRE run — deploy exactly ONCE.\n"
             "workload:\n  type: none\nservice:\n  enabled: false\n\n"
         )
-        (cluster_dir / "cluster-shared-values.yaml").write_text(header + dump_yaml(helm_safe_values(cluster_values)), encoding="utf-8")
+        (cluster_dir / "cluster-shared-values.yaml").write_text(header + dump_yaml(helm_safe_values(cluster_values), spaced=True), encoding="utf-8")
     if has_cluster_values and ARGOCD_MANIFESTS:
         app = build_cluster_shared_application(
             args.cluster_shared_namespace, args.chart_repo_url, args.chart_path, args.chart_revision,
