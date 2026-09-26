@@ -3115,17 +3115,10 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
                        cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                        owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
-    # Pin every resource name to the microservice's own name, independent of
-    # whatever Helm release name ArgoCD ends up using. Without this, the
-    # chart's fullname falls back to "<release>-<chart-name>" — and since
-    # ArgoCD's Application/Release name already carries namespace plumbing
-    # (e.g. "analytics-svc-analytics-svc-billing"), that fallback produces
-    # long, noisy names that blow past Kubernetes' length limits (CronJob's
-    # 52-char cap in particular). This is structural, not day-2 tuning, so
-    # it belongs in the base/comprehensive values, not the minimal override.
-    ctx.values["nameOverride"] = ms_name
-
-    # nameOverride above derives every release-named resource — the workload,
+    # No nameOverride: ms-applicationSet sets `helm.releaseName` to the file
+    # name, so the chart's fullname is already the microservice's own name.
+    #
+    # That release name derives every release-named resource — the workload,
     # its primary Service, its ServiceAccount — from the FILE name. When the
     # raw manifest's workload is actually called something else (a redis.yaml
     # whose StatefulSet is 'redis-cache'), that silently renames it, and with
@@ -3140,7 +3133,7 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
     # cache. No existing check catches it, because no name is duplicated —
     # they are merely misassigned, so the run still reports conflict-free.
     #
-    # fullnameOverride takes precedence over nameOverride in the chart's
+    # fullnameOverride takes precedence over the release name in the chart's
     # fullname helper (universal-chart/templates/_helpers.tpl), so pinning it
     # to the raw name preserves the real identity while leaving the filename as
     # the release identity that output paths, base/ sharing and the
@@ -4058,7 +4051,7 @@ def validate_resource_names(namespace: str, ms_name: str, values: dict) -> tuple
     warnings: list[str] = []
     where = f"[{namespace}/{ms_name}]"
 
-    fullname = values.get("fullnameOverride") or values.get("nameOverride") or ms_name
+    fullname = values.get("fullnameOverride") or ms_name
     if len(fullname) > K8S_NAME_MAX:
         warnings.append(
             f"{where} release name '{fullname}' is {len(fullname)} chars; the chart truncates it "
