@@ -42,6 +42,8 @@ import unicodedata
 from pathlib import Path
 from urllib.parse import unquote
 
+from yaml_style import BlockDumper
+
 # Kubernetes label used to identify apps in topology view
 TOPOLOGY_LABEL = "app.kubernetes.io/part-of"
 
@@ -1223,6 +1225,7 @@ def write_resources_to_namespace(all_resources, output_path, shared_sink=None):
         if resources_to_write:
             content = yaml.dump_all(
                 resources_to_write,
+                Dumper=BlockDumper,
                 default_flow_style=False,
                 sort_keys=False,
                 allow_unicode=True,
@@ -1250,7 +1253,7 @@ def write_shared_yaml(shared_entries, output_path):
         return
     path = output_path / "shared.yaml"
     path.write_text(
-        yaml.dump_all(docs, default_flow_style=False, sort_keys=False, allow_unicode=True),
+        yaml.dump_all(docs, Dumper=BlockDumper, default_flow_style=False, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
     print(f"  Wrote {path}", file=sys.stderr)
@@ -1268,7 +1271,7 @@ def handle_single_resource(url):
     data = yaml.safe_load(raw_yaml)
     if data:
         cleaned = clean_resource(data)
-        print(yaml.dump(cleaned, default_flow_style=False, sort_keys=False, allow_unicode=True))
+        print(yaml.dump(cleaned, Dumper=BlockDumper, default_flow_style=False, sort_keys=False, allow_unicode=True))
 
 # ---------------------------------------------------------------------------
 # Topology URL handler

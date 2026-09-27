@@ -27,12 +27,38 @@
   },
   "totals": {
     "microservices": 6,
-    "warnings": 7
+    "warnings": 14
   },
   "env_group_combinations": [
     {
       "release": "ms1",
-      "path": "env.COLOR",
+      "path": "configMaps.ms1-settings-\u0000.Values.color\u0000.data.app.conf",
+      "template": "color = {{ .Values.color }}\nretries = 3\n",
+      "injection": {
+        "color": {
+          "dev/black": "black",
+          "dev/yellow": "yellow",
+          "prd/black": "black",
+          "prd/yellow": "yellow"
+        }
+      }
+    },
+    {
+      "release": "ms1",
+      "path": "cronjobs.ms1-report-\u0000.Values.color\u0000.jobTemplate.args",
+      "template": "[\"--color\", \"{{ .Values.color }}\"]",
+      "injection": {
+        "color": {
+          "dev/black": "black",
+          "dev/yellow": "yellow",
+          "prd/black": "black",
+          "prd/yellow": "yellow"
+        }
+      }
+    },
+    {
+      "release": "ms1",
+      "path": "env.COLOR.value",
       "template": "{{ .Values.color }}",
       "injection": {
         "color": {
@@ -45,7 +71,7 @@
     },
     {
       "release": "ms1",
-      "path": "env.DB_URL",
+      "path": "env.DB_URL.value",
       "template": "http://db.{{ .Values.environment }}.svc:5432",
       "injection": {
         "environment": {
@@ -58,7 +84,7 @@
     },
     {
       "release": "ms1",
-      "path": "env.ENVIRONMENT",
+      "path": "env.ENVIRONMENT.value",
       "template": "{{ .Values.environment }}",
       "injection": {
         "environment": {
@@ -96,8 +122,21 @@
       }
     },
     {
+      "release": "ms1",
+      "path": "volumes.settings-\u0000.Values.color\u0000.configMap.name",
+      "template": "ms1-settings-{{ .Values.color }}",
+      "injection": {
+        "color": {
+          "dev/black": "black",
+          "dev/yellow": "yellow",
+          "prd/black": "black",
+          "prd/yellow": "yellow"
+        }
+      }
+    },
+    {
       "release": "ms2",
-      "path": "env.DB_URL",
+      "path": "env.DB_URL.value",
       "template": "http://db.{{ .Values.environment }}.svc:5432",
       "injection": {
         "environment": {
@@ -108,7 +147,7 @@
     },
     {
       "release": "ms2",
-      "path": "env.ENVIRONMENT",
+      "path": "env.ENVIRONMENT.value",
       "template": "{{ .Values.environment }}",
       "injection": {
         "environment": {

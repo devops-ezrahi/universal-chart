@@ -1,9 +1,9 @@
 Round-trip fidelity report — raw input vs `helm template` of the converted output.
 
 RUN IDENTITY — counts below describe THIS run and no other.
-  run id:         c214b97886a2-d0dd1edb4603
-  converter:      c214b97886a2  (convert_to_universal_chart.py)
-  input:          d0dd1edb4603  (..\examples\converted\grouped\input)
+  run id:         7c2f3999661d-60a7ddf0bf15
+  converter:      7c2f3999661d  (convert_to_universal_chart.py)
+  input:          60a7ddf0bf15  (..\examples\converted\grouped\input)
   output:         ..\examples\converted\grouped\output
   Compare two fidelity reports ONLY when their run ids match. A differing
   run id means the converter, the input, or both changed — so a count that
@@ -23,11 +23,11 @@ own metadata labels) are excluded by design — see _fidelity_ignored_path.
 Fields the render ADDED are counted but not listed: a Helm chart filling in a
 Kubernetes default the raw dump omitted is normal and harmless.
 
-objects matched:            12
+objects matched:            20
   of those, relocated:      6
 fields LOST (raw -> render): 0
 fields CHANGED:             0
-fields ADDED (chart default, informational): 66
+fields ADDED (chart default, informational): 102
 objects in raw but rendered by nothing:      0
 objects rendered with no raw source:         0
 render failures:            0
@@ -36,12 +36,12 @@ dangling references (rename lost a reference): 0
 ERROR BREAKDOWN BY CATEGORY (generated from the lines below): none
 
 
-=== dev — 6 raw objects vs 9 rendered ===
+=== dev — 10 raw objects vs 13 rendered ===
   INFO   ServiceAccount/ms1-black: created by the chart for release 'ms1' (serviceAccount.create) — no raw source expected
   INFO   ServiceAccount/ms1-yellow: created by the chart for release 'ms1' (serviceAccount.create) — no raw source expected
   INFO   ServiceAccount/ms2: created by the chart for release 'ms2' (serviceAccount.create) — no raw source expected
 
-=== prd — 6 raw objects vs 9 rendered ===
+=== prd — 10 raw objects vs 13 rendered ===
   INFO   ServiceAccount/ms1-black: created by the chart for release 'ms1' (serviceAccount.create) — no raw source expected
   INFO   ServiceAccount/ms1-yellow: created by the chart for release 'ms1' (serviceAccount.create) — no raw source expected
   INFO   ServiceAccount/ms2: created by the chart for release 'ms2' (serviceAccount.create) — no raw source expected

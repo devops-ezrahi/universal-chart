@@ -70,12 +70,16 @@ def _docs(path=FIXTURE):
     return [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d]
 
 
-def _convert_fixture():
-    ctx = conv.MicroserviceContext(namespace=NS, name=RELEASE)
-    for d in _docs():
-        if d["kind"] == "CronJob":
-            conv.handle_cronjob(d, ctx, d["metadata"]["name"])
-    return ctx
+def _convert_fixture(env_in_values=False):
+    conv.ENV_IN_VALUES = env_in_values
+    try:
+        ctx = conv.MicroserviceContext(namespace=NS, name=RELEASE)
+        for d in _docs():
+            if d["kind"] == "CronJob":
+                conv.handle_cronjob(d, ctx, d["metadata"]["name"])
+        return ctx
+    finally:
+        conv.ENV_IN_VALUES = False
 
 
 def _run_converter(out: pathlib.Path):
@@ -130,22 +134,19 @@ def test_each_cronjob_keeps_the_command_that_belongs_to_it():
 
 
 # --------------------------------------------------------------------------
-# Issue 10 — env. Structural env stays in base/, literal env goes to minimal.
+# Issue 10 — env. By default literal env stays in values with everything else
+# (base/ when every namespace agrees); --env-in-values moves it to minimal.
 # --------------------------------------------------------------------------
 
 def test_both_stage_values_survive_capture():
-    ctx = _convert_fixture()
-    stages = sorted(
-        env["STAGE"]["value"]
-        for env in (v for (top, _sub), v in ctx.sub_full_env.items() if top == "cronjobs")
-        if "STAGE" in env
-    )
+    cronjobs = _convert_fixture().values.get("cronjobs", {})
+    stages = sorted(e["jobTemplate"]["env"]["STAGE"]["value"] for e in cronjobs.values())
     assert stages == ["dev", "prod"], (
         f"one CronJob's STAGE was lost during the merge; got {stages}")
 
 
 def test_the_secret_ref_env_stays_structural_and_on_the_right_cronjob():
-    cronjobs = _convert_fixture().values.get("cronjobs", {})
+    cronjobs = _convert_fixture(env_in_values=True).values.get("cronjobs", {})
     by_schedule = {e["schedule"]: e["jobTemplate"] for e in cronjobs.values()}
     assert by_schedule["0 1 * * *"]["env"]["DB_PASSWORD"]["valueFrom"] == SECRET_REF
     # The literal STAGE is deliberately NOT in the structural values — it goes
@@ -158,7 +159,7 @@ def test_the_secret_ref_env_stays_structural_and_on_the_right_cronjob():
 
 
 def test_literal_env_reaches_the_minimal_override_for_both_cronjobs():
-    minimal = conv.build_minimal_values(_convert_fixture())
+    minimal = conv.build_minimal_values(_convert_fixture(env_in_values=True))
     stages = sorted(v["jobTemplate"]["env"]["STAGE"]["value"]
                     for v in minimal["cronjobs"].values()
                     if "env" in v.get("jobTemplate", {}))

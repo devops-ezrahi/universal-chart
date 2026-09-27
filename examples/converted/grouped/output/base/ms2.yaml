@@ -10,6 +10,8 @@ workload:
 containerName: app
 
 env:
+  COLOR:
+    value: none
   DB_URL:
     value: http://db.{{ .Values.environment }}.svc:5432
   ENVIRONMENT:

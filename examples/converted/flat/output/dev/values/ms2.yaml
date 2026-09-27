@@ -1,4 +1,4 @@
-# Auto-generated MINIMAL override for 'ms2' — image + literal env,
+# Auto-generated MINIMAL override for 'ms2' — image, replicas,
 # plus (if present) this namespace's own structural difference from the
 # shared base/ms2.yaml (see conflicts_and_warnings.txt).
 # This is the client's single source of truth for day-2 tuning; safe to hand-edit

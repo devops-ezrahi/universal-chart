@@ -55,6 +55,14 @@ def test_env_group_merges_into_one_templated_base(tmp_path):
     vol = "certs-{{ .Values.color }}"
     assert base["volumes"][vol]["secret"]["secretName"] == vol
     assert base["volumeMounts"][vol]["mountPath"] == "/etc/certs/{{ .Values.color }}"
+    # Every other key too: a ConfigMap, a CronJob (its image follows the
+    # renamed key into values/), a sidecar and the list inside it.
+    cm = "settings-{{ .Values.color }}"
+    assert base["configMaps"][cm]["data"]["mode"] == "{{ .Values.color }}"
+    cron = base["cronjobs"]["report-{{ .Values.color }}"]["jobTemplate"]
+    assert cron["envFrom"][cm] == {"type": "configMapRef"}
+    assert cron["env"]["COLOR"]["value"] == "{{ .Values.color }}"
+    assert base["sidecars"]["proxy-{{ .Values.color }}"]["args"] == ["--color", "{{ .Values.color }}"]
 
     # The color token in each file name moved the release into a folder of
     # that name; the folder's defaults.yaml says which color it is.
@@ -91,3 +99,37 @@ def test_combine_values_rules():
     assert conv.strip_name_tokens("filter-service-black-b2b-tst", {"black", "tst"}) == "filter-service-b2b"
     assert conv.strip_name_tokens("attest-latest", {"tst", "test"}) == "attest-latest"
     assert conv.strip_name_tokens("black", {"black"}) == "black"
+
+
+def test_env_splits_per_variable_not_per_key(tmp_path):
+    """One env var the same in both namespaces goes to base/, the one that
+    differs stays in each namespace's values/ — `env` is never all-or-nothing."""
+    for ns, fruit in (("ns1", "banana"), ("ns2", "tapuz")):
+        (tmp_path / "in" / ns).mkdir(parents=True)
+        (tmp_path / "in" / ns / "app.yaml").write_text(f"""\
+apiVersion: apps/v1
+kind: Deployment
+metadata: {{name: app, namespace: {ns}}}
+spec:
+  selector: {{matchLabels: {{app: app}}}}
+  template:
+    metadata: {{labels: {{app: app}}}}
+    spec:
+      containers:
+        - name: app
+          image: registry.example.org/app:1.0
+          env:
+            - {{name: foo, value: bar}}
+            - {{name: test, value: {fruit}}}
+""", encoding="utf-8")
+    out = tmp_path / "out"
+    proc = subprocess.run(
+        [sys.executable, str(CONVERTER_PY), "--input", str(tmp_path / "in"), "--output", str(out),
+         "--chart", str(CHART_DIR), "--verify-fidelity", "--fidelity-strict"],
+        capture_output=True, text=True, errors="replace", cwd=str(GITOPS_DIR))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    assert _values(out / "base" / "app.yaml")["env"] == {"foo": {"value": "bar"}}
+    assert _values(out / "ns1" / "values" / "app.yaml")["env"] == {"test": {"value": "banana"}}
+    assert _values(out / "ns2" / "values" / "app.yaml")["env"] == {"test": {"value": "tapuz"}}
+    assert "['env.test.value'] differ" in (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")

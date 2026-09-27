@@ -34,6 +34,9 @@ spec:
           volumeMounts:
             - name: certs-black
               mountPath: /etc/certs/black
+        - name: proxy-black
+          image: registry.example.org/proxy:2.0
+          args: ["--color", "black"]
       volumes:
         - name: certs-black
           secret:
@@ -72,3 +75,33 @@ metadata:
   namespace: fac1
 data:
   ALERT: "{{ $labels.pod }} is down in fac1"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settings-black
+  namespace: fac1
+data:
+  mode: black
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: report-black
+  namespace: fac1
+spec:
+  schedule: "0 1 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: report
+              image: registry.example.org/report:1.0
+              env:
+                - name: COLOR
+                  value: black
+              envFrom:
+                - configMapRef:
+                    name: settings-black

@@ -24,6 +24,9 @@ The large mock dump `namespaces/` is not committed either — generate it with
 | Variant folders | `dev/yellow/` and `dev/black/` (made by `--env-group`, or already in the input — detected on their own) both deploy into namespace `dev` and share the one `base/`. Argo CD names gain the folder (`ms1-dev-yellow`); releases of two folders in one namespace are checked against each other. The root ApplicationSet finds every folder through its `defaults.yaml`. `values_editor.py` handles it too (`--namespace dev/yellow`). |
 | `values/` sub-folders | `values/group1/ms1.yaml` is only grouping: the release is still `ms1`, reads `base/ms1.yaml`, and a re-run rewrites the file where it is. A file name may appear once per namespace folder (verification fails on duplicates). With Argo CD's new git-file globbing set the ms-applicationSet `valuesGlob` to `**/*.yaml`. |
 | `--env-suffixes tok,tok` | Strip these words from anywhere in a file name, replacing the default rule (strip a trailing suffix equal to the namespace's). They never make folders: values differing by them become `{{ .Values.environment }}` (`env` is the chart's env-var map), with `environment: dev` in every folder's `defaults.yaml`. A word given to both `--env-suffixes` and `--env-group` counts as a suffix. |
+| Group tokens in keys | A map key differing only by group words (a volume `certs-black`/`certs-yellow`, a CronJob, sidecar, init container, ConfigMap, env var name) becomes one templated key in `base/` — `certs-{{ .Values.color }}` — and the chart `tpl`s keys too. A list (args, a sidecar's env) is templated whole the same way. Top-level keys (the chart's own) are never renamed. |
+| Literal env in base | A literal env var (`value: x`) is treated like any other value: in `base/` when it is the same in every namespace, in `values/` only where it differs. `--env-in-values` restores the old split, where every literal env var was written into every namespace's `values/` file. |
+| Root ApplicationSet | One git files generator on `**/defaults.yaml` finds every namespace and variant folder. The values repo, branch and project are YAML anchors (`&repoURL`, `&branch`, `&project`), said once and reused as helm parameters; a commented `exclude` shows how to switch a namespace off. Without `--values-repo-url` it carries the placeholder `<values-repo-url>` to replace by hand. |
 | `--root-set-name`, `--argocd-destination-namespace`, `--argocd-cluster` | Name the root ApplicationSet; alias of `--argocd-namespace`; deploy to a registered cluster *name* instead of `--destination-server`'s URL. |
 | `{{` in source data | Escaped in every values file (`{{ "{{" }}`) so the chart's `tpl` pass leaves an Alertmanager/Go template in a ConfigMap literal. |
 | Shared promotion | ConfigMaps/Secrets/etc. declared byte-identically by several microservices move into the namespace `shared` release under their original name (Services/Routes excluded). Recorded in `report/renames.json`. |
@@ -67,7 +70,7 @@ output/
     defaults.yaml                      # NAMESPACE defaults — group values + labels identical across every release in this
                                         # namespace, the 'shared' release included, plus group values
                                         # (environment: dev) from --env-suffixes / --env-group
-    values/                            # image + literal env + minor per-namespace tweaks ONLY —
+    values/                            # image + whatever differs from base in this namespace ONLY —
                                         # hand-editable, one file per release-slug. Its existence is what
                                         # deploys the release: this directory IS the fan-out.
       <release-slug>.yaml
@@ -95,9 +98,7 @@ chart that lives in the Universal Chart repo:
 
 ```
 kubectl apply -f output/rootApplication.yaml.txt     # once, by hand
-  └─ deploys rootApplicationSet.yaml                 # git directories generator over output/*
-       │                                             # (git files generator on '**/defaults.yaml'
-       │                                             #  when variant folders exist)
+  └─ deploys rootApplicationSet.yaml                 # git files generator on '**/defaults.yaml'
        └─ one Application per <namespace>/ folder, each deploying ms-applicationSet
             └─ one ApplicationSet per folder          # git files generator over <folder>/values/<valuesGlob>
                  └─ one Application per release, rendering the Universal Chart
@@ -145,7 +146,7 @@ environment-agnostic file is written **once**, under its own name
 that name reuses it — that's the whole point: the same "buildkit" or
 "jenkins-restore" utility deployed into five namespaces gets ONE base file,
 not five duplicates. Each namespace still gets its own flat `values/` tree
-holding only that namespace's image tag + literal env + minor tweaks.
+holding only that namespace's image tag + whatever differs from base there.
 
 **release-slug**: normally the microservice's own name. It only becomes
 `<namespace>-<microservice>` when two namespaces declare a microservice by
@@ -660,7 +661,7 @@ real app follows the exact same input contract, just with real data:
    - `base/<slug>.yaml` is auto-generated / do-not-edit — treat it as such
      and re-run the converter instead of hand-patching it.
    - `<folder>/values/<slug>.yaml` is explicitly the safe, hand-editable
-     override layer (image tag + literal env vars only) — this is where day-2
+     override layer (image tag + what differs per namespace) — this is where day-2
      changes belong (e.g. a config value a developer needs to tweak without
      re-running the whole conversion).
    - `<folder>/defaults.yaml` is also auto-generated / do-not-edit — see

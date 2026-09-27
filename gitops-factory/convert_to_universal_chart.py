@@ -11,11 +11,11 @@ into:
 
     1. Two Universal Helm Chart values files PER microservice:
          base/<slug>.yaml                     (comprehensive - everything
-                                                EXCEPT image tag & literal env
+                                                EXCEPT the image and replicas
                                                 - written ONCE and reused by
                                                 every namespace that runs
                                                 this microservice)
-         <namespace>/values/<slug>.yaml       (image tag + literal env ONLY -
+         <namespace>/values/<slug>.yaml       (image + what differs ONLY -
                                                 exclusively here, not duplicated
                                                 in the comprehensive file - one
                                                 per namespace)
@@ -123,6 +123,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+
+from yaml_style import _ForcedBlockEmitterMixin
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -363,13 +365,34 @@ def combine_values(per_ns: dict, groups: list) -> "tuple[str, dict] | None":
 
 
 def _string_leaves(d: dict, path: tuple = ()) -> dict:
+    """Every string and every list under d, by path. A list (args, a sidecar's
+    env) is compared as one JSON string, so a token anywhere inside it is found
+    and the whole list is templated at once — lists are never merged by item."""
     out = {}
     for k, v in d.items():
         if isinstance(v, dict):
             out.update(_string_leaves(v, path + (k,)))
         elif isinstance(v, str):
             out[path + (k,)] = v
+        elif isinstance(v, list) and k != "extraDeploy":
+            out[path + (k,)] = "" + json.dumps(v, ensure_ascii=False)
     return out
+
+
+def _leaf_paths(d: dict, prefix: str = "") -> list:
+    """['env.test', 'resources.requests.memory'] — what actually differs, not
+    just the top-level key it sits under (the rest of that key is in base/)."""
+    out = []
+    for k, v in d.items():
+        p = prefix + _PH_RE.sub(r"{{ \1 }}", str(k))
+        out +=_leaf_paths(v, p + ".") if isinstance(v, dict) and v else [p]
+    return sorted(out)
+
+
+def _leaf_value(text: str):
+    """Undo _string_leaves' list encoding. strict=False: the placeholder
+    sentinel is a control character, which strict JSON refuses in a string."""
+    return json.loads(text[1:], strict=False) if text.startswith("") else text
 
 
 def _pop_nested(d: dict, path: tuple) -> None:
@@ -384,30 +407,49 @@ def _pop_nested(d: dict, path: tuple) -> None:
             del d[path[0]]
 
 
-# Maps keyed by a volume's name. A volume 'certs-black' next to 'certs-yellow'
-# is the same volume, but as two different KEYS it never reaches the leaf pass
-# of combine_env_groups, so both copies stayed in values/. The chart tpl's keys
-# too (universal-chart.tplWalk). Names side tables track by path (jobs,
-# cronjobs, sidecars, initContainers — see sub_raw_image) must not be renamed.
-TEMPLATED_KEY_MAPS = ("volumes", "volumeMounts", "volumeClaimTemplates")
+# A map key can carry a group token as much as a value can: a volume
+# 'certs-black' next to 'certs-yellow', a CronJob, a sidecar, a ConfigMap, an
+# env var name. As two different KEYS they never reach the leaf pass of
+# combine_env_groups, so every copy stayed in values/. unify_group_keys renames
+# them to one templated key first; the chart tpl's keys too
+# (universal-chart.tplWalk). Top-level keys are the chart's own and never
+# renamed; extraDeploy is a list, so it is never walked.
+
+
+def _rename_tracked(ctx, path: tuple, new: str) -> None:
+    """Move what ctx tracks by path (the per-namespace image/env/raw-image of a
+    job, cronjob, sidecar or init container, and who owns a sub key) along with
+    a key renamed at `path`, and rename it in a sibling initContainerOrder."""
+    n = len(path)
+    for tracker in (ctx.sub_full_image, ctx.sub_full_env, ctx.sub_raw_image, ctx.sub_key_owner):
+        for key in [k for k in tracker if k[:n] == path]:
+            tracker[path[:-1] + (new,) + key[n:]] = tracker.pop(key)
+    if path[-2:-1] == ("initContainers",):
+        holder = ctx.values
+        for k in path[:-2]:
+            holder = holder.get(k, {})
+        order = holder.get("initContainerOrder")
+        if isinstance(order, list):
+            holder["initContainerOrder"] = [new if o == path[-1] else o for o in order]
 
 
 def unify_group_keys(entries: list, groups: list, injections: dict,
-                     parent: str = "", maps: "list | None" = None) -> None:
-    """Rename, in place, keys of TEMPLATED_KEY_MAPS that differ between one
-    release's namespaces only by group tokens to their shared template, so
-    common_subtree and combine_env_groups see one key. Run before both; the
-    group values each namespace needs land in injections[ns]."""
+                     path: tuple = (), maps: "list | None" = None) -> None:
+    """Rename, in place, map keys that differ between one release's namespaces
+    only by group tokens to their shared template, so common_subtree and
+    combine_env_groups see one key. Run before both; the group values each
+    namespace needs land in injections[ns]."""
     names = [ns for ns, _ in entries]
     if maps is None:
         maps = [ctx.values for _, ctx in entries]
-    if parent in TEMPLATED_KEY_MAPS:
+    if path:
         # Same shape once every token is blanked -> candidate for one key.
         shapes: dict = {}
         for i, (ns, m) in enumerate(zip(names, maps)):
-            subs = {k8s_ns(ns): "\x01"} | {t: "\x01" for g in groups for t in g.tokens}
+            subs = {k8s_ns(ns): ""} | {t: "" for g in groups for t in g.tokens}
             for k in m:
-                shapes.setdefault(_token_re(subs).sub("\x01", k), {}).setdefault(i, []).append(k)
+                if isinstance(k, str):
+                    shapes.setdefault(_token_re(subs).sub("", k), {}).setdefault(i, []).append(k)
         for hit in shapes.values():
             if len(hit) != len(maps) or any(len(ks) != 1 for ks in hit.values()):
                 continue
@@ -415,15 +457,18 @@ def unify_group_keys(entries: list, groups: list, injections: dict,
             if len(set(per_ns.values())) < 2:
                 continue
             res = combine_values(per_ns, groups)
-            if res is not None:
-                for i, m in enumerate(maps):
-                    m[res[0]] = m.pop(per_ns[names[i]])
-                for g, m in res[1].items():
-                    for ns, v in m.items():
-                        injections.setdefault(ns, {})[g] = v
+            if res is None:
+                continue
+            for i, ((_, ctx), m) in enumerate(zip(entries, maps)):
+                old = per_ns[names[i]]
+                m[res[0]] = m.pop(old)
+                _rename_tracked(ctx, path + (old,), res[0])
+            for g, m in res[1].items():
+                for ns, v in m.items():
+                    injections.setdefault(ns, {})[g] = v
     for k in set.intersection(*(set(m) for m in maps)):
         if all(isinstance(m[k], dict) for m in maps):
-            unify_group_keys(entries, groups, injections, k, [m[k] for m in maps])
+            unify_group_keys(entries, groups, injections, path + (k,), [m[k] for m in maps])
 
 
 def combine_env_groups(name: str, entries: list, groups: list, base: dict,
@@ -454,7 +499,7 @@ def combine_env_groups(name: str, entries: list, groups: list, base: dict,
         if res is None:
             continue
         template, injection = res
-        shown = _PH_RE.sub(r"{{ \1 }}", template)
+        shown = _PH_RE.sub(r"{{ \1 }}", template.lstrip("\x02"))
         if interactive and sys.stdin.isatty():
             try:
                 if input(f"[{name}] {'.'.join(path)}: {per_ns} -> {shown!r}  combine? [Y/n] "
@@ -467,7 +512,7 @@ def combine_env_groups(name: str, entries: list, groups: list, base: dict,
             for _, ctx, _ in per_instance:
                 ctx.full_env.pop(path[1], None)
         else:
-            set_nested(base, path, template)
+            set_nested(base, path, _leaf_value(template))
             for _, ctx, _ in per_instance:
                 _pop_nested(ctx.values, path)
         for g, m in injection.items():
@@ -509,13 +554,13 @@ CLUSTER_SHARED_DIR_NAME = "cluster-shared"
 # Output layout:
 #   <output>/base/<release-slug>.yaml            comprehensive, environment-
 #                                                 agnostic — NEVER an image
-#                                                 tag or env var. Written ONCE
+#                                                 tag. Written ONCE
 #                                                 and reused by every
 #                                                 namespace that runs this
 #                                                 microservice (see the base
 #                                                 registry / release_slugs in
 #                                                 main()).
-#   <output>/<namespace>/values/<slug>.yaml       image tag + literal env +
+#   <output>/<namespace>/values/<slug>.yaml       image tag + what differs +
 #                                                 minor per-namespace tweaks
 #                                                 ONLY — this is the hand-
 #                                                 editable, per-environment
@@ -779,10 +824,11 @@ def _represent_str_quoting_go_numerics(dumper, value):
     return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
 
 
-class _ValuesDumper(yaml.SafeDumper):
+class _ValuesDumper(_ForcedBlockEmitterMixin, yaml.SafeDumper):
     """SafeDumper plus the one representer above. Subclassed rather than
     registered on SafeDumper itself so importing this module cannot change YAML
-    output for anything else in the process."""
+    output for anything else in the process. The mixin keeps the literal block
+    for a multi-line string with trailing spaces (see yaml_style)."""
 
 
 _ValuesDumper.add_representer(str, _represent_str_quoting_go_numerics)
@@ -1725,14 +1771,12 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
         v["ports"] = ports_list_to_map(c["ports"])
     if c.get("env"):
         full_env = remap_env(env_list_to_map(c["env"]), ctx)
-        ctx.full_env = full_env
-        # Same reasoning as image tag: literal-value env vars are the
-        # minimal override's job. valueFrom-based env (ConfigMap/Secret/
-        # field/resource refs) stays here — it's structural wiring, not
-        # day-2 tuning, and has nowhere else to live.
-        structural_env = {k: val for k, val in full_env.items() if "value" not in val or "valueFrom" in val}
-        if structural_env:
-            v["env"] = structural_env
+        # See ENV_IN_VALUES: only under that flag are literal values held back
+        # for the minimal override; valueFrom wiring always stays here.
+        if ENV_IN_VALUES:
+            ctx.full_env = full_env
+        if split_env(full_env):
+            v["env"] = split_env(full_env)
     if c.get("envFrom"):
         v["envFrom"] = remap_envfrom(envfrom_list_to_map(c["envFrom"]), ctx)
     if c.get("resources"):
@@ -2324,6 +2368,22 @@ NAMESPACE_SCOPED_ONLY = True
 # --argocd-manifests: write the root ApplicationSet / Application (and the
 # cluster-shared Application). Off = the values tree only.
 ARGOCD_MANIFESTS = False
+# Written into the ArgoCD wiring when --values-repo-url is not given: an obvious
+# "fill me in" rather than a plausible URL that silently points nowhere.
+VALUES_REPO_PLACEHOLDER = "<values-repo-url>"
+# Literal env values (`value: x`) live in the release's values like everything
+# else, so one the same in every namespace lands in base/ once and only the
+# ones that differ reach values/. --env-in-values restores the old split, where
+# every literal env var was written into every namespace's values/ file.
+ENV_IN_VALUES = False
+
+
+def split_env(full_env: dict) -> dict:
+    """The env map that belongs in base-bound values: all of it, or under
+    --env-in-values only the valueFrom wiring (literals go to values/)."""
+    if not ENV_IN_VALUES:
+        return full_env
+    return {k: val for k, val in full_env.items() if "value" not in val or "valueFrom" in val}
 
 # --exclude / --keep: case-insensitive substrings matched against an object's
 # metadata.name and its label/annotation VALUES — deliberately never its data
@@ -2908,10 +2968,10 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             job_template[k] = main[k]
     if main.get("env"):
         full_env = remap_env(env_list_to_map(main["env"]), ctx)
-        structural_env = {k: val for k, val in full_env.items() if "value" not in val or "valueFrom" in val}
-        if structural_env:
-            job_template["env"] = structural_env
-        ctx.sub_full_env[("cronjobs", sub_name)] = full_env
+        if split_env(full_env):
+            job_template["env"] = split_env(full_env)
+        if ENV_IN_VALUES:
+            ctx.sub_full_env[("cronjobs", sub_name)] = full_env
     if main.get("envFrom"):
         job_template["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
     if main.get("resources"):
@@ -3003,10 +3063,10 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             entry[k] = main[k]
     if main.get("env"):
         full_env = remap_env(env_list_to_map(main["env"]), ctx)
-        structural_env = {k: val for k, val in full_env.items() if "value" not in val or "valueFrom" in val}
-        if structural_env:
-            entry["env"] = structural_env
-        ctx.sub_full_env[("jobs", sub_name)] = full_env
+        if split_env(full_env):
+            entry["env"] = split_env(full_env)
+        if ENV_IN_VALUES:
+            ctx.sub_full_env[("jobs", sub_name)] = full_env
     if main.get("envFrom"):
         entry["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
     if main.get("resources"):
@@ -3479,8 +3539,8 @@ def write_base_file(base_dir: Path, slug: str, values: dict) -> None:
     The comprehensive, environment-agnostic file for one microservice —
     written ONCE per release-slug (see the base registry in main()) and
     reused by every namespace whose release_slugs map points at it. Never
-    contains an image tag or literal env var; those live in each namespace's
-    own <folder>/values/<slug>.yaml.
+    contains an image tag; that, and any value that is not the same in every
+    namespace, lives in each namespace's own <folder>/values/<slug>.yaml.
     """
     base_dir.mkdir(parents=True, exist_ok=True)
     # A file someone moved into a base/ sub-folder stays there.
@@ -3500,7 +3560,7 @@ def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: s
     """
     Writes this microservice's per-NAMESPACE artifacts only — the shared
     comprehensive file lives in base/ and is written once by write_base_file,
-    not here. values/<slug>.yaml (image tag + literal env + minor per-
+    not here. values/<slug>.yaml (image tag + what differs + minor per-
     namespace tweaks) is a FLAT file — no per-microservice subdirectory —
     under the namespace's own output directory.
 
@@ -3524,7 +3584,7 @@ def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: s
     if minimal_extra:
         minimal = deep_merge(minimal_extra, minimal)
     header_min = (
-        f"# Auto-generated MINIMAL override for '{ms_name}' — image + literal env,\n"
+        f"# Auto-generated MINIMAL override for '{ms_name}' — image, replicas,\n"
         f"# plus (if present) this namespace's own structural difference from the\n"
         f"# shared base/{release_slug}.yaml (see conflicts_and_warnings.txt).\n"
         f"# This is the client's single source of truth for day-2 tuning; safe to hand-edit\n"
@@ -3660,99 +3720,103 @@ def build_root_application(name: str, values_repo_url: str, values_revision: str
     }
 
 
+# ms-applicationSet's own defaults (ms-applicationSet/values.yaml): a helm
+# parameter equal to one of these is left out of the root ApplicationSet.
+APPSET_CHART_DEFAULTS = {
+    "chartRepoURL": "https://github.com/devops-ezrahi/universal-chart.git",
+    "chartRevision": "main",
+    "chartPath": ".",
+}
+
+
+def _yaml_scalar(v: str) -> str:
+    """One scalar as it would appear in a block mapping, quoted only if needed."""
+    return yaml.safe_dump(v, default_style=None, width=1000).removesuffix("\n...\n").strip()
+
+
 def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path: str, chart_revision: str,
                               chart_path: str, values_repo_url: str, values_revision: str,
                               values_path: str = "", argocd_namespace: str = "argocd",
                               project: str = "default",
                               destination_server: str = "https://kubernetes.default.svc",
-                              destination_name: str = "", nested: bool = False) -> dict:
-    """One Application per NAMESPACE DIRECTORY in this tree.
+                              destination_name: str = "") -> str:
+    """One Application per namespace folder in this tree, as YAML text.
 
-    A git "directories" generator over the tree root: every top-level
-    directory is a namespace, except the handful that hold values or reports
-    rather than a namespace's releases (base/, report/, cluster-shared/),
-    which are excluded by name. So a new namespace is a new directory and
-    nothing else — no manifest to write, no ApplicationSet to add.
+    Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
+    a defaults.yaml, so one git files generator on '**/defaults.yaml' finds
+    them all at any depth, under both ArgoCD globbing modes. Each Application
+    deploys the ms-applicationSet chart, parameterised with its folder, which
+    fans out over <folder>/values/*.yaml and layers base/<file> ->
+    <folder>/defaults.yaml -> <folder>/values/<file>. Keeping that second level
+    in the chart keeps the layering rules in ONE place, versioned with the
+    chart they apply to.
 
-    Each generated Application deploys the ms-applicationSet chart from the
-    universal-chart repo, parameterised with that namespace's name and this
-    values repo's URL/branch. That chart renders the ApplicationSet which
-    actually fans out over <namespace>/values/*.yaml and layers
-    base/<file> -> <ns>/defaults -> <ns>/values/<file>. Keeping
-    that second level in the chart rather than generating it here is the
-    point: the layering rules live in ONE place, versioned with the chart
-    they apply to, instead of being copied into every values repo this
-    converter ever writes.
+    Written as text rather than dumped: the anchors (&repoURL, &branch,
+    &project) say each value once, so retargeting the tree is one edit, and
+    the commented exclude shows how to switch a namespace off without deleting
+    its folder.
     """
-    excluded = [BASE_DIR_NAME, CLUSTER_SHARED_DIR_NAME] + sorted(NON_NAMESPACE_OUTPUT_DIRS)
-    directories = [{"path": _values_repo_path(values_path, "*")}]
-    directories += [{"path": _values_repo_path(values_path, d), "exclude": True} for d in excluded]
-    generator = {"repoURL": values_repo_url, "revision": values_revision, "directories": directories}
-    ns_param, app_name, folder = "{{path.basename}}", "{{path.basename}}", None
-    if nested:
-        # Variant folders (prd/yellow, prd/yellow/eu) sit at any depth, and
-        # every namespace folder — plain or variant — has a defaults.yaml, so
-        # one files generator on '**/defaults.yaml' finds them all. The
-        # pattern works under both ArgoCD globbing modes: legacy lets '*'
-        # cross '/', the new one reads '**' as any depth.
-        # ponytail: a microservice literally named 'defaults' would also match; rename it if it ever exists.
-        generator = {"repoURL": values_repo_url, "revision": values_revision,
-                     "files": [{"path": _values_repo_path(values_path, f"**/{DEFAULTS_FILE_NAME}")}]}
-        segments = [p for p in values_path.split("/") if p]
-        rel = '.path.path' + (f' | trimPrefix "{"/".join(segments)}/"' if segments else "")
-        ns_param = "{{ index .path.segments %d }}" % len(segments)
-        folder = "{{ %s }}" % rel
-        app_name = '{{ %s | replace "/" "-" }}' % rel
-    appset = {
-        "apiVersion": "argoproj.io/v1alpha1",
-        "kind": "ApplicationSet",
-        "metadata": {
-            "name": name,
-            "namespace": argocd_namespace,
-            "labels": {"app": name},
-            "annotations": {"generated-by": "convert_to_universal_chart.py"},
-        },
-        "spec": {
-            **({"goTemplate": True, "goTemplateOptions": ["missingkey=error"]} if nested else {}),
-            "generators": [{"git": generator}],
-            "template": {
-                "metadata": {
-                    "name": app_name,
-                    "labels": {"app": name, "managed-by": "universal-chart-converter"},
-                },
-                "spec": {
-                    "project": project,
-                    "sources": [
-                        {
-                            "repoURL": chart_repo_url,
-                            "targetRevision": chart_revision,
-                            "path": appset_chart_path,
-                            "helm": {"parameters": [
-                                {"name": "namespace", "value": ns_param},
-                                *([{"name": "folder", "value": folder}] if folder else []),
-                                {"name": "originRepoURL", "value": values_repo_url},
-                                {"name": "originBranch", "value": values_revision},
-                                {"name": "originPath", "value": values_path},
-                                {"name": "project", "value": project},
-                                {"name": "destinationServer", "value": destination_server},
-                                *([{"name": "destinationName", "value": destination_name}]
-                                  if destination_name else []),
-                                {"name": "chartRepoURL", "value": chart_repo_url},
-                                {"name": "chartRevision", "value": chart_revision},
-                                {"name": "chartPath", "value": chart_path},
-                            ]},
-                        },
-                    ],
-                    "destination": _destination(destination_server, destination_name, argocd_namespace),
-                    "syncPolicy": {
-                        "automated": {"prune": True, "selfHeal": True},
-                        "syncOptions": ["ServerSideApply=true"],
-                    },
-                },
-            },
-        },
-    }
-    return appset
+    q = _yaml_scalar
+    segments = [p for p in values_path.split("/") if p]
+    rel = ".path.path" + (f' | trimPrefix "{"/".join(segments)}/"' if segments else "")
+    params = [
+        ("namespace", q("{{ index .path.segments %d }}" % len(segments))),
+        ("folder", q("{{ %s }}" % rel)),
+        ("originRepoURL", "*repoURL"),
+        ("originBranch", "*branch"),
+        *([("originPath", q(values_path))] if values_path else []),
+        ("project", "*project"),
+        ("destinationServer", q(destination_server)),
+        *([("destinationName", q(destination_name))] if destination_name else []),
+        *[(k, q(v)) for k, v in (("chartRepoURL", chart_repo_url), ("chartRevision", chart_revision),
+                                  ("chartPath", chart_path)) if v != APPSET_CHART_DEFAULTS[k]],
+    ]
+    lines = [
+        "apiVersion: argoproj.io/v1alpha1",
+        "kind: ApplicationSet",
+        "metadata:",
+        f"  name: &name {q(name)}",
+        "  labels:",
+        "    app: *name",
+        "spec:",
+        "  generators:",
+        "  - git:",
+        "      files:",
+        f"      - path: {q(_values_repo_path(values_path, '**/' + DEFAULTS_FILE_NAME))}",
+        "      # Switch a namespace off without deleting its folder:",
+        f"      # - path: {q(_values_repo_path(values_path, '<namespace>/**'))}",
+        "      #   exclude: true",
+        f"      repoURL: &repoURL {q(values_repo_url)}",
+        f"      revision: &branch {q(values_revision)}",
+        "  goTemplate: true",
+        "  goTemplateOptions:",
+        "  - missingkey=error",
+        "  template:",
+        "    metadata:",
+        "      labels:",
+        "        app: *name",
+        "        managed-by: universal-chart-converter",
+        "      name: " + q('{{ %s | replace "/" "-" }}' % rel),
+        "    spec:",
+        f"      project: &project {q(project)}",
+        "      sources:",
+        "      - helm:",
+        "          parameters:",
+        *[line for k, v in params for line in (f"          - name: {k}", f"            value: {v}")],
+        f"        path: {q(appset_chart_path)}",
+        f"        repoURL: {q(chart_repo_url)}",
+        f"        targetRevision: {q(chart_revision)}",
+        "      destination:",
+        f"        namespace: {q(argocd_namespace)}",
+        (f"        name: {q(destination_name)}" if destination_name
+         else "        server: https://kubernetes.default.svc"),
+        "      syncPolicy:",
+        "        automated:",
+        "          selfHeal: true",
+        "        syncOptions:",
+        "        - ServerSideApply=true",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _destination(server: str, name: str, namespace: str) -> dict:
@@ -5189,7 +5253,9 @@ def main() -> None:
                           "alongside the chart it deploys, so the layering rules are versioned "
                           "with the chart that applies them instead of being copied into every "
                           "values repo this converter writes.")
-    ap.add_argument("--values-repo-url", default="https://git.example.com/gitops/microservices-values.git")
+    ap.add_argument("--values-repo-url", default=VALUES_REPO_PLACEHOLDER,
+                     help="the git repo this output is pushed to. Unset, the ArgoCD wiring carries "
+                          f"the placeholder {VALUES_REPO_PLACEHOLDER} to replace by hand.")
     ap.add_argument("--values-revision", default="main")
     ap.add_argument("--values-path", default="",
                      help="subpath within --values-repo-url where this run's --output directory's "
@@ -5268,6 +5334,11 @@ def main() -> None:
                           "--env-suffixes is the namespace's, not a folder. The namespace name "
                           "becomes {{ .Release.Namespace }}; '--env-group namespace' enables only "
                           "that. Repeatable; a second group nests (dev/yellow/eu/).")
+    ap.add_argument("--env-in-values", nargs="?", const=True, default=False, type=_bool_arg,
+                     help="write every literal env var (value: x) into each namespace's values/ "
+                          "file, as before. Default false: a literal env var is treated like any "
+                          "other value — in base/ when it is the same in every namespace, in "
+                          "values/ only where it differs.")
     ap.add_argument("--interactive", action="store_true",
                      help="with --env-group, ask before each combination (needs a terminal).")
     ap.add_argument("--no-interactive", action="store_false", dest="interactive",
@@ -5305,8 +5376,10 @@ def main() -> None:
     args = ap.parse_args()
 
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS
+    global ENV_IN_VALUES
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
+    ENV_IN_VALUES = args.env_in_values
     EXCLUDE_PATTERNS, KEEP_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
         for opt in (args.exclude, args.keep))
@@ -5601,7 +5674,7 @@ def main() -> None:
             if remainder:
                 all_warnings.append(
                     f"[{namespace}/{name}] shares base/{name}.yaml with its other namespaces' "
-                    f"copies; {sorted(remainder.keys())} differ and were pushed into this "
+                    f"copies; {_leaf_paths(remainder)} differ and were pushed into this "
                     f"namespace's own values/{name}.yaml instead"
                 )
 
@@ -5764,6 +5837,9 @@ def main() -> None:
         print(f"ArgoCD wiring:                      {output_dir}/{ROOT_APP_FILE_NAME} "
               f"+ {output_dir}/{ROOT_APPSET_FILE_NAME}")
         print(f"Bootstrap with:                     kubectl apply -f {output_dir}/{ROOT_APP_FILE_NAME}")
+        if args.values_repo_url == VALUES_REPO_PLACEHOLDER:
+            print(f"NOTE: no --values-repo-url given; replace {VALUES_REPO_PLACEHOLDER} in "
+                  f"{ROOT_APPSET_FILE_NAME} and {ROOT_APP_FILE_NAME} before applying.")
     else:
         print("ArgoCD wiring:                      not written (pass --argocd-manifests true)")
 
@@ -5775,8 +5851,7 @@ def main() -> None:
             args.root_set_name or f"{args.root_app_name}-set", args.chart_repo_url, args.appset_chart_path, args.chart_revision,
             args.chart_path, args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
-            destination_server=args.destination_server, destination_name=args.argocd_cluster,
-            nested=any("/" in k for k in out_keys))
+            destination_server=args.destination_server, destination_name=args.argocd_cluster)
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"
@@ -5785,7 +5860,7 @@ def main() -> None:
             "# nothing else — no manifest to add, no apply to run.\n"
             f"# Deployed by {ROOT_APP_FILE_NAME}; do not apply it by hand.\n\n"
         )
-        (output_dir / ROOT_APPSET_FILE_NAME).write_text(appset_header + dump_yaml(root_appset), encoding="utf-8")
+        (output_dir / ROOT_APPSET_FILE_NAME).write_text(appset_header + root_appset, encoding="utf-8")
 
         root_app = build_root_application(args.root_app_name, args.values_repo_url, args.values_revision,
                                            args.values_path, argocd_namespace=args.argocd_namespace,

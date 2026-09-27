@@ -8,65 +8,53 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  annotations:
-    generated-by: convert_to_universal_chart.py
+  name: &name example-flat
   labels:
-    app: example-flat
-  name: example-flat
-  namespace: argocd
+    app: *name
 spec:
   generators:
   - git:
-      directories:
-      - path: '*'
-      - exclude: true
-        path: base
-      - exclude: true
-        path: cluster-shared
-      - exclude: true
-        path: ERRORS_ANALYSIS
-      - exclude: true
-        path: report
-      repoURL: https://github.com/devops-ezrahi/universal-chart-example-flat.git
-      revision: main
+      files:
+      - path: '**/defaults.yaml'
+      # Switch a namespace off without deleting its folder:
+      # - path: <namespace>/**
+      #   exclude: true
+      repoURL: &repoURL https://github.com/devops-ezrahi/universal-chart-example-flat.git
+      revision: &branch main
+  goTemplate: true
+  goTemplateOptions:
+  - missingkey=error
   template:
     metadata:
       labels:
-        app: example-flat
+        app: *name
         managed-by: universal-chart-converter
-      name: '{{path.basename}}'
+      name: '{{ .path.path | replace "/" "-" }}'
     spec:
-      destination:
-        namespace: argocd
-        server: https://kubernetes.default.svc
-      project: default
+      project: &project default
       sources:
       - helm:
           parameters:
           - name: namespace
-            value: '{{path.basename}}'
+            value: '{{ index .path.segments 0 }}'
+          - name: folder
+            value: '{{ .path.path }}'
           - name: originRepoURL
-            value: https://github.com/devops-ezrahi/universal-chart-example-flat.git
+            value: *repoURL
           - name: originBranch
-            value: main
-          - name: originPath
-            value: ''
+            value: *branch
           - name: project
-            value: default
+            value: *project
           - name: destinationServer
             value: https://kubernetes.default.svc
-          - name: chartRepoURL
-            value: https://github.com/devops-ezrahi/universal-chart.git
-          - name: chartRevision
-            value: main
-          - name: chartPath
-            value: .
         path: ms-applicationSet
         repoURL: https://github.com/devops-ezrahi/universal-chart.git
         targetRevision: main
+      destination:
+        namespace: argocd
+        server: https://kubernetes.default.svc
       syncPolicy:
         automated:
-          prune: true
           selfHeal: true
         syncOptions:
         - ServerSideApply=true

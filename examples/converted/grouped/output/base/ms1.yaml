@@ -16,6 +16,17 @@ env:
     value: http://db.{{ .Values.environment }}.svc:5432
   ENVIRONMENT:
     value: '{{ .Values.environment }}'
+  LOG_LEVEL:
+    value: info
+
+volumes:
+  settings-{{ .Values.color }}:
+    configMap:
+      name: ms1-settings-{{ .Values.color }}
+
+volumeMounts:
+  settings-{{ .Values.color }}:
+    mountPath: /etc/ms1
 
 service:
   enabled: true
@@ -25,5 +36,22 @@ service:
       port: 8080
       targetPort: 8080
   type: ClusterIP
+
+configMaps:
+  ms1-settings-{{ .Values.color }}:
+    data:
+      app.conf: |
+        color = {{ .Values.color }}
+        retries = 3
+
+cronjobs:
+  ms1-report-{{ .Values.color }}:
+    jobTemplate:
+      args:
+      - --color
+      - '{{ .Values.color }}'
+      containerName: report
+      restartPolicy: OnFailure
+    schedule: 0 2 * * *
 
 fullnameOverride: ms1-{{ .Values.color }}

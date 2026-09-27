@@ -782,7 +782,7 @@ repo shaped like this:
   base/<release>.yaml            # comprehensive, environment-agnostic, shared across namespaces
   <namespace>/
     defaults.yaml                # what every release in this namespace has in common
-    values/<release>.yaml        # image tag + literal env + this namespace's tweaks
+    values/<release>.yaml        # image tag + whatever differs from base here
     values/<group>/<release>.yaml  # optional grouping sub-folder (release name unchanged)
     <variant>/                   # optional variant folder, e.g. prd/yellow (nests: prd/yellow/eu):
       defaults.yaml              #   deploys into <namespace>, shares base/, carries its group value
