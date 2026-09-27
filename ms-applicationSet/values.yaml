@@ -15,6 +15,7 @@ originPath: ""
 folder: ""
 # Glob under <namespace>/values/. The default also finds files in sub-folders
 # with ArgoCD's legacy git-file globbing; use "**/*.yaml" with the new one.
+# base/ mirrors those sub-folders: values/group1/ms1.yaml reads base/group1/ms1.yaml.
 valuesGlob: "*.yaml"
 
 project: default

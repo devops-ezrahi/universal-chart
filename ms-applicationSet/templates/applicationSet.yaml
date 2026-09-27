@@ -18,9 +18,10 @@
   The filename is the same in base/ and values/, which is what keeps the chain
   self-consistent for a given release.
 
-  values/ may hold sub-folders purely for grouping (values/group1/ms1.yaml): a
-  release is still named after its file, reads base/<file> and is layered from
-  where it actually sits. File names must therefore stay unique per namespace.
+  values/ may hold sub-folders for grouping (values/group1/ms1.yaml): a release
+  is still named after its file, and base/ mirrors the sub-folder, so it reads
+  base/group1/ms1.yaml. base/ is shared, so every folder deploying ms1 must keep
+  it in the same sub-folder. File names must stay unique per namespace.
   Legacy git-file globbing lets '*' cross '/', so the default glob finds them;
   with --enable-new-git-file-globbing set valuesGlob (see values.yaml).
 
@@ -75,7 +76,7 @@ spec:
             # without a nameOverride in every values file.
             releaseName: '{{ printf "{{ .path.filename | trimSuffix \".yaml\" }}" }}'
             valueFiles:
-              - '$Values/{{ $prefix }}base/{{ printf "{{ .path.filename }}" }}'
+              - '$Values/{{ $prefix }}base{{ printf "{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $folder }}'
               - '$Values/{{ $prefix }}{{ $folder }}/defaults.yaml'
               - '$Values/{{ printf "{{ .path.path }}/{{ .path.filename }}" }}'
         - repoURL: {{ $repo | quote }}

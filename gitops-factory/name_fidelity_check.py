@@ -20,7 +20,7 @@ import yaml
 
 from convert_to_universal_chart import (  # the converter's own tree rules, never re-derived
     BASE_DIR_NAME, CLUSTER_SHARED_DIR_NAME, DEFAULTS_FILE_NAME, VALUES_DIR_NAME,
-    is_input_ns, k8s_ns, namespace_dirs_of, values_files,
+    base_file_for, is_input_ns, k8s_ns, namespace_dirs_of, values_files,
 )
 
 # Objects the chart is entitled to create even though no raw manifest declares
@@ -80,7 +80,7 @@ def rendered_names(out_dir: pathlib.Path, chart: pathlib.Path):
             # Same chain the ApplicationSet builds, for every release (shared
             # included): base -> <folder>/defaults.yaml -> values. Rendered IN
             # the namespace, so {{ .Release.Namespace }} resolves as deployed.
-            chain = [f for f in (out_dir / BASE_DIR_NAME / f"{slug}.yaml",
+            chain = [f for f in (base_file_for(out_dir / BASE_DIR_NAME, ns_dir / VALUES_DIR_NAME, vf),
                                  ns_dir / DEFAULTS_FILE_NAME, vf) if f.exists()]
             args = []
             for f in chain:
