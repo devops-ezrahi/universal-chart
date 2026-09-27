@@ -13,9 +13,9 @@ convert_to_universal_chart.py as one command.
    is handed to it unchanged, so `--env-suffixes`, `--env-group`,
    `--argocd-manifests`, `--values-repo-url`, `--skip-verify`… all work as
    documented in `convert_to_universal_chart.py --help`.
-3. `-o` ends up holding the values tree and nothing else. The importer's dump
-   goes to a temp dir (keep it with `--dump`) and the converter's report is
-   moved beside the output (`<out>-report/`, or `--report`).
+3. `-o` ends up holding the values tree and nothing else, and nothing else is
+   left anywhere: the importer's dump and the converter's report are deleted.
+   Keep them with `--dump DIR` / `--report DIR`.
 
 No cluster at hand? `--from-yaml` takes files or folders of manifests
 (`kubectl get -o yaml` output, a List, anything) and answers the importer's
@@ -109,7 +109,7 @@ def main() -> int:
     ap.add_argument("--default-namespace", default="",
                     help="with --from-yaml: namespace for documents that name none")
     ap.add_argument("--dump", help="keep the importer's per-namespace dump here instead of a temp dir")
-    ap.add_argument("--report", help="where the converter's report goes (default: <output>-report)")
+    ap.add_argument("--report", help="keep the converter's report here (default: deleted)")
     args, converter_args = ap.parse_known_args()
     for flag in ("--input", "--output"):
         if flag in converter_args:
@@ -123,7 +123,7 @@ def main() -> int:
         ap.error("give at least one -n NAMESPACE (or --from-yaml)")
 
     out = Path(args.output).resolve()
-    report = Path(args.report).resolve() if args.report else out.with_name(out.name + "-report")
+    report = Path(args.report).resolve() if args.report else None
     dump = Path(args.dump).resolve() if args.dump else Path(tempfile.mkdtemp(prefix="ns2chart-"))
     if args.dump and dump.exists() and any(dump.iterdir()):
         sys.exit(f"--dump {dump} is not empty — the converter would read whatever is already there")
@@ -164,9 +164,13 @@ def main() -> int:
 
         # 3. Leave only the tree in the output.
         if (out / "report").is_dir():
-            shutil.rmtree(report, ignore_errors=True)
-            shutil.move(str(out / "report"), str(report))
-            print(f"==> report: {report}")
+            if report:
+                shutil.rmtree(report, ignore_errors=True)
+                shutil.move(str(out / "report"), str(report))
+                print(f"==> report: {report}")
+            else:
+                shutil.rmtree(out / "report")
+                print("==> report not kept (the path above is gone) — pass --report DIR to keep it")
         if ni.FETCH_FAILURES:
             print(f"==> {len(ni.FETCH_FAILURES)} referenced object(s) could not be fetched:", file=sys.stderr)
             for f in ni.FETCH_FAILURES:

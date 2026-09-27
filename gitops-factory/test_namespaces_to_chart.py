@@ -41,5 +41,5 @@ def test_ingress_goes_with_its_service_and_output_is_only_the_tree(tmp_path):
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
     assert "ingress" in (out / "base" / "web.yaml").read_text(encoding="utf-8")
-    assert not (out / "report").exists() and (tmp_path / "out-report").is_dir()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["in.yaml", "out"]  # no report, no dump
     assert sorted(p.name for p in out.iterdir()) == ["base", "shop-dev"]
