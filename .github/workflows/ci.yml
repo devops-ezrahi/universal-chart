@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  # Not an unfiltered `on: push` — the Stop hook auto-pushes a checkpoint
+  # commit to origin every turn, which would fire this on every branch.
+  # main = stable channel, dev = prerelease channel (see .releaserc.json).
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  HELM_VERSION: v4.2.2 # matches the dev machine
+  HELM_UNITTEST_VERSION: v1.1.2
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      # --verify=false: Helm 4 refuses unsigned plugins otherwise.
+      - run: helm plugin install https://github.com/helm-unittest/helm-unittest.git --version "$HELM_UNITTEST_VERSION" --verify=false
+
+      - run: helm lint .
+      - run: helm lint ms-applicationSet
+      - run: helm unittest .
+
+      # The converter's regression suite renders every fixture with the helm
+      # installed above, so it lives in the same job.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: gitops-factory/requirements.txt
+      - run: pip install -r gitops-factory/requirements.txt
+      - run: python -m pytest -q
+        working-directory: gitops-factory
+      - run: node gitops-factory/ui/core-logic.test.js
+
+  # The studio (ui/) is a standalone page, not part of the chart that gets
+  # released — so its tests report here but do not gate `pack`.
+  # ponytail: move into `test` once ui/generate.test.js is green again.
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  # Release + whitening pack on push to main (stable) or dev (prerelease).
+  # Gated on `test` so a broken commit is never released or handed off.
+  pack:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release commit and the v* tag
+      issues: write # @semantic-release/github comments on released issues
+      pull-requests: write # ...and on released PRs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # semantic-release reads every tag and commit
+
+      - uses: actions/checkout@v4
+        with:
+          repository: devops-ezrahi/whitening-packer
+          path: .packer
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Pre-1.0 development builds. semantic-release has no 0.x mode: with no
+      # tag at all it would start at 1.0.0. A local v0.1.0 on the root commit
+      # gives it a 0.x baseline; it is never pushed, and once the first real
+      # v0.x tag exists on origin this is a no-op. .releaserc.json maps
+      # breaking changes to minor so the line stays below 1.0.0 — going 1.0
+      # is a deliberate edit to that rule, not something a commit can trigger.
+      - name: Seed the 0.x baseline
+        run: |
+          git tag --list 'v*' | grep -q . || git tag v0.1.0 "$(git rev-list --max-parents=0 HEAD)"
+
+      # Derives the version from the Conventional Commits since the last v*
+      # tag, writes it into both Chart.yaml files, commits that back with
+      # [skip ci], tags v<version> (X.Y.Z-dev.N on dev) and cuts the GitHub
+      # release. Must run before the pack: pack.py reads the version from
+      # Chart.yaml. No package.json here, so the plugins come in via npx -p.
+      - id: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          before=$(sed -n 's/^version: //p' Chart.yaml)
+          npx -y -p semantic-release@24 -p @semantic-release/exec@6 -p @semantic-release/git@10 semantic-release
+          after=$(sed -n 's/^version: //p' Chart.yaml)
+          echo "version=$after" >> "$GITHUB_OUTPUT"
+          if [ "$before" = "$after" ]; then
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "no new version — skipping pack"
+          else
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # department/team/repository come from here; the packer writes them into
+      # the pack's repository/config.json. No Dockerfiles and no root
+      # package.json, so there are no images or deps to bundle.
+      - id: pack
+        if: steps.release.outputs.released == 'true'
+        env:
+          WHITENING_DEPARTMENT: ultra
+          WHITENING_TEAM: MA
+          WHITENING_REPOSITORY: universal-chart
+        run: echo "pack=$(python3 .packer/pack.py . --no-images --no-deps)" >> "$GITHUB_OUTPUT"
+
+      # Onto the release semantic-release just cut: one version, one tag, one
+      # release, and the pack as its asset.
+      - if: steps.release.outputs.released == 'true'
+        run: gh release upload --clobber "v$VERSION" "$PACK"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PACK: ${{ steps.pack.outputs.pack }}
