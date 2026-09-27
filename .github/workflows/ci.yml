@@ -37,6 +37,10 @@ jobs:
           cache: pip
           cache-dependency-path: gitops-factory/requirements.txt
       - run: pip install -r gitops-factory/requirements.txt
+      # A few regression tests read run_all.py's report/ and renames.json,
+      # which are generated, not committed.
+      - run: python run_all.py
+        working-directory: gitops-factory
       - run: python -m pytest -q
         working-directory: gitops-factory
       - run: node gitops-factory/ui/core-logic.test.js
