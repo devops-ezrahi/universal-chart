@@ -752,10 +752,10 @@ TOP_LEVEL_KEY_ORDER = [
     "configMaps", "secrets", "secretStores", "clusterSecretStores", "externalSecretsApiVersion",
     "externalSecrets", "checksums", "cronjobs", "jobs", "hpa", "vpa", "pdb",
     "nodeSelector", "tolerations", "topologySpreadConstraints", "priorityClassName", "runtimeClassName",
-    "schedulerName", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
+    "schedulerName", "hostNetwork", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
     "hostAliases", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
     "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations",
-    "podAnnotations", "podLabels", "labels", "sidecars", "initContainers", "initContainerOrder",
+    "podAnnotations", "podLabels", "labels", "annotations", "sidecars", "initContainers", "initContainerOrder",
 ]
 
 
