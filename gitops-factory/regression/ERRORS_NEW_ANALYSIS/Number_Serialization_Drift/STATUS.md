@@ -218,7 +218,7 @@ gained `cluster-shared/`, `base/platform-ops-prd-shared.yaml` and
 `platform-ops-prd/values/shared.yaml`. This is not cosmetic churn and it is not
 this folder's defect: namespace-scoped mode **cannot** currently run on this
 corpus, because two namespaces both claim `ClusterRole/log-agent-reader`, and
-`run_all.py` itself prints `--cluster-scoped` as the remedy. The mode switch was
+`convert_and_verify.py` itself prints `--cluster-scoped` as the remedy. The mode switch was
 forced by the input, not chosen — but it was made here, so it is recorded here.
 
 ## 9. OBSERVED, DEFERRED
@@ -242,7 +242,7 @@ forced by the input, not chosen — but it was made here, so it is recorded here
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
 python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Number_Serialization_Drift/test -v
-python run_all.py --cluster-scoped --input namespaces-showcase --output <scratch>\out24
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out24
 ```
 
 ---

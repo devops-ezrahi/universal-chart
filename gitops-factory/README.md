@@ -10,7 +10,7 @@ itself — so `--chart` defaults to `..` and nothing else needs cloning.
 (It used to be the separate, now archived, `devops-ezrahi/gitops-factory` repo.)
 
 `output/`, `output-showcase/` and `output-live-demo/` are generated and are not
-committed; `python3 run_all.py` rebuilds the showcase from `namespaces-showcase/`.
+committed; `python3 convert_and_verify.py` rebuilds the showcase from `namespaces-showcase/`.
 The large mock dump `namespaces/` is not committed either — generate it with
 `python generate_mock_environment.py --output namespaces --seed 42`.
 
@@ -44,7 +44,7 @@ The large mock dump `namespaces/` is not committed either — generate it with
 | `values_editor.py` | Values-authoring/editing CLI for microservices you're adding or tuning **by hand** (not converted from a raw dump) — defaults.yaml-aware, so it never asks you to duplicate what a lower layer already covers. See [values_editor.py — hand-authoring microservices](#values_editorpy--hand-authoring-microservices). |
 | `ui/multi-app-manager.html` | The same idea as `values_editor.py`, as a browser UI — open multiple apps' output trees side by side, browse/edit visually, no install. See [ui/multi-app-manager.html — browser UI](#uimulti-app-managerhtml--browser-ui). |
 | `generate_mock_environment.py` | Generates a large, deliberately messy mock raw-dump fixture. |
-| `run_all.py` | Convert + name check + fidelity check + sanitize, in one command. The default entry point. |
+| `convert_and_verify.py` | Convert + name check + fidelity check + sanitize, in one command. The default entry point. |
 | `regression/` | The pytest regression suite — one folder per fixed defect (`STATUS.md`, `error.txt`, fixtures, a test). `pytest` runs it; see `pytest.ini`. |
 | `docs/` | `BUGFIX-REPORT.md` (what was fixed in the chart and the converter) and `README_REGRESSION_ANALYSIS.md` (cross-reference of the two analysis rounds). |
 

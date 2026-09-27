@@ -230,7 +230,7 @@ def test_both_colliding_owners_actually_reference_the_configmap():
 def test_the_converter_records_every_collision_rename():
     import json
     f = GITOPS_DIR / "output-showcase" / "report" / "renames.json"
-    assert f.is_file(), "renames.json missing; run run_all.py"
+    assert f.is_file(), "renames.json missing; run convert_and_verify.py"
     renames = json.loads(f.read_text(encoding="utf-8"))
     assert any(r["from"] == "job-defaults" and r["to"] == "nightly-report-job-defaults"
                and r["namespace"] == "background-jobs" for r in renames), renames

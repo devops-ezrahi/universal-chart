@@ -5,7 +5,7 @@ node_modules/
 # Mock raw dump — regenerate with `python generate_mock_environment.py --output namespaces --seed 42`
 namespaces/
 
-# Converter output — regenerate with `python3 run_all.py`
+# Converter output — regenerate with `python3 convert_and_verify.py`
 output/
 output-showcase/
 output-live-demo/

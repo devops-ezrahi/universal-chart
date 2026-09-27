@@ -93,7 +93,7 @@ pins this so the shortcut is caught rather than discovered.
 Fixture added, converter untouched:
 
 ```
-python run_all.py --cluster-scoped --input namespaces-showcase --output <scratch>\out23RED
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out23RED
 
     fields LOST                                  1
     fields CHANGED                               0
@@ -113,7 +113,7 @@ levels; only the unhandled level reported.
 ## 5. Proof — GREEN
 
 ```
-python run_all.py --cluster-scoped --input namespaces-showcase --output <scratch>\out23GREEN
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out23GREEN
 
     fields LOST                                  0
     fields CHANGED                               0
@@ -219,7 +219,7 @@ folder 13's deliberate rename, unchanged and unrelated.
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
 python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Thanos_OwnerReferences_Lost/test -v
-python run_all.py --cluster-scoped --input namespaces-showcase --output <scratch>\out23
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out23
 ```
 
 ---

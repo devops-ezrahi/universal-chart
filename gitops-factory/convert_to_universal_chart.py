@@ -3893,7 +3893,7 @@ def helm_template(chart: Path, release: str, namespace: str, value_files: list[P
     #
     # This is the ONE place the pipeline crosses a process boundary; every
     # read_text/write_text in this file already passes encoding="utf-8".
-    # `errors="replace"` matches the known-good pattern in run_all.py: a byte
+    # `errors="replace"` matches the known-good pattern in convert_and_verify.py: a byte
     # sequence that is genuinely not UTF-8 should surface as U+FFFD in the diff,
     # not abort a 25-release verification run.
     result = subprocess.run(cmd, capture_output=True, text=True,

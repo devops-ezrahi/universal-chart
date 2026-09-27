@@ -81,7 +81,7 @@ def test_the_repos_own_report_has_NO_unparsed_lines():
        not anticipate. Novel error formats are more likely to be genuinely new
        problems than the 117 that fit known patterns."
     """
-    assert REPORT.is_file(), "run run_all.py first"
+    assert REPORT.is_file(), "run convert_and_verify.py first"
     result = san.parse(REPORT.read_text(encoding="utf-8"))
     assert result.unparsed == [], "\n".join(repr(x) for x in result.unparsed)
 
