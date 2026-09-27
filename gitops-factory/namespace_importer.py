@@ -1429,6 +1429,22 @@ def handle_full_namespace(namespace, args):
         shared_sink.extend(all_resources.pop(SHARED_KEY, {}).get("resources", []))
         combined.update(all_resources)
 
+    # An Ingress goes with the microservice whose Service(s) it routes to, the
+    # way a Route already does. In shared.yaml the converter builds it into a
+    # release with no Service, and the chart then refuses to render the backend.
+    svc_owner = {name: key for key, entry in combined.items()
+                 for name, kind, _ in entry.get("resources", []) if kind == "Service"}
+    for ing in [r for r in other_extras if r.get("kind") == "Ingress"]:
+        spec = ing.get("spec") or {}
+        backends = [spec.get("defaultBackend")] + [p.get("backend") for rule in spec.get("rules") or []
+                                                    for p in (rule.get("http") or {}).get("paths") or []]
+        owners = {svc_owner.get(((b or {}).get("service") or {}).get("name")) for b in backends if b}
+        if len(owners) == 1 and None not in owners:
+            combined[owners.pop()]["resources"].append(
+                ((ing.get("metadata") or {}).get("name", "unknown"), "Ingress",
+                 yaml.dump(ing, default_flow_style=False, sort_keys=False)))
+            other_extras.remove(ing)
+
     # Everything else in the namespace goes to the combined shared.yaml:
     # RBAC, PDBs, ingresses, NADs, unmatched
     # HPAs, and all services/routes no workload claimed (e.g. the per-ordinal
