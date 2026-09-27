@@ -7,7 +7,10 @@ metadata:
   name: {{ .name | default (include "universal-chart.fullname" $) }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" $ "own" .labels) | nindent 4 }}
-  {{- with merge ($.Values.commonAnnotations | default dict) (.annotations | default dict) }}
+  {{- /* Argo CD deletes and recreates a Route instead of patching it: OpenShift
+         refuses a spec.host change without routes/custom-host, so a plain
+         apply of a new host fails every sync. A recreate is a moment of 503s. */}}
+  {{- with merge (dict) ($.Values.commonAnnotations | default dict) (.annotations | default dict) (dict "argocd.argoproj.io/sync-options" "Force=true,Replace=true") }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

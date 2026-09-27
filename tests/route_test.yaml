@@ -111,3 +111,33 @@ tests:
       - equal:
           path: spec.wildcardPolicy
           value: None
+
+  - it: should let Argo CD force-replace the Route
+    set:
+      route:
+        enabled: true
+      service:
+        ports:
+          http:
+            port: 80
+            targetPort: http
+    asserts:
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-options"]
+          value: Force=true,Replace=true
+
+  - it: should keep a sync-options annotation set in values
+    set:
+      route:
+        enabled: true
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+      service:
+        ports:
+          http:
+            port: 80
+            targetPort: http
+    asserts:
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-options"]
+          value: Replace=true
