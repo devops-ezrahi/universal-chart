@@ -31,6 +31,13 @@ spec:
           envFrom:
             - configMapRef:
                 name: filter-alerts
+          volumeMounts:
+            - name: certs-yellow
+              mountPath: /etc/certs/yellow
+      volumes:
+        - name: certs-yellow
+          secret:
+            secretName: certs-yellow
 ---
 apiVersion: v1
 kind: Service

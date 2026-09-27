@@ -384,6 +384,48 @@ def _pop_nested(d: dict, path: tuple) -> None:
             del d[path[0]]
 
 
+# Maps keyed by a volume's name. A volume 'certs-black' next to 'certs-yellow'
+# is the same volume, but as two different KEYS it never reaches the leaf pass
+# of combine_env_groups, so both copies stayed in values/. The chart tpl's keys
+# too (universal-chart.tplWalk). Names side tables track by path (jobs,
+# cronjobs, sidecars, initContainers — see sub_raw_image) must not be renamed.
+TEMPLATED_KEY_MAPS = ("volumes", "volumeMounts", "volumeClaimTemplates")
+
+
+def unify_group_keys(entries: list, groups: list, injections: dict,
+                     parent: str = "", maps: "list | None" = None) -> None:
+    """Rename, in place, keys of TEMPLATED_KEY_MAPS that differ between one
+    release's namespaces only by group tokens to their shared template, so
+    common_subtree and combine_env_groups see one key. Run before both; the
+    group values each namespace needs land in injections[ns]."""
+    names = [ns for ns, _ in entries]
+    if maps is None:
+        maps = [ctx.values for _, ctx in entries]
+    if parent in TEMPLATED_KEY_MAPS:
+        # Same shape once every token is blanked -> candidate for one key.
+        shapes: dict = {}
+        for i, (ns, m) in enumerate(zip(names, maps)):
+            subs = {k8s_ns(ns): "\x01"} | {t: "\x01" for g in groups for t in g.tokens}
+            for k in m:
+                shapes.setdefault(_token_re(subs).sub("\x01", k), {}).setdefault(i, []).append(k)
+        for hit in shapes.values():
+            if len(hit) != len(maps) or any(len(ks) != 1 for ks in hit.values()):
+                continue
+            per_ns = {names[i]: ks[0] for i, ks in hit.items()}
+            if len(set(per_ns.values())) < 2:
+                continue
+            res = combine_values(per_ns, groups)
+            if res is not None:
+                for i, m in enumerate(maps):
+                    m[res[0]] = m.pop(per_ns[names[i]])
+                for g, m in res[1].items():
+                    for ns, v in m.items():
+                        injections.setdefault(ns, {})[g] = v
+    for k in set.intersection(*(set(m) for m in maps)):
+        if all(isinstance(m[k], dict) for m in maps):
+            unify_group_keys(entries, groups, injections, k, [m[k] for m in maps])
+
+
 def combine_env_groups(name: str, entries: list, groups: list, base: dict,
                        interactive: bool = False) -> "tuple[dict, list]":
     """Lift every value that differs between one release's namespaces only by
@@ -5530,11 +5572,16 @@ def main() -> None:
             write_base_file(base_dir, name, ctx.values)
             release_slugs[(namespace, name)] = name
             continue
+        key_injections: dict = {}
+        if env_groups:
+            unify_group_keys(entries, env_groups, key_injections)
         shared_base = common_subtree([ctx.values for _, ctx in entries])
         injections = {}
         if env_groups:
             injections, applied = combine_env_groups(name, entries, env_groups, shared_base,
                                                      args.interactive)
+            for ns, inj in key_injections.items():
+                injections[ns] = {**inj, **injections.get(ns, {})}
             env_group_applied += applied
             all_warnings += [f"[{name}] env-group: {a['path']} -> {a['template']!r}"
                              + (f", injected {a['injection']}" if a["injection"] else "")

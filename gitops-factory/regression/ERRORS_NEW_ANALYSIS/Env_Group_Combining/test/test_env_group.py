@@ -51,6 +51,10 @@ def test_env_group_merges_into_one_templated_base(tmp_path):
     # A source '{{' is escaped so the chart's tpl emits it literally.
     assert base["configMaps"]["filter-alerts"]["data"]["ALERT"] == \
         '{{ "{{" }} $labels.pod }} is down in {{ .Release.Namespace }}'
+    # A volume named after its colour is one templated key, not a copy per namespace.
+    vol = "certs-{{ .Values.color }}"
+    assert base["volumes"][vol]["secret"]["secretName"] == vol
+    assert base["volumeMounts"][vol]["mountPath"] == "/etc/certs/{{ .Values.color }}"
 
     # The color token in each file name moved the release into a folder of
     # that name; the folder's defaults.yaml says which color it is.

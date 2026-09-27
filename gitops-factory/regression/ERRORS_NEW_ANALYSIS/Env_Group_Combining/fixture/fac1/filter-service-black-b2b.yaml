@@ -31,6 +31,13 @@ spec:
           envFrom:
             - configMapRef:
                 name: filter-alerts
+          volumeMounts:
+            - name: certs-black
+              mountPath: /etc/certs/black
+      volumes:
+        - name: certs-black
+          secret:
+            secretName: certs-black
 ---
 apiVersion: v1
 kind: Service
