@@ -83,16 +83,9 @@ jobs:
         with:
           node-version: 20
 
-      # Pre-1.0 development builds. semantic-release has no 0.x mode: with no
-      # tag at all it would start at 1.0.0. A local v0.1.0 on the root commit
-      # gives it a 0.x baseline; it is never pushed, and once the first real
-      # v0.x tag exists on origin this is a no-op. .releaserc.json maps
-      # breaking changes to minor so the line stays below 1.0.0 — going 1.0
-      # is a deliberate edit to that rule, not something a commit can trigger.
-      - name: Seed the 0.x baseline
-        run: |
-          git tag --list 'v*' | grep -q . || git tag v0.1.0 "$(git rev-list --max-parents=0 HEAD)"
-
+      # Development builds: with no v* tag yet, semantic-release's first
+      # release on `dev` is 1.0.0-dev.1, then -dev.2, ... Merging dev into main
+      # cuts 1.0.0 itself.
       # Derives the version from the Conventional Commits since the last v*
       # tag, writes it into both Chart.yaml files, commits that back with
       # [skip ci], tags v<version> (X.Y.Z-dev.N on dev) and cuts the GitHub
@@ -102,15 +95,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          before=$(sed -n 's/^version: //p' Chart.yaml)
           npx -y -p semantic-release@24 -p @semantic-release/exec@6 -p @semantic-release/git@10 semantic-release
-          after=$(sed -n 's/^version: //p' Chart.yaml)
-          echo "version=$after" >> "$GITHUB_OUTPUT"
-          if [ "$before" = "$after" ]; then
+          # The new v* tag on HEAD is the signal, not a Chart.yaml diff: the
+          # first release (1.0.0-dev.1) matches what Chart.yaml already says.
+          tag=$(git tag --points-at HEAD --list 'v*' | head -n1)
+          if [ -n "$tag" ]; then
+            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
             echo "released=false" >> "$GITHUB_OUTPUT"
             echo "no new version — skipping pack"
-          else
-            echo "released=true" >> "$GITHUB_OUTPUT"
           fi
 
       # department/team/repository come from here; the packer writes them into
