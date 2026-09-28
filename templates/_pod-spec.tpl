@@ -33,7 +33,10 @@ Call: {{- include "universal-chart.podSpec" . | nindent 6 }}
 */}}
 {{- define "universal-chart.podSpec" -}}
 serviceAccountName: {{ include "universal-chart.serviceAccountName" . }}
+{{- /* Unset = omitted, as on a manifest that never set it; false must still render. */}}
+{{- if kindIs "bool" .Values.serviceAccount.automountServiceAccountToken }}
 automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+{{- end }}
 
 {{- /* ── Image pull secrets ─────────────────────────── */}}
 {{- with .Values.imagePullSecrets }}

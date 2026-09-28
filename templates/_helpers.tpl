@@ -114,8 +114,16 @@ Two details are load-bearing:
 Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
 */}}
 {{- define "universal-chart.objectLabels" -}}
+{{- /* chartLabels: false = render the object's own labels verbatim (plus
+       commonLabels), no chart identity labels. The converter sets it: a live
+       object carries its own name/instance/version/helm.sh/chart, and
+       re-deriving them from this release rewrites every one of them. */}}
+{{- if not .root.Values.chartLabels }}
+{{- toYaml (merge (dict) (.own | default dict) (.root.Values.commonLabels | default dict)) }}
+{{- else }}
 {{- $core := fromYaml (include "universal-chart.labels" .root) }}
 {{- toYaml (merge $core (.own | default dict)) }}
+{{- end }}
 {{- end }}
 
 {{- define "universal-chart.labels" -}}
@@ -134,8 +142,15 @@ stay identical forever, including across upgrades where selector fields are
 immutable.
 */}}
 {{- define "universal-chart.selectorLabels" -}}
+{{- /* .Values.selectorLabels pins the selector to a live object's own
+       matchLabels — selector is immutable on a StatefulSet/Deployment, so
+       re-deriving it from a differently named release cannot even sync. */}}
+{{- if .Values.selectorLabels }}
+{{- toYaml .Values.selectorLabels }}
+{{- else }}
 app.kubernetes.io/name: {{ include "universal-chart.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
 {{- end }}
 
 {{/*

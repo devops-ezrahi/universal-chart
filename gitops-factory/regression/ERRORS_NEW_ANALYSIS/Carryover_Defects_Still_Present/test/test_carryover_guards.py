@@ -347,8 +347,10 @@ def test_carryover_9_selector_suppression_stayed_scoped_to_selectors():
     ever widens to whole objects or whole label sets, every carryover above
     becomes unobservable at once — which is how a report reaches 0 while the
     defects are all still there."""
-    assert conv._fidelity_ignored_path("Deployment", ("spec", "selector", "matchLabels")) is True
-    assert conv._fidelity_ignored_path("Service", ("spec", "selector")) is True
+    # Workload/Service selectors are carried now, so they are compared too.
+    assert conv._fidelity_ignored_path("Deployment", ("spec", "selector", "matchLabels")) is False
+    assert conv._fidelity_ignored_path("Service", ("spec", "selector")) is False
+    assert conv._fidelity_ignored_path("PodDisruptionBudget", ("spec", "selector", "matchLabels")) is True
     # ...but nothing broader.
     assert conv._fidelity_ignored_path("Deployment", ("metadata", "labels")) is False
     assert conv._fidelity_ignored_path("Service", ("spec",)) is False

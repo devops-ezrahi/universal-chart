@@ -7,6 +7,14 @@ fullnameOverride: ""
 
 # -- Extra labels added to ALL resources
 commonLabels: {}
+# false = every object gets exactly its own `labels` (+ commonLabels), with no
+# chart identity labels (name/instance/version/helm.sh/chart/managed-by). The
+# converter sets it so a migrated object keeps its live labels one-to-one.
+chartLabels: true
+# Overrides the computed selector (app.kubernetes.io/name + instance) used by
+# workload matchLabels, pod template labels and Service/PDB selectors. Selectors
+# are immutable, so a migrated workload must keep its live ones.
+selectorLabels: {}
 # -- Extra annotations added to ALL resources
 commonAnnotations: {}
 
@@ -496,7 +504,8 @@ serviceAccount:
   create: true
   name: ""
   annotations: {}
-  automountServiceAccountToken: true
+  # Unset = not rendered (Kubernetes default: mounted). Set true/false to pin it.
+  # automountServiceAccountToken: false
 
 # ---------------------------------------------------------------------------
 # RBAC — MAP-BASED (keyed by role/binding name)

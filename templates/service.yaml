@@ -70,6 +70,10 @@ spec:
     {{- end }}
   {{- if ne .Values.service.type "ExternalName" }}
   selector:
+    {{- with .Values.service.selector }}
+    {{- toYaml . | nindent 4 }}
+    {{- else }}
     {{- include "universal-chart.selectorLabels" . | nindent 4 }}
+    {{- end }}
   {{- end }}
 {{- end }}
