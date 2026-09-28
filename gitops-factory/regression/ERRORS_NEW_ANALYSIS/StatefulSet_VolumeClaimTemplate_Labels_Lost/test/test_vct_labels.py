@@ -105,12 +105,12 @@ def test_no_labels_key_when_the_template_has_none():
     assert "labels" not in _values(_sts())["volumeClaimTemplates"]["data"]
 
 
-def test_chart_owned_identity_labels_are_still_excluded():
-    """Same rule as pod-template labels: the chart computes these and carrying
-    raw copies would contradict what selectors match on."""
-    v = _values(_sts(vct_metadata={"labels": {
-        **VCT_LABELS, "app": "postgres", "app.kubernetes.io/name": "postgres"}}))
-    assert v["volumeClaimTemplates"]["data"]["labels"] == VCT_LABELS
+def test_identity_labels_are_carried_verbatim():
+    """SUPERSEDED: same rule as pod-template labels, which now carry identity
+    labels as the live object had them."""
+    extra = {"app": "postgres", "app.kubernetes.io/name": "postgres"}
+    v = _values(_sts(vct_metadata={"labels": {**VCT_LABELS, **extra}}))
+    assert v["volumeClaimTemplates"]["data"]["labels"] == {**VCT_LABELS, **extra}
 
 
 # ---------------------------------------------------------------------------

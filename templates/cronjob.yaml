@@ -60,7 +60,9 @@ spec:
       template:
         metadata:
           labels:
+            {{- if $.Values.chartLabels }}
             {{- include "universal-chart.selectorLabels" $ | nindent 12 }}
+            {{- end }}
             {{- with $jt.podLabels }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

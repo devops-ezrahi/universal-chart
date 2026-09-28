@@ -754,8 +754,8 @@ TOP_LEVEL_KEY_ORDER = [
     "nodeSelector", "tolerations", "topologySpreadConstraints", "priorityClassName", "runtimeClassName",
     "schedulerName", "hostNetwork", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
     "hostAliases", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
-    "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations",
-    "podAnnotations", "podLabels", "labels", "annotations", "sidecars", "initContainers", "initContainerOrder",
+    "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations", "chartLabels",
+    "selectorLabels", "podAnnotations", "podLabels", "labels", "annotations", "sidecars", "initContainers", "initContainerOrder",
 ]
 
 
@@ -1940,7 +1940,12 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
     if ann:
         v["annotations"] = ann
 
-    pod_labels = pod_template_labels(pod_meta)
+    # The live selector, verbatim: it is immutable, so anything else fails sync.
+    selector = (spec.get("selector") or {}).get("matchLabels") or {}
+    if selector:
+        v["selectorLabels"] = selector
+    pod_labels = {k: val for k, val in pod_template_labels(pod_meta).items()
+                  if k not in selector}
     if pod_labels:
         v["podLabels"] = pod_labels
     pod_ann = pod_template_annotations(pod_meta)
@@ -1985,6 +1990,11 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
         v.setdefault("serviceAccount", {})
         v["serviceAccount"]["name"] = final
         v["serviceAccount"].setdefault("create", action not in (None, "reference_shared"))
+    else:
+        # The pod runs as the namespace's `default` SA. Left unset, the chart's
+        # create: true default would mint a new ServiceAccount and move the pod
+        # onto it — a change the live object never had.
+        v.setdefault("serviceAccount", {}).setdefault("create", False)
 
     # enableServiceLinks joins this list, and it is the odd one out in a way
     # worth stating: every other boolean here defaults to FALSE in Kubernetes,
@@ -2032,9 +2042,11 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
         v["volumes"] = remap_volumes(named_list_to_map(volumes), ctx)
 
 
-POD_TEMPLATE_CHART_LABELS = frozenset({
-    "pod-template-hash", "app.kubernetes.io/name", "app.kubernetes.io/instance", "app",
-})
+# Only the ReplicaSet controller's hash. name/instance/app used to be stripped
+# here and re-derived by the chart from Release.Name, which rewrote a migrated
+# pod's labels (and, via the selector, broke an immutable field). They are now
+# carried; handle_workload moves the selector keys to selectorLabels.
+POD_TEMPLATE_CHART_LABELS = frozenset({"pod-template-hash"})
 
 
 def pod_template_labels(pod_meta: dict) -> dict:
@@ -2119,10 +2131,13 @@ def raw_labels(doc: dict) -> dict:
     return {k: v for k, v in labels.items() if k not in CHART_OWNED_LABELS}
 
 
+# name/instance/version/managed-by/helm.sh/chart/app are CARRIED now: the
+# converter sets chartLabels: false, so the chart renders an object's labels
+# exactly as the live object had them instead of re-deriving identity labels
+# from this release (a different instance, a new version, a missing name label
+# and helm.sh/chart of this chart all showed up as ArgoCD diffs).
 CHART_OWNED_LABELS = frozenset({
-    "app", "app.kubernetes.io/name", "app.kubernetes.io/instance",
-    "app.kubernetes.io/managed-by", "app.kubernetes.io/version",
-    "helm.sh/chart", "pod-template-hash",
+    "pod-template-hash",
     # ArgoCD stamps this on every object it syncs, naming the Application that
     # owns it. It is present in a dump scraped from a live cluster and must NOT
     # come back out of a chart: the chart cannot know which Application will
@@ -2287,7 +2302,6 @@ def handle_service(doc: dict, ctx: MicroserviceContext, final_name: str) -> None
     entry["enabled"] = True
     if not ctx.primary_service_set:
         ctx.primary_service_set = True
-        entry.pop("selector", None)  # primary service always uses the chart's own selector labels
         # The Service's own name. In-cluster DNS, Routes, Ingresses and any
         # other release's config all address a Service by name, so rendering it
         # as the release fullname silently deletes '<app>-service' from the
@@ -3252,6 +3266,7 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
                        cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                        owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
+    ctx.values["chartLabels"] = False  # labels exactly as live — see CHART_OWNED_LABELS
     # No nameOverride: ms-applicationSet sets `helm.releaseName` to the file
     # name, so the chart's fullname is already the microservice's own name.
     #
@@ -4143,11 +4158,8 @@ def find_stale_output(output_dir: Path, expected_values: dict[str, set], expecte
 # Labels every Helm chart stamps onto everything it renders. Their absence
 # from a raw cluster dump is not data loss.
 FIDELITY_HELM_LABELS = {
-    "helm.sh/chart",
-    "app.kubernetes.io/managed-by",
-    "app.kubernetes.io/instance",
-    "app.kubernetes.io/name",
-    "app.kubernetes.io/version",
+    # The Helm identity labels are no longer here: the converter carries them
+    # (chartLabels: false), so a changed one is a real diff ArgoCD will show.
     # Not a Helm label but the same argument: ArgoCD writes it at sync time, so
     # a chart that does not render it has lost nothing. Deliberately the ONLY
     # label added here for the Route defect — the report authorises exactly this
@@ -4264,13 +4276,8 @@ def _fidelity_ignored_path(kind: str, path: tuple) -> bool:
     metadata.labels are still compared, so a label the raw manifest carried
     and the render lost is still reported.
     """
-    if kind in WORKLOAD_KINDS and path in {
-        ("spec", "selector", "matchLabels"),
-        ("spec", "template", "metadata", "labels"),
-    }:
-        return True
-    if kind == "Service" and path == ("spec", "selector"):
-        return True
+    # Workload selector / pod template labels and Service.spec.selector are
+    # compared now: the converter pins them (selectorLabels, service.selector).
     if kind in ("PodDisruptionBudget", "ServiceMonitor") and path == ("spec", "selector", "matchLabels"):
         return True
     # NOTE: containers[0].name used to be suppressed here, because the chart
@@ -4445,7 +4452,7 @@ def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list
         # (see FIDELITY_HELM_LABELS and handle_workload's podLabels filter).
         # Those four are the chart's to define, so the raw dump's versions
         # disappearing is the intended substitution, not loss.
-        skip = FIDELITY_HELM_LABELS | {"app"} if path[-1:] == ("labels",) else set()
+        skip = FIDELITY_HELM_LABELS if path[-1:] == ("labels",) else set()
         # `serviceAccount` is Kubernetes' DEPRECATED alias for
         # `serviceAccountName`, and the API server populates both with the same
         # value. The chart renders only the modern key, which is correct — but

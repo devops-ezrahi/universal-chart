@@ -108,10 +108,10 @@ def _job(labels=None, annotations=None):
 # 1. The shared seam
 # ---------------------------------------------------------------------------
 
-def test_pod_template_labels_excludes_only_the_chart_owned_identity_labels():
-    """The chart computes these from Release.Name and they must stay consistent
-    with selectorLabels. Carrying the raw copies would be redundant at best and
-    contradict what the selector matches at worst."""
+def test_pod_template_labels_excludes_only_the_replicaset_hash():
+    """SUPERSEDED: name/instance/app used to be dropped and re-derived from
+    Release.Name, which rewrote the live labels. Only the ReplicaSet
+    controller's pod-template-hash is dropped now."""
     out = conv.pod_template_labels({"labels": {
         **POD_LABELS,
         "app": "jenkins-backup",
@@ -119,7 +119,9 @@ def test_pod_template_labels_excludes_only_the_chart_owned_identity_labels():
         "app.kubernetes.io/instance": "jenkins-backup",
         "pod-template-hash": "7d9f8b6c4",
     }})
-    assert out == POD_LABELS
+    assert out == {**POD_LABELS, "app": "jenkins-backup",
+                   "app.kubernetes.io/name": "jenkins-backup",
+                   "app.kubernetes.io/instance": "jenkins-backup"}
 
 
 def test_pod_template_annotations_drops_only_checksum_keys():
