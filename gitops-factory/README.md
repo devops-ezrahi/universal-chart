@@ -44,9 +44,106 @@ The large mock dump `namespaces/` is not committed either — generate it with
 | `values_editor.py` | Values-authoring/editing CLI for microservices you're adding or tuning **by hand** (not converted from a raw dump) — defaults.yaml-aware, so it never asks you to duplicate what a lower layer already covers. See [values_editor.py — hand-authoring microservices](#values_editorpy--hand-authoring-microservices). |
 | `ui/multi-app-manager.html` | The same idea as `values_editor.py`, as a browser UI — open multiple apps' output trees side by side, browse/edit visually, no install. See [ui/multi-app-manager.html — browser UI](#uimulti-app-managerhtml--browser-ui). |
 | `generate_mock_environment.py` | Generates a large, deliberately messy mock raw-dump fixture. |
+| `namespaces_to_chart.py` | Namespaces in, values tree out: pulls each `-n` namespace with `namespace_importer.py`, runs the converter over the dump, and passes every other flag to it (`--env-suffixes`, `--env-group`, `--argocd-manifests`, …). `-o` gets only the tree and nothing else is left behind (`--report DIR` / `--dump DIR` keep those). `--oc kubectl` for plain Kubernetes; `--from-yaml` answers the importer from manifest files instead of a cluster. |
 | `convert_and_verify.py` | Convert + name check + fidelity check + sanitize, in one command. The default entry point. |
 | `regression/` | The pytest regression suite — one folder per fixed defect (`STATUS.md`, `error.txt`, fixtures, a test). `pytest` runs it; see `pytest.ini`. |
 | `docs/` | `BUGFIX-REPORT.md` (what was fixed in the chart and the converter) and `README_REGRESSION_ANALYSIS.md` (cross-reference of the two analysis rounds). |
+
+## namespaces_to_chart.py — namespaces in, chart out
+
+The shortest path from a running namespace to a values tree: one command runs
+`namespace_importer.py` over every namespace you name, then
+`convert_to_universal_chart.py` over what it pulled, and leaves **only the
+chart tree** in `-o`. No dump folder, no report, nothing beside it.
+
+```bash
+# Live cluster (oc on PATH, logged in)
+python namespaces_to_chart.py -n shop-dev -n shop-prd -o out
+
+# Plain Kubernetes
+python namespaces_to_chart.py -n shop-dev,shop-prd -o out --oc kubectl --kubeconfig ~/.kube/lab
+
+# No cluster: answer the importer from manifest files or folders
+python namespaces_to_chart.py --from-yaml dump/ extra.yaml -o out
+```
+
+### What it does
+
+1. **Pull.** Each `-n` namespace goes through the importer's own
+   full-namespace mode — the same as `namespace_importer.py -n <ns>`:
+   workloads grouped into microservices (`part-of` → `app` → workload name),
+   the ConfigMaps/Secrets/SAs/claims they reference, `shared.yaml` for what
+   several of them use, runtime metadata stripped. An Ingress travels with the
+   microservice whose Service it routes to.
+2. **Convert.** The converter runs over that pull. **Every option this script
+   does not know is handed to the converter unchanged**, so anything in
+   `convert_to_universal_chart.py --help` works here too.
+3. **Verify.** Unless you pass `--skip-verify`, every release is rendered with
+   `helm template` against the chart this script ships beside, and checked so
+   no two releases claim the same object. It works from any directory.
+4. **Clean up.** The pull and the converter's report are deleted. `-o` holds
+   `base/` and one folder per namespace (plus the ArgoCD wiring, if you asked
+   for it).
+
+### Options
+
+| Option | Meaning |
+|---|---|
+| `-n NS` | Namespace to pull. Repeat it, or comma-separate: `-n a -n b,c`. |
+| `-o DIR` | Where the values tree is written. Required. |
+| `--oc CLI` | Cluster CLI to call. Default `oc`; `kubectl` works for plain Kubernetes (OpenShift-only kinds like Routes are then just not found). |
+| `--kubeconfig FILE` | Passed to every `oc`/`kubectl` call. |
+| `--from-yaml PATH…` | Read manifests from files/folders instead of a cluster (`kubectl get -o yaml` output, a `List`, several documents per file — anything). Documents are grouped by their own `metadata.namespace`; with `-n`, only those namespaces are kept. |
+| `--default-namespace NS` | With `--from-yaml`: the namespace for documents that name none (what `helm template` renders). Without it, such a document is an error. |
+| `--dump DIR` | Keep the importer's pull here instead of a temp dir. Must be empty or new. Useful to hand-edit the pull and then run the converter on it yourself. |
+| `--report DIR` | Keep the converter's report (`conflicts_and_warnings.txt`, `conversion_report.json`, `renames.json`) here. |
+| anything else | Passed to the converter: `--env-suffixes`, `--env-group`, `--argocd-manifests`, `--values-repo-url`, `--chart-revision`, `--skip-verify`, … |
+
+`--input` and `--output` are the script's own business and are refused.
+
+### Common recipes
+
+```bash
+# Environment suffixes stripped from names, colour variants grouped,
+# ArgoCD wiring written, report kept for review
+python namespaces_to_chart.py -n pay-dev,pay-stg,pay-prd -o values \
+    --env-suffixes dev,stg,prd --env-group color=black,yellow \
+    --argocd-manifests true --values-repo-url https://git.example.com/gitops/pay-values.git \
+    --report values-report
+
+# A packaged chart, rendered first, converted like any other manifests
+helm template shop ./shop-chart -n shop-dev > shop.yaml
+python namespaces_to_chart.py --from-yaml shop.yaml --default-namespace shop-dev -o out
+```
+
+### What it prints
+
+- `==> pulling namespace <ns>` per namespace, then the importer's own fetch
+  summary.
+- `warning: nothing was pulled from '<ns>'` for a namespace with no workloads
+  — it is left out of the tree rather than failing the run.
+- `==> N referenced object(s) could not be fetched` — a Secret, ConfigMap or
+  store some workload references that the cluster (or the YAML) does not have.
+  The tree is still written; the reference is left as it was.
+- The converter's summary, and — without `--report` — a note that the report
+  path it names is gone.
+
+The exit code is the converter's: `0` means converted **and** verified.
+
+### What it does not carry
+
+- **Cluster-scoped objects nothing references.** The importer pulls a
+  namespace, so a ClusterRole, ClusterRoleBinding or StorageClass that no
+  namespaced object points at is not pulled. Add those to the converter's
+  input by hand: `--dump pulled/`, drop them in, then run
+  `convert_to_universal_chart.py --input pulled …` yourself.
+- **Variant folders.** A cluster has namespaces, not `prd/yellow`; variant
+  folders come from the converter's `--env-group`, or from a hand-arranged
+  `--dump`.
+
+The devops-portal's **Convert** runs the same importer over pasted YAML
+(its `SPLIT_DUMP` adapter is what `--from-yaml` mirrors), so a tree from this
+script and one converted in the portal come out the same.
 
 ## Input contract
 
@@ -580,6 +677,9 @@ python convert_to_universal_chart.py --input namespaces --output output
 
 The mock fixture above exists to stress-test the converter at scale; onboarding a
 real app follows the exact same input contract, just with real data:
+
+> Steps 1 and 3 in one command, with verification and nothing left beside
+> the tree: [`namespaces_to_chart.py`](#namespaces_to_chartpy--namespaces-in-chart-out).
 
 1. **Dump the namespace's desired state.** The easy way is
    `namespace_importer.py`, which splits the namespace into per-microservice

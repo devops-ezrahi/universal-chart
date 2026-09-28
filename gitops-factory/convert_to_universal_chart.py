@@ -752,10 +752,10 @@ TOP_LEVEL_KEY_ORDER = [
     "configMaps", "secrets", "secretStores", "clusterSecretStores", "externalSecretsApiVersion",
     "externalSecrets", "checksums", "cronjobs", "jobs", "hpa", "vpa", "pdb",
     "nodeSelector", "tolerations", "topologySpreadConstraints", "priorityClassName", "runtimeClassName",
-    "schedulerName", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
+    "schedulerName", "hostNetwork", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
     "hostAliases", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
     "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations",
-    "podAnnotations", "podLabels", "labels", "sidecars", "initContainers", "initContainerOrder",
+    "podAnnotations", "podLabels", "labels", "annotations", "sidecars", "initContainers", "initContainerOrder",
 ]
 
 
@@ -5343,7 +5343,7 @@ def main() -> None:
                      help="with --env-group, ask before each combination (needs a terminal).")
     ap.add_argument("--no-interactive", action="store_false", dest="interactive",
                      help=argparse.SUPPRESS)
-    ap.add_argument("--chart", default="..",
+    ap.add_argument("--chart", default=str(Path(__file__).resolve().parent.parent),
                      help="path to the Universal Chart, used for the render-verification step "
                           "(default: this repo's root, one level up)")
     ap.add_argument("--skip-verify", action="store_true",
