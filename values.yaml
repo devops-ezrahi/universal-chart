@@ -77,12 +77,23 @@ strategy: {}
 # ---------------------------------------------------------------------------
 podAnnotations: {}
 podLabels: {}
+# -- Replaces the chart's derived selector labels (app.kubernetes.io/name +
+# app.kubernetes.io/instance) everywhere pods are matched: workload
+# spec.selector.matchLabels, pod template labels, Service/PDB/ServiceMonitor
+# selectors. Set it when migrating an EXISTING workload, to its current
+# spec.selector.matchLabels: the selector is immutable, so a different one
+# means delete-and-recreate (every pod at once). The converter sets it.
+selectorLabels: {}
+# app: my-service
 
 # ---------------------------------------------------------------------------
 # Security Contexts
 # ---------------------------------------------------------------------------
 podSecurityContext: {}
-securityContext: {}
+# -- Main container securityContext. Unset (null) renders nothing; an explicit
+# `{}` renders `securityContext: {}` (kept so a migrated pod template that
+# carried an empty one is reproduced exactly, and its pods are not restarted).
+securityContext: null
 
 # ---------------------------------------------------------------------------
 # Container — main container spec
@@ -105,6 +116,17 @@ ports: {}
 #   protocol: TCP
 # grpc:
 #   containerPort: 9090
+# -- Render order of ports / env / envFrom / volumeMounts / volumes / sidecars,
+# by map key. Keys not listed follow in sorted order. Kubernetes stores these as
+# lists, so a different order is a pod-template change (= pods restart); for
+# env it is also semantic ($(VAR) expands only earlier vars). The converter
+# writes each one in the raw manifest's order.
+portOrder: []
+envOrder: []
+envFromOrder: []
+volumeMountOrder: []
+volumeOrder: []
+sidecarOrder: []
 
 # ---------------------------------------------------------------------------
 # Environment variables — MAP-BASED (keyed by env var name)
@@ -315,7 +337,9 @@ route:
   annotations: {}
   tls:
     termination: edge
-    insecureEdgeTerminationPolicy: Redirect
+    # -- Rendered only when set (None / Allow / Redirect). Not defaulted: a
+    # Route that never had it must not silently start redirecting HTTP.
+    # insecureEdgeTerminationPolicy: Redirect
 
 # ---------------------------------------------------------------------------
 # Extra OpenShift Routes — MAP-BASED (keyed by route name), beyond the
@@ -497,6 +521,11 @@ serviceAccount:
   name: ""
   annotations: {}
   automountServiceAccountToken: true
+
+# -- Pod-level automountServiceAccountToken. Unset (the default) renders
+# nothing and the pod inherits serviceAccount.automountServiceAccountToken
+# from its ServiceAccount; set it to override that for this pod only.
+# automountServiceAccountToken: false
 
 # ---------------------------------------------------------------------------
 # RBAC — MAP-BASED (keyed by role/binding name)

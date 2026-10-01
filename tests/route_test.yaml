@@ -111,3 +111,30 @@ tests:
       - equal:
           path: spec.wildcardPolicy
           value: None
+
+  - it: does not default insecureEdgeTerminationPolicy
+    set:
+      route:
+        enabled: true
+        targetPort: http
+        tls:
+          termination: edge
+    asserts:
+      - equal:
+          path: spec.tls.termination
+          value: edge
+      - notExists:
+          path: spec.tls.insecureEdgeTerminationPolicy
+
+  - it: renders insecureEdgeTerminationPolicy when set
+    set:
+      route:
+        enabled: true
+        targetPort: http
+        tls:
+          termination: edge
+          insecureEdgeTerminationPolicy: Redirect
+    asserts:
+      - equal:
+          path: spec.tls.insecureEdgeTerminationPolicy
+          value: Redirect

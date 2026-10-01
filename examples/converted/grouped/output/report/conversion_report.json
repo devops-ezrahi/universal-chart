@@ -27,7 +27,7 @@
   },
   "totals": {
     "microservices": 6,
-    "warnings": 7
+    "warnings": 8
   },
   "env_group_combinations": [
     {
@@ -72,6 +72,19 @@
     {
       "release": "ms1",
       "path": "fullnameOverride",
+      "template": "ms1-{{ .Values.color }}",
+      "injection": {
+        "color": {
+          "dev/black": "black",
+          "dev/yellow": "yellow",
+          "prd/black": "black",
+          "prd/yellow": "yellow"
+        }
+      }
+    },
+    {
+      "release": "ms1",
+      "path": "selectorLabels.app",
       "template": "ms1-{{ .Values.color }}",
       "injection": {
         "color": {

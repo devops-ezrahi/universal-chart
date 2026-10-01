@@ -15,6 +15,11 @@ env:
   ENVIRONMENT:
     value: '{{ .Values.environment }}'
 
+envOrder:
+- ENVIRONMENT
+- DB_URL
+- COLOR
+
 service:
   enabled: true
   name: ms2
@@ -23,3 +28,9 @@ service:
       port: 8080
       targetPort: 8080
   type: ClusterIP
+
+serviceAccount:
+  create: false
+
+selectorLabels:
+  app: ms2

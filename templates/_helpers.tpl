@@ -123,19 +123,43 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- if .Chart.AppVersion }}
 {{- $core = merge $core (dict "app.kubernetes.io/version" (.Chart.AppVersion | toString)) }}
 {{- end }}
+{{- /* An explicit selectorLabels override is what the workload's pods and
+       selector are actually identified by (an existing release's labels,
+       carried over when migrating it onto this chart), so it outranks the
+       chart's derived name/instance on metadata too. */}}
+{{- $core = merge (deepCopy (.Values.selectorLabels | default dict)) $core }}
 {{- merge $core (.Values.commonLabels | default dict) | toYaml }}
 {{- end }}
 
 {{/*
 Selector labels — deliberately static and immune to commonLabels/overrides.
+Static unless .Values.selectorLabels is set: a workload migrated from another
+chart or raw manifests must keep its EXISTING selector, because
+spec.selector is immutable — a different selector cannot be applied at all,
+and the only way through is delete-and-recreate, which kills every pod at once.
+The converter copies the raw spec.selector.matchLabels into selectorLabels.
 Used everywhere something needs to MATCH pods (selector.matchLabels, pod
 template metadata.labels, Service/PDB/ServiceMonitor selectors) so those
 stay identical forever, including across upgrades where selector fields are
 immutable.
 */}}
 {{- define "universal-chart.selectorLabels" -}}
+{{- if .Values.selectorLabels }}
+{{- toYaml .Values.selectorLabels }}
+{{- else }}
 app.kubernetes.io/name: {{ include "universal-chart.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Pod TEMPLATE labels: the selector labels plus .Values.podLabels, as ONE merged
+map (selector keys win) so a podLabels entry repeating a selector key can never
+render a duplicate YAML key or drift the pods away from their selector.
+*/}}
+{{- define "universal-chart.podTemplateLabels" -}}
+{{- $sel := fromYaml (include "universal-chart.selectorLabels" .) }}
+{{- toYaml (merge $sel (.Values.podLabels | default dict)) }}
 {{- end }}
 
 {{/*
@@ -202,7 +226,47 @@ key, which would emit a mount referencing a volume that does not exist.
 Usage:  {{- include "universal-chart.mapToList" .Values.ports | nindent 4 }}
 */}}
 {{- define "universal-chart.mapToList" -}}
-{{- range $name, $spec := . }}
+{{- include "universal-chart.orderedMapToList" (dict "map" . "order" list) }}
+{{- end }}
+
+{{/*
+Map keys in the order a list must render them: the keys `order` names first, in
+that order, then every key it does not name in sorted order (so a hand-added
+entry is never lost). Returned as JSON; read it back with fromJsonArray.
+
+Helm ranges a map in SORTED key order, and for a pod template that is not
+cosmetic. env, ports, volumeMounts, volumes, envFrom and containers are LISTS in
+Kubernetes: reordering one changes the pod template, so the Deployment rolls a
+new ReplicaSet (or the StatefulSet a new revision) and every pod restarts on the
+first sync after migrating — even though nothing about the workload changed.
+env order is also semantic: `$(VAR)` only expands variables defined EARLIER in
+the list. The converter writes the raw manifest's order into the *Order values.
+Usage: {{- $keys := include "universal-chart.orderedKeys" (dict "map" $m "order" $o) | fromJsonArray }}
+*/}}
+{{- define "universal-chart.orderedKeys" -}}
+{{- $map := .map | default dict }}
+{{- $keys := list }}
+{{- range $k := (.order | default list) }}
+{{- if and (hasKey $map $k) (not (has $k $keys)) }}
+{{- $keys = append $keys $k }}
+{{- end }}
+{{- end }}
+{{- range $k, $_ := $map }}
+{{- if not (has $k $keys) }}
+{{- $keys = append $keys $k }}
+{{- end }}
+{{- end }}
+{{- toJson $keys }}
+{{- end }}
+
+{{/*
+mapToList with an explicit order (see universal-chart.orderedKeys).
+Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.env "order" .Values.envOrder) | nindent 4 }}
+*/}}
+{{- define "universal-chart.orderedMapToList" -}}
+{{- $map := .map | default dict }}
+{{- range $name := (include "universal-chart.orderedKeys" . | fromJsonArray) }}
+{{- $spec := index $map $name }}
 {{- /* `unnamed: true` means the map key is bookkeeping, not a real name: a
        container port the raw manifest left unnamed still needs a key here, but
        emitting `name: port-8080` would give the object a name it never had, and

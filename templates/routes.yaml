@@ -33,7 +33,11 @@ spec:
   {{- if $spec.tls }}
   tls:
     termination: {{ $spec.tls.termination | default "edge" }}
-    insecureEdgeTerminationPolicy: {{ $spec.tls.insecureEdgeTerminationPolicy | default "Redirect" }}
+    {{- /* Rendered only when set: defaulting it to Redirect made every Route
+           that never declared it start redirecting plain HTTP. */}}
+    {{- with $spec.tls.insecureEdgeTerminationPolicy }}
+    insecureEdgeTerminationPolicy: {{ . }}
+    {{- end }}
     {{- with $spec.tls.certificate }}
     certificate: |
       {{- . | nindent 6 }}
