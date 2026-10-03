@@ -19,6 +19,13 @@ env:
   LOG_LEVEL:
     value: info
 
+envOrder:
+- ENVIRONMENT
+- DB_URL
+- COLOR
+- LOG_LEVEL
+- FEATURE_FLAG
+
 volumes:
   settings-{{ .Values.color }}:
     configMap:
@@ -35,6 +42,8 @@ service:
     http:
       port: 8080
       targetPort: 8080
+  selector:
+    app: ms1-{{ .Values.color }}
   type: ClusterIP
 
 configMaps:
@@ -54,4 +63,12 @@ cronjobs:
       restartPolicy: OnFailure
     schedule: 0 2 * * *
 
+serviceAccount:
+  create: false
+
 fullnameOverride: ms1-{{ .Values.color }}
+
+chartLabels: false
+
+selectorLabels:
+  app: ms1-{{ .Values.color }}

@@ -32,7 +32,14 @@ SHARED POD SPEC — used by Deployment, StatefulSet, DaemonSet
 Call: {{- include "universal-chart.podSpec" . | nindent 6 }}
 */}}
 {{- define "universal-chart.podSpec" -}}
+{{- /* Rendered only when the release names or creates a ServiceAccount. A pod
+       that never set one runs as `default` anyway, but rendering
+       `serviceAccountName: default` onto a template that never had it is still
+       a pod-template change: migrating such a workload onto this chart rolled
+       every pod for no reason. */}}
+{{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
 serviceAccountName: {{ include "universal-chart.serviceAccountName" . }}
+{{- end }}
 {{- /* Unset = omitted, as on a manifest that never set it; false must still render. */}}
 {{- if kindIs "bool" .Values.serviceAccount.automountServiceAccountToken }}
 automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
@@ -126,15 +133,16 @@ initContainers:
 containers:
   {{- include "universal-chart.mainContainer" . | nindent 2 }}
   {{- /* ── Sidecar containers (map-based) ──────────── */}}
-  {{- range $name, $spec := .Values.sidecars }}
+  {{- $sidecars := .Values.sidecars | default dict }}
+  {{- range $name := (include "universal-chart.orderedKeys" (dict "map" $sidecars "order" $.Values.sidecarOrder) | fromJsonArray) }}
   - name: {{ $name }}
-    {{- toYaml $spec | nindent 4 }}
+    {{- toYaml (index $sidecars $name) | nindent 4 }}
   {{- end }}
 
 {{- /* ── Volumes (map-based) ─────────────────────── */}}
 {{- with .Values.volumes }}
 volumes:
-  {{- include "universal-chart.mapToList" . | nindent 2 }}
+  {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.Values.volumeOrder) | nindent 2 }}
 {{- end }}
 
 {{- /* ── Scheduling ───────────────────────────────── */}}
@@ -172,9 +180,17 @@ MAIN CONTAINER — all possible container spec fields
   image: {{ include "universal-chart.image" . }}
   imagePullPolicy: {{ .Values.image.pullPolicy }}
 
-  {{- with .Values.securityContext }}
+  {{- /* kindIs, not `with`: an explicit EMPTY securityContext ({}) is kept.
+         The API server stores `securityContext: {}` on a container as given, so
+         dropping it is a pod-template change that restarts the pods. Unset
+         (the null default) still renders nothing. */}}
+  {{- if kindIs "map" .Values.securityContext }}
+  {{- if .Values.securityContext }}
   securityContext:
-    {{- toYaml . | nindent 4 }}
+    {{- toYaml .Values.securityContext | nindent 4 }}
+  {{- else }}
+  securityContext: {}
+  {{- end }}
   {{- end }}
 
   {{- with .Values.command }}
@@ -193,17 +209,19 @@ MAIN CONTAINER — all possible container spec fields
 
   {{- with .Values.ports }}
   ports:
-    {{- include "universal-chart.mapToList" . | nindent 4 }}
+    {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.Values.portOrder) | nindent 4 }}
   {{- end }}
 
   {{- with .Values.env }}
   env:
-    {{- include "universal-chart.mapToList" . | nindent 4 }}
+    {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.Values.envOrder "stringValues" true) | nindent 4 }}
   {{- end }}
 
   {{- with .Values.envFrom }}
+  {{- $envFrom := . }}
   envFrom:
-    {{- range $name, $spec := . }}
+    {{- range $name := (include "universal-chart.orderedKeys" (dict "map" $envFrom "order" $.Values.envFromOrder) | fromJsonArray) }}
+    {{- $spec := index $envFrom $name }}
     - {{ $spec.type | default "configMapRef" }}:
         name: {{ $name }}
       {{- if hasKey $spec "optional" }}
@@ -252,7 +270,7 @@ MAIN CONTAINER — all possible container spec fields
 
   {{- with .Values.volumeMounts }}
   volumeMounts:
-    {{- include "universal-chart.mapToList" . | nindent 4 }}
+    {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.Values.volumeMountOrder) | nindent 4 }}
   {{- end }}
 
   {{- with .Values.volumeDevices }}
@@ -291,7 +309,9 @@ restartPolicy: {{ .job.restartPolicy | default "OnFailure" }}
        — a shared backup or maintenance identity. Prefer the per-job value and
        fall back to the release-level helper, so a job that names no SA keeps
        the previous behaviour. */}}
+{{- if or .job.serviceAccountName .Values.serviceAccount.create .Values.serviceAccount.name }}
 serviceAccountName: {{ .job.serviceAccountName | default (include "universal-chart.serviceAccountName" .) }}
+{{- end }}
 {{- with .Values.imagePullSecrets }}
 imagePullSecrets:
   {{- toYaml . | nindent 2 }}
@@ -322,9 +342,13 @@ containers:
     {{- /* Container-level hardening. Not rendered here at all until folder 12,
            so a job's allowPrivilegeEscalation / readOnlyRootFilesystem /
            capabilities were dropped outright. */}}
-    {{- with .job.securityContext }}
+    {{- if kindIs "map" .job.securityContext }}
+    {{- if .job.securityContext }}
     securityContext:
-      {{- toYaml . | nindent 6 }}
+      {{- toYaml .job.securityContext | nindent 6 }}
+    {{- else }}
+    securityContext: {}
+    {{- end }}
     {{- end }}
     {{- /* Container-level, not the pod-level `restartPolicy` at the top of this
            helper — see the matching comment in mainContainer. */}}
@@ -341,11 +365,13 @@ containers:
     {{- end }}
     {{- with .job.env }}
     env:
-      {{- include "universal-chart.mapToList" . | nindent 6 }}
+      {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.job.envOrder "stringValues" true) | nindent 6 }}
     {{- end }}
     {{- with .job.envFrom }}
+    {{- $envFrom := . }}
     envFrom:
-      {{- range $name, $spec := . }}
+      {{- range $name := (include "universal-chart.orderedKeys" (dict "map" $envFrom "order" $.job.envFromOrder) | fromJsonArray) }}
+      {{- $spec := index $envFrom $name }}
       - {{ $spec.type | default "configMapRef" }}:
           name: {{ $name }}
       {{- end }}
@@ -356,15 +382,16 @@ containers:
     {{- end }}
     {{- with .job.volumeMounts }}
     volumeMounts:
-      {{- include "universal-chart.mapToList" . | nindent 6 }}
+      {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.job.volumeMountOrder) | nindent 6 }}
     {{- end }}
-  {{- range $name, $spec := .job.sidecars }}
+  {{- $sidecars := .job.sidecars | default dict }}
+  {{- range $name := (include "universal-chart.orderedKeys" (dict "map" $sidecars "order" $.job.sidecarOrder) | fromJsonArray) }}
   - name: {{ $name }}
-    {{- toYaml $spec | nindent 4 }}
+    {{- toYaml (index $sidecars $name) | nindent 4 }}
   {{- end }}
 {{- with .job.volumes }}
 volumes:
-  {{- include "universal-chart.mapToList" . | nindent 2 }}
+  {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.job.volumeOrder) | nindent 2 }}
 {{- end }}
 {{- with .Values.nodeSelector }}
 nodeSelector:

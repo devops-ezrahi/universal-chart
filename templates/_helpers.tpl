@@ -131,11 +131,21 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- if .Chart.AppVersion }}
 {{- $core = merge $core (dict "app.kubernetes.io/version" (.Chart.AppVersion | toString)) }}
 {{- end }}
+{{- /* An explicit selectorLabels override is what the workload's pods and
+       selector are actually identified by (an existing release's labels,
+       carried over when migrating it onto this chart), so it outranks the
+       chart's derived name/instance on metadata too. */}}
+{{- $core = merge (deepCopy (.Values.selectorLabels | default dict)) $core }}
 {{- merge $core (.Values.commonLabels | default dict) | toYaml }}
 {{- end }}
 
 {{/*
 Selector labels — deliberately static and immune to commonLabels/overrides.
+Static unless .Values.selectorLabels is set: a workload migrated from another
+chart or raw manifests must keep its EXISTING selector, because
+spec.selector is immutable — a different selector cannot be applied at all,
+and the only way through is delete-and-recreate, which kills every pod at once.
+The converter copies the raw spec.selector.matchLabels into selectorLabels.
 Used everywhere something needs to MATCH pods (selector.matchLabels, pod
 template metadata.labels, Service/PDB/ServiceMonitor selectors) so those
 stay identical forever, including across upgrades where selector fields are
@@ -154,6 +164,16 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Pod TEMPLATE labels: the selector labels plus .Values.podLabels, as ONE merged
+map (selector keys win) so a podLabels entry repeating a selector key can never
+render a duplicate YAML key or drift the pods away from their selector.
+*/}}
+{{- define "universal-chart.podTemplateLabels" -}}
+{{- $sel := fromYaml (include "universal-chart.selectorLabels" .) }}
+{{- toYaml (merge $sel (.Values.podLabels | default dict)) }}
+{{- end }}
+
+{{/*
 Primary Service name — the object rendered by templates/service.yaml.
 
 Defaults to the release fullname, but a source manifest often names its Service
@@ -168,7 +188,7 @@ the reference dangling. Current callers: service.yaml (the object itself),
 route.yaml + routes.yaml (spec.to.name) and ingress.yaml (backend.service.name).
 */}}
 {{- define "universal-chart.primaryServiceName" -}}
-{{- .Values.service.name | default (include "universal-chart.fullname" .) }}
+{{- (.Values.service | default dict).name | default (include "universal-chart.fullname" .) }}
 {{- end }}
 
 {{/*
@@ -217,7 +237,54 @@ key, which would emit a mount referencing a volume that does not exist.
 Usage:  {{- include "universal-chart.mapToList" .Values.ports | nindent 4 }}
 */}}
 {{- define "universal-chart.mapToList" -}}
-{{- range $name, $spec := . }}
+{{- include "universal-chart.orderedMapToList" (dict "map" . "order" list) }}
+{{- end }}
+
+{{/*
+Map keys in the order a list must render them: the keys `order` names first, in
+that order, then every key it does not name in sorted order (so a hand-added
+entry is never lost). Returned as JSON; read it back with fromJsonArray.
+
+Helm ranges a map in SORTED key order, and for a pod template that is not
+cosmetic. env, ports, volumeMounts, volumes, envFrom and containers are LISTS in
+Kubernetes: reordering one changes the pod template, so the Deployment rolls a
+new ReplicaSet (or the StatefulSet a new revision) and every pod restarts on the
+first sync after migrating — even though nothing about the workload changed.
+env order is also semantic: `$(VAR)` only expands variables defined EARLIER in
+the list. The converter writes the raw manifest's order into the *Order values.
+Usage: {{- $keys := include "universal-chart.orderedKeys" (dict "map" $m "order" $o) | fromJsonArray }}
+*/}}
+{{- define "universal-chart.orderedKeys" -}}
+{{- $map := .map | default dict }}
+{{- $keys := list }}
+{{- range $k := (.order | default list) }}
+{{- if and (hasKey $map $k) (not (has $k $keys)) }}
+{{- $keys = append $keys $k }}
+{{- end }}
+{{- end }}
+{{- range $k, $_ := $map }}
+{{- if not (has $k $keys) }}
+{{- $keys = append $keys $k }}
+{{- end }}
+{{- end }}
+{{- toJson $keys }}
+{{- end }}
+
+{{/*
+mapToList with an explicit order (see universal-chart.orderedKeys).
+Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.env "order" .Values.envOrder) | nindent 4 }}
+*/}}
+{{- define "universal-chart.orderedMapToList" -}}
+{{- $map := .map | default dict }}
+{{- $stringValues := .stringValues }}
+{{- range $name := (include "universal-chart.orderedKeys" . | fromJsonArray) }}
+{{- $spec := index $map $name }}
+{{- /* stringValues (env): EnvVar.value is a string, and a values file read by
+       Helm turns a bare `y`, `08` or `true` into a bool or a number that the
+       API server then refuses — the whole Deployment fails to apply. */}}
+{{- if and $stringValues (kindIs "map" $spec) (hasKey $spec "value") (not (kindIs "invalid" $spec.value)) (not (kindIs "string" $spec.value)) }}
+{{- $spec = merge (dict "value" (toString $spec.value)) $spec }}
+{{- end }}
 {{- /* `unnamed: true` means the map key is bookkeeping, not a real name: a
        container port the raw manifest left unnamed still needs a key here, but
        emitting `name: port-8080` would give the object a name it never had, and
@@ -326,7 +393,7 @@ Usage: add to pod annotations:
     {{- include "universal-chart.checksumAnnotations" . | nindent 8 }}
 */}}
 {{- define "universal-chart.checksumAnnotations" -}}
-{{- if .Values.checksums.enabled }}
+{{- if (and .Values.checksums .Values.checksums.enabled) }}
 {{- if .Values.configMaps }}
 checksum/configmaps: {{ .Values.configMaps | toYaml | sha256sum }}
 {{- end }}
@@ -396,19 +463,19 @@ Usage: {{ include "universal-chart.validateVolumeMounts" (dict
 {{- if not (has .Values.workload.type $validTypes) }}
 {{- fail (printf "workload.type must be one of %v, got: %s" $validTypes .Values.workload.type) }}
 {{- end }}
-{{- if and .Values.ingress.enabled .Values.route.enabled }}
+{{- if and (and .Values.ingress .Values.ingress.enabled) (and .Values.route .Values.route.enabled) }}
 {{- fail "ingress.enabled and route.enabled cannot both be true — pick one" }}
 {{- end }}
-{{- if and (eq .Values.workload.type "daemonset") .Values.hpa.enabled }}
+{{- if and (eq .Values.workload.type "daemonset") (and .Values.hpa .Values.hpa.enabled) }}
 {{- fail "hpa is not supported for daemonset workloads" }}
 {{- end }}
-{{- if and (eq .Values.workload.type "none") .Values.hpa.enabled }}
+{{- if and (eq .Values.workload.type "none") (and .Values.hpa .Values.hpa.enabled) }}
 {{- fail "hpa is not supported when workload.type is none (no pods to scale)" }}
 {{- end }}
-{{- if and (eq .Values.workload.type "none") .Values.vpa.enabled }}
+{{- if and (eq .Values.workload.type "none") (and .Values.vpa .Values.vpa.enabled) }}
 {{- fail "vpa is not supported when workload.type is none (no pods to resize)" }}
 {{- end }}
-{{- if and (eq .Values.workload.type "none") .Values.pdb.enabled }}
+{{- if and (eq .Values.workload.type "none") (and .Values.pdb .Values.pdb.enabled) }}
 {{- fail "pdb is not supported when workload.type is none (no pods to protect)" }}
 {{- end }}
 {{- $root := . }}
@@ -422,20 +489,20 @@ Usage: {{ include "universal-chart.validateVolumeMounts" (dict
 {{- /* Ingress/Route backend ports fall back to the primary Service's ports
 when not given explicitly; an empty service.ports there resolves to an
 empty string and silently drops traffic instead of erroring. */}}
-{{- if .Values.ingress.enabled }}
+{{- if (and .Values.ingress .Values.ingress.enabled) }}
 {{- range $host := .Values.ingress.hosts }}
 {{- range $path := $host.paths }}
-{{- if and (not $path.portName) (not $root.Values.service.ports) }}
+{{- if and (not $path.portName) (not ($root.Values.service | default dict).ports) }}
 {{- fail (printf "ingress.hosts[%s].paths has no portName and service.ports is empty — the Ingress backend port would be blank" $host.host) }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
-{{- if and .Values.route.enabled (not .Values.route.targetPort) (not .Values.service.ports) }}
+{{- if and (and .Values.route .Values.route.enabled) (not .Values.route.targetPort) (not .Values.service.ports) }}
 {{- fail "route.enabled is true but route.targetPort is unset and service.ports is empty — the Route target port would be blank" }}
 {{- end }}
 {{- range $rname, $rspec := .Values.routes }}
-{{- if and $rspec.enabled (not $rspec.targetPort) (not $root.Values.service.ports) }}
+{{- if and $rspec.enabled (not $rspec.targetPort) (not ($root.Values.service | default dict).ports) }}
 {{- fail (printf "routes.%s is enabled but targetPort is unset and service.ports is empty — the Route target port would be blank" $rname) }}
 {{- end }}
 {{- end }}

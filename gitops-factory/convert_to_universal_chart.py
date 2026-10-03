@@ -744,9 +744,9 @@ TOP_LEVEL_KEY_ORDER = [
     "progressDeadlineSeconds", "minReadySeconds", "podManagementPolicy", "serviceName", "strategy",
     "containerName", "command", "args", "workingDir", "restartPolicy", "terminationGracePeriodSeconds",
     "containerRestartPolicy", "terminationMessagePath", "terminationMessagePolicy",
-    "env", "envFrom", "ports", "resources", "livenessProbe", "readinessProbe", "startupProbe",
+    "env", "envOrder", "envFrom", "envFromOrder", "ports", "portOrder", "resources", "livenessProbe", "readinessProbe", "startupProbe",
     "containerRestartRules", "lifecycle",
-    "volumes", "volumeMounts", "pvc", "volumeClaimTemplates", "persistentVolumeClaimRetentionPolicy",
+    "volumes", "volumeOrder", "volumeMounts", "volumeMountOrder", "pvc", "volumeClaimTemplates", "persistentVolumeClaimRetentionPolicy",
     "persistentVolumes", "storageClasses",
     "service", "services", "ingress", "route", "routes", "networkPolicies",
     "configMaps", "secrets", "secretStores", "clusterSecretStores", "externalSecretsApiVersion",
@@ -755,7 +755,7 @@ TOP_LEVEL_KEY_ORDER = [
     "schedulerName", "hostNetwork", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
     "hostAliases", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
     "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations", "chartLabels",
-    "selectorLabels", "podAnnotations", "podLabels", "labels", "annotations", "sidecars", "initContainers", "initContainerOrder",
+    "selectorLabels", "podAnnotations", "podLabels", "labels", "annotations", "sidecars", "sidecarOrder", "initContainers", "initContainerOrder",
 ]
 
 
@@ -800,6 +800,26 @@ YAML12_ONLY_NUMERIC_RE = re.compile(
         )$""", re.VERBOSE)
 
 
+# ...and the YAML 1.1 side of the same gap. `helm template` (v3.16, checked
+# by dumping .Values) reads values files the way go-yaml v2 does: `y`/`n`/`Y`/`N`
+# are booleans, `08` is the number 8, `0x1F`/`0o17`/`1_000`/`+12` are integers
+# and `.inf`/`.nan` cannot be rendered at all. PyYAML treats several of those
+# (`y`, `n`, `08`) as plain strings and emits them bare, so an env value `"y"`
+# reached the chart as `true` and the API server refused the Deployment.
+_GO_BOOL_RE = re.compile(r"^(?:[yYnN]|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|true|True|TRUE|false|False|FALSE)$")
+_GO_NULL_RE = re.compile(r"^(?:~|null|Null|NULL|)$")
+_GO_SPECIAL_FLOAT_RE = re.compile(r"^[-+]?\.(?:inf|Inf|INF)$|^\.(?:nan|NaN|NAN)$")
+_GO_FLOAT_RE = re.compile(r"^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?$")
+_GO_INT_RE = re.compile(r"^[-+]?(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|[0-9][0-9_]*)$")
+
+
+def go_yaml_retypes(value: str) -> bool:
+    """Whether go-yaml v2 (Helm's reader) would read this string, written
+    bare, as something other than a string."""
+    return bool(_GO_NULL_RE.match(value) or _GO_BOOL_RE.match(value) or _GO_SPECIAL_FLOAT_RE.match(value)
+                or _GO_INT_RE.match(value) or _GO_FLOAT_RE.match(value))
+
+
 def _represent_str_quoting_go_numerics(dumper, value):
     """Quote a string only when leaving it bare would change its TYPE in Go.
 
@@ -810,7 +830,7 @@ def _represent_str_quoting_go_numerics(dumper, value):
     every `grafana.ini` in the corpus would lose its literal block and turn into
     one long quoted line.
     """
-    if YAML12_ONLY_NUMERIC_RE.match(value):
+    if YAML12_ONLY_NUMERIC_RE.match(value) or go_yaml_retypes(value):
         style = "'"
     elif "\n" in value and not value[:1].isspace():
         # Multi-line strings (scripts, certs, grafana.ini, extraDeploy entries)
@@ -822,6 +842,20 @@ def _represent_str_quoting_go_numerics(dumper, value):
     else:
         style = None
     return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+HELM_RELEASE_NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$")
+
+
+class _HelmOutputLoader(yaml.SafeLoader):
+    """SafeLoader for `helm template` output. Go's YAML writer emits a string
+    `=` or `<<` bare (they are plain strings to Go), and PyYAML's 1.1 resolver
+    tags those `!!value` / `!!merge`, which SafeLoader cannot construct as a
+    value — the verifier crashed on a perfectly valid env var `value: =`."""
+
+
+for _tag in ("tag:yaml.org,2002:value", "tag:yaml.org,2002:merge"):
+    _HelmOutputLoader.add_constructor(_tag, lambda loader, node: loader.construct_scalar(node))
 
 
 class _ValuesDumper(_ForcedBlockEmitterMixin, yaml.SafeDumper):
@@ -1733,6 +1767,23 @@ def remap_volumes(vol_map: dict, ctx: MicroserviceContext) -> dict:
 # Per-kind handlers -> mutate ctx.values
 # ---------------------------------------------------------------------------
 
+def set_order(v: dict, key: str, order_key: str) -> None:
+    """Record the raw LIST order of the map-based `v[key]` under `v[order_key]`.
+
+    The chart renders these maps as Kubernetes lists, and Helm ranges a map in
+    sorted key order — so without this, env / ports / volumeMounts / volumes /
+    envFrom / sidecars came out alphabetised. That is a pod-template change:
+    migrating a workload onto the chart rolled every pod on the first sync for
+    no other reason, and for env it is also semantic, since `$(VAR)` expands
+    only variables defined earlier in the list. The maps here are built in raw
+    order (dicts keep insertion order), so their keys ARE the raw order.
+    A single entry has no order to keep, so nothing is written for it.
+    """
+    m = v.get(key)
+    if isinstance(m, dict) and len(m) > 1:
+        v[order_key] = list(m)
+
+
 def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
     v = ctx.values
     # The container's own name. The chart used to name its managed container
@@ -1769,6 +1820,7 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
             v[k] = c[k]
     if c.get("ports"):
         v["ports"] = ports_list_to_map(c["ports"])
+        set_order(v, "ports", "portOrder")
     if c.get("env"):
         full_env = remap_env(env_list_to_map(c["env"]), ctx)
         # See ENV_IN_VALUES: only under that flag are literal values held back
@@ -1777,8 +1829,15 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
             ctx.full_env = full_env
         if split_env(full_env):
             v["env"] = split_env(full_env)
+        # The order covers EVERY env var, literal ones included, even when
+        # the literal values go to the minimal override: the chart merges
+        # both files into one map, and `$(VAR)` only expands a variable
+        # defined earlier in the list.
+        if len(full_env) > 1:
+            v["envOrder"] = list(full_env)
     if c.get("envFrom"):
         v["envFrom"] = remap_envfrom(envfrom_list_to_map(c["envFrom"]), ctx)
+        set_order(v, "envFrom", "envFromOrder")
     if c.get("resources"):
         v["resources"] = c["resources"]
     for probe in ("livenessProbe", "readinessProbe", "startupProbe"):
@@ -1786,10 +1845,14 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
             v[probe] = c[probe]
     if c.get("lifecycle"):
         v["lifecycle"] = c["lifecycle"]
-    if c.get("securityContext"):
+    # `in`, not truthiness: an explicit empty `securityContext: {}` is stored by
+    # the API server as given, and dropping it changes the pod template, which
+    # restarts the pods on the first sync after migrating.
+    if isinstance(c.get("securityContext"), dict):
         v["securityContext"] = c["securityContext"]
     if c.get("volumeMounts"):
         v["volumeMounts"] = named_list_to_map(c["volumeMounts"])
+        set_order(v, "volumeMounts", "volumeMountOrder")
     if c.get("containerRestartRules"):
         v["containerRestartRules"] = c["containerRestartRules"]
     # The CONTAINER-level restartPolicy, which is a different field from the
@@ -1942,6 +2005,11 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
 
     # The live selector, verbatim: it is immutable, so anything else fails sync.
     selector = (spec.get("selector") or {}).get("matchLabels") or {}
+    if (spec.get("selector") or {}).get("matchExpressions"):
+        ctx.warnings.append(
+            f"[P1] {kind}: spec.selector.matchExpressions cannot be expressed by the chart "
+            f"(selectorLabels is matchLabels only) — the selector will change, and the "
+            f"workload must be recreated on migration")
     if selector:
         v["selectorLabels"] = selector
     pod_labels = {k: val for k, val in pod_template_labels(pod_meta).items()
@@ -1976,6 +2044,14 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
         v["podSecurityContext"] = pod_spec["securityContext"]
 
     sa_name = pod_spec.get("serviceAccountName") or pod_spec.get("serviceAccount")
+    if not sa_name or sa_name == "default":
+        # The pod runs as the namespace's `default` SA. The chart's own default
+        # (create: true) would hand it a chart-made SA it never had, and render
+        # a serviceAccountName the template never carried — both change the pod
+        # template. Name `default` only when the raw manifest spelled it out.
+        v.setdefault("serviceAccount", {}).setdefault("create", False)
+        if sa_name == "default":
+            v["serviceAccount"].setdefault("name", "default")
     if sa_name and sa_name != "default":
         final = ctx.name_map["ServiceAccount"].get(sa_name, sa_name)
         # Only default create=True when THIS microservice actually owns a
@@ -1990,11 +2066,6 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
         v.setdefault("serviceAccount", {})
         v["serviceAccount"]["name"] = final
         v["serviceAccount"].setdefault("create", action not in (None, "reference_shared"))
-    else:
-        # The pod runs as the namespace's `default` SA. Left unset, the chart's
-        # create: true default would mint a new ServiceAccount and move the pod
-        # onto it — a change the live object never had.
-        v.setdefault("serviceAccount", {}).setdefault("create", False)
 
     # enableServiceLinks joins this list, and it is the odd one out in a way
     # worth stating: every other boolean here defaults to FALSE in Kubernetes,
@@ -2029,6 +2100,7 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
             if entry.get("image"):
                 ctx.sub_raw_image[("sidecars", extra["name"], "image")] = entry.pop("image")
             v.setdefault("sidecars", {})[extra["name"]] = entry
+        set_order(v, "sidecars", "sidecarOrder")
     init_containers = pod_spec.get("initContainers", []) or []
     if init_containers:
         for ic in init_containers:
@@ -2040,6 +2112,7 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
     volumes = pod_spec.get("volumes", []) or []
     if volumes:
         v["volumes"] = remap_volumes(named_list_to_map(volumes), ctx)
+        set_order(v, "volumes", "volumeOrder")
 
 
 # Only the ReplicaSet controller's hash. name/instance/app used to be stripped
@@ -2077,7 +2150,18 @@ def pod_template_annotations(pod_meta: dict) -> dict:
     Job for the same reason the labels were.
     """
     return {k: v for k, v in (pod_meta.get("annotations") or {}).items()
-            if not k.startswith("checksum/")}
+            if not k.startswith("checksum/") and k not in RESTART_STAMP_ANNOTATIONS}
+
+
+# Stamped on the pod template by `oc rollout restart` / `kubectl rollout
+# restart`. It records WHEN someone last restarted the workload — an action,
+# not configuration. Carried into the chart, it pins a stale timestamp: on the
+# first sync the template no longer matches the live one, so every pod restarts
+# again, and every later manual restart shows up as drift.
+RESTART_STAMP_ANNOTATIONS = frozenset({
+    "kubectl.kubernetes.io/restartedAt",
+    "openshift.openshift.io/restartedAt",
+})
 
 
 def as_extra_deploy(doc: dict) -> str:
@@ -2939,7 +3023,7 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # not merely an override.
     if pod_tpl_spec.get("securityContext"):
         job_template["podSecurityContext"] = pod_tpl_spec["securityContext"]
-    if main.get("securityContext"):
+    if isinstance(main.get("securityContext"), dict):  # keeps an explicit {}
         job_template["securityContext"] = main["securityContext"]
     # `parallelism` and `completions` join the list rather than being captured
     # separately: the report rates parallelism P8 (its lowest) because the value
@@ -2986,18 +3070,23 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             job_template["env"] = split_env(full_env)
         if ENV_IN_VALUES:
             ctx.sub_full_env[("cronjobs", sub_name)] = full_env
+        if len(full_env) > 1:
+            job_template["envOrder"] = list(full_env)
     if main.get("envFrom"):
         job_template["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
+        set_order(job_template, "envFrom", "envFromOrder")
     if main.get("resources"):
         job_template["resources"] = main["resources"]
     if main.get("volumeMounts"):
         job_template["volumeMounts"] = named_list_to_map(main["volumeMounts"])
+        set_order(job_template, "volumeMounts", "volumeMountOrder")
     for extra in containers[1:]:
         remap_container_refs(extra, ctx)
         sc_entry = {k: val for k, val in extra.items() if k != "name"}
         if sc_entry.get("image"):
             ctx.sub_raw_image[("cronjobs", sub_name, "jobTemplate", "sidecars", extra["name"], "image")] = sc_entry.pop("image")
         job_template.setdefault("sidecars", {})[extra["name"]] = sc_entry
+    set_order(job_template, "sidecars", "sidecarOrder")
     init_containers = pod_tpl_spec.get("initContainers", []) or []
     if init_containers:
         for ic in init_containers:
@@ -3008,6 +3097,7 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             job_template["initContainerOrder"] = order
     if pod_tpl_spec.get("volumes"):
         job_template["volumes"] = remap_volumes(named_list_to_map(pod_tpl_spec["volumes"]), ctx)
+        set_order(job_template, "volumes", "volumeOrder")
     # spec.jobTemplate.spec.template.metadata — the CronJob's POD labels, which
     # are a different thing from the CronJob object's own labels captured below.
     # handle_workload has read these since it was written; this handler never
@@ -3048,7 +3138,7 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # See the matching comment in handle_cronjob.
     if pod_spec.get("securityContext"):
         entry["podSecurityContext"] = pod_spec["securityContext"]
-    if main.get("securityContext"):
+    if isinstance(main.get("securityContext"), dict):  # keeps an explicit {}
         entry["securityContext"] = main["securityContext"]
     # Same list as handle_cronjob, and kept in step with it deliberately: a Job
     # and a CronJob's jobTemplate are the same spec, and every time these two
@@ -3081,18 +3171,23 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             entry["env"] = split_env(full_env)
         if ENV_IN_VALUES:
             ctx.sub_full_env[("jobs", sub_name)] = full_env
+        if len(full_env) > 1:
+            entry["envOrder"] = list(full_env)
     if main.get("envFrom"):
         entry["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
+        set_order(entry, "envFrom", "envFromOrder")
     if main.get("resources"):
         entry["resources"] = main["resources"]
     if main.get("volumeMounts"):
         entry["volumeMounts"] = named_list_to_map(main["volumeMounts"])
+        set_order(entry, "volumeMounts", "volumeMountOrder")
     for extra in containers[1:]:
         remap_container_refs(extra, ctx)
         sc_entry = {k: val for k, val in extra.items() if k != "name"}
         if sc_entry.get("image"):
             ctx.sub_raw_image[("jobs", sub_name, "sidecars", extra["name"], "image")] = sc_entry.pop("image")
         entry.setdefault("sidecars", {})[extra["name"]] = sc_entry
+    set_order(entry, "sidecars", "sidecarOrder")
     init_containers = pod_spec.get("initContainers", []) or []
     if init_containers:
         for ic in init_containers:
@@ -3103,6 +3198,7 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             entry["initContainerOrder"] = order
     if pod_spec.get("volumes"):
         entry["volumes"] = remap_volumes(named_list_to_map(pod_spec["volumes"]), ctx)
+        set_order(entry, "volumes", "volumeOrder")
     # Pod-template labels/annotations — see the matching comment in
     # handle_cronjob. A Job has the same gap for the same reason, and error.txt
     # says so: "handle_job() has the same gap."
@@ -3915,7 +4011,7 @@ def helm_template(chart: Path, release: str, namespace: str, value_files: list[P
                             encoding="utf-8", errors="replace")
     if result.returncode != 0:
         raise RuntimeError(f"helm template failed for {release}: {result.stderr}")
-    return [d for d in yaml.safe_load_all(result.stdout) if d]
+    return [d for d in yaml.load_all(result.stdout, Loader=_HelmOutputLoader) if d]
 
 
 def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozenset()) -> tuple[int, list[str]]:
@@ -5780,6 +5876,16 @@ def main() -> None:
     # same way every other unresolvable collision in this converter is.
     app_names: dict[tuple[str, str], str] = {}
     for (namespace, ms_name), slug in sorted(release_slugs.items()):
+        # ms-applicationSet uses the file name as the Helm release name, and
+        # Helm refuses one over 53 characters (or not a DNS subdomain): the
+        # Application can never render. A 63-char workload name is valid
+        # Kubernetes, so this is only caught here — before a sync fails.
+        if len(slug) > 53 or not HELM_RELEASE_NAME_RE.match(slug):
+            all_warnings.append(
+                f"[P0] [{namespace}/{ms_name}] release name '{slug}' is not a valid Helm release name "
+                f"({len(slug)} chars; at most 53, lowercase DNS subdomain) — its ArgoCD Application "
+                f"cannot render. Rename the file (and set fullnameOverride to keep the object names)."
+            )
         key = (slug, k8s_ns(namespace).rsplit("-", 1)[-1]
                + (f"-{folder_suffix(namespace)}" if "/" in namespace else ""))
         if key in app_names and app_names[key] != namespace:

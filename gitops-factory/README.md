@@ -280,6 +280,49 @@ identically "shared" in every namespace, it is exactly the case release-slug
 disambiguation exists for, so two namespaces with genuinely different shared
 content get `base/<namespace>-shared.yaml` rather than silently sharing one.
 
+## Cutting a live app over from its old ArgoCD apps
+
+The aim is that the cutover restarts no pods. The only difference should be
+`argocd.argoproj.io/instance`, which ArgoCD stamps on each object's own
+metadata. That label never reaches the pod template, so changing it doesn't
+restart anything.
+
+Pods restart only when `spec.template` or `spec.selector` changes. The selector
+is immutable, so changing it forces ArgoCD to delete and recreate the workload,
+which kills every pod at once. To keep both unchanged, the converter carries
+the following over from the source manifest:
+
+- The **existing selector**, as `selectorLabels`. The pod template keeps every
+  raw label, including identity labels such as `app`.
+- The **list order** of env, ports, volumeMounts, volumes, envFrom and sidecars
+  (`envOrder`, `portOrder`, ...). Helm would otherwise render them sorted.
+- An explicit **empty container `securityContext: {}`**.
+- **No** `serviceAccountName` or `automountServiceAccountToken` the pod didn't
+  have. A pod running as `default` gets `serviceAccount.create: false`.
+- **No** `kubectl.kubernetes.io/restartedAt` or
+  `openshift.openshift.io/restartedAt`. These are stamps from a manual
+  `oc rollout restart`, not configuration.
+
+The chart also no longer defaults a Route's `insecureEdgeTerminationPolicy` to
+`Redirect`.
+
+Order of operations, per namespace:
+
+1. Remove the old tree from ArgoCD **without cascading**. Every resource stays
+   running:
+   `scripts/argo-orphan-tree.sh <old-root-app> -n <argocd-ns>`
+   This is a dry run; it prints the tree and every command. Add `--apply` to
+   execute it.
+   - The script turns off auto-sync parents-first and deletes ApplicationSets
+     with `--cascade=orphan`.
+   - It then removes each Application's finalizers before deleting it, deepest
+     first, in parallel.
+   - It refuses to run if the tree reaches any app made by `ms-applicationSet`.
+2. Apply the new ApplicationSet. If you want to review the diff first, disable
+   auto-sync on it.
+3. `argocd app diff <app>` should show nothing under `spec.template` or
+   `spec.selector`. After the sync, `oc get rs` should show no new ReplicaSet.
+
 ## defaults.yaml — factoring out what's common
 
 This is the same "each layer only has what's different" idea already

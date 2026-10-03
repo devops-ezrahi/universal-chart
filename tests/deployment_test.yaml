@@ -507,3 +507,173 @@ tests:
       - equal:
           path: spec.template.spec.serviceAccountName
           value: custom-sa
+
+  # Migration fidelity: anything that changes the pod template restarts every
+  # pod on the first sync, and a changed selector cannot be applied at all.
+  - it: renders env in envOrder, not sorted, with unlisted keys after
+    set:
+      env:
+        service_apiUrl: { value: a }
+        redis_hosts: { value: b }
+        profile_redis_password:
+          valueFrom: { secretKeyRef: { name: redis-auth, key: AUTH_PASS } }
+        z_extra: { value: z }
+        a_extra: { value: a }
+      envOrder: [redis_hosts, service_apiUrl, profile_redis_password]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[0].name
+          value: redis_hosts
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: service_apiUrl
+      - equal:
+          path: spec.template.spec.containers[0].env[2].name
+          value: profile_redis_password
+      - equal:
+          path: spec.template.spec.containers[0].env[3].name
+          value: a_extra
+      - equal:
+          path: spec.template.spec.containers[0].env[4].name
+          value: z_extra
+
+  - it: renders volumes and volumeMounts in their order lists
+    set:
+      volumes:
+        data: { emptyDir: {} }
+        config: { configMap: { name: cfg } }
+      volumeOrder: [data, config]
+      volumeMounts:
+        data: { mountPath: /data }
+        config: { mountPath: /config }
+      volumeMountOrder: [data, config]
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].name
+          value: data
+      - equal:
+          path: spec.template.spec.volumes[1].name
+          value: config
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].name
+          value: data
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[1].name
+          value: config
+
+  - it: keeps the default name/instance selector when selectorLabels is unset
+    release:
+      name: web
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: web
+            app.kubernetes.io/instance: web
+
+  - it: uses selectorLabels verbatim for the selector and pod template
+    set:
+      selectorLabels:
+        app: midasson-api-black-b2b-tst
+      podLabels:
+        app.kubernetes.io/name: midasson-api-black-b2b
+        team: rakia
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app: midasson-api-black-b2b-tst
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app: midasson-api-black-b2b-tst
+            app.kubernetes.io/name: midasson-api-black-b2b
+            team: rakia
+      - equal:
+          path: metadata.labels.app
+          value: midasson-api-black-b2b-tst
+
+  - it: does not render serviceAccountName or automount for a pod without a ServiceAccount
+    set:
+      serviceAccount:
+        create: false
+    asserts:
+      - notExists:
+          path: spec.template.spec.serviceAccountName
+      - notExists:
+          path: spec.template.spec.automountServiceAccountToken
+
+  - it: renders serviceAccountName when the release creates or names one
+    release:
+      name: web
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: web
+
+  - it: renders an explicit serviceAccountName default
+    set:
+      serviceAccount:
+        create: false
+        name: default
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: default
+
+  - it: renders pod-level automountServiceAccountToken only when set
+    set:
+      serviceAccount:
+        automountServiceAccountToken: false
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+
+  - it: renders no container securityContext by default
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext
+
+  - it: keeps an explicit empty container securityContext
+    set:
+      securityContext: {}
+    asserts:
+      - exists:
+          path: spec.template.spec.containers[0].securityContext
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value: {}
+
+  - it: renders every env value as a string (a bare y / 08 in a values file is a bool / number to Helm)
+    set:
+      env:
+        A:
+          value: true
+        B:
+          value: 8
+        C:
+          value: "x"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[0].value
+          value: "true"
+      - equal:
+          path: spec.template.spec.containers[0].env[1].value
+          value: "8"
+      - equal:
+          path: spec.template.spec.containers[0].env[2].value
+          value: x
+
+  - it: still renders when optional sections are deleted with null
+    set:
+      service: null
+      ingress: null
+      hpa: null
+      pdb: null
+      vpa: null
+      serviceMonitor: null
+      route: null
+    asserts:
+      - isKind:
+          of: Deployment

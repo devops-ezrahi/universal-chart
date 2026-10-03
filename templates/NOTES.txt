@@ -1,9 +1,9 @@
 {{- include "universal-chart.renderValues" . }}
 {{- $fullName := include "universal-chart.fullname" . }}
-{{- $serviceType := .Values.service.type }}
+{{- $serviceType := (.Values.service | default dict).type | default "" }}
 1. Application deployed: {{ $fullName }}
 
-{{- if .Values.ingress.enabled }}
+{{- if (and .Values.ingress .Values.ingress.enabled) }}
 2. Access your app:
   {{- range .Values.ingress.hosts }}
   http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
@@ -19,7 +19,7 @@
   echo "http://$SERVICE_IP"
 {{- else }}
 2. Port-forward to access locally:
-  {{- $firstPort := 80 }}{{- range $name, $spec := .Values.service.ports }}{{- $firstPort = $spec.port }}{{- break }}{{- end }}
+  {{- $firstPort := 80 }}{{- range $name, $spec := (.Values.service | default dict).ports }}{{- $firstPort = $spec.port }}{{- break }}{{- end }}
   kubectl port-forward svc/{{ $fullName }} 8080:{{ $firstPort }}
   Then open: http://localhost:8080
 {{- end }}

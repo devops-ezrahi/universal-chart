@@ -90,4 +90,6 @@ def test_render_matches_live_labels_selector_and_pod_spec(tmp_path):
     assert sts["selector"] == live_sts["selector"]
     assert sts["template"]["metadata"]["labels"] == live_sts["template"]["metadata"]["labels"]
     assert "automountServiceAccountToken" not in sts["template"]["spec"]
-    assert sts["template"]["spec"]["serviceAccountName"] == "default"
+    # The live template never named a ServiceAccount; rendering
+    # `serviceAccountName: default` onto it is a pod-template change (a rollout).
+    assert "serviceAccountName" not in sts["template"]["spec"]
