@@ -6,5 +6,5 @@ description: >-
   Universal Chart. Rendered once per namespace directory by the values repo's
   own rootApplicationSet.yaml.
 type: application
-version: 1.0.0-dev.4
+version: 1.0.0-dev.5
 appVersion: "1.0.0"
