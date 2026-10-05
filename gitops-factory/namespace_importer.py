@@ -150,7 +150,16 @@ FETCH_FAILURES = []
 def parse_yaml_stream(output):
     """Parse a multi-document YAML string into a flat list of resource dicts,
     unwrapping *List wrappers."""
-    docs = [d for d in yaml.safe_load_all(output or "") if d is not None]
+    try:
+        docs = [d for d in yaml.safe_load_all(output or "") if d is not None]
+    except yaml.YAMLError:
+        # PyYAML rejects a TAB after a plain scalar at the end of a line
+        # (`- apiVersion: v1<TAB>`), which Go's YAML — Helm, kubectl, the API
+        # server — reads fine; prometheus-community's alertmanager chart renders
+        # one. Trailing whitespace carries no meaning outside a block scalar, so
+        # retry without it rather than fail the whole namespace.
+        docs = [d for d in yaml.safe_load_all(re.sub(r"[ \t]+$", "", output or "", flags=re.M))
+                if d is not None]
     resources = []
     for doc in docs:
         if not isinstance(doc, dict):
@@ -913,6 +922,21 @@ def discover_externalsecrets_and_stores(namespace):
         return es_target_map, store_refs, es_to_store_map, sa_refs_from_stores
 
 
+def workload_keys(workloads, taken=()):
+    """id(workload) -> a unique grouping key: its name, or '<name>-<kind>' when
+    an earlier workload (or `taken`) already has that name."""
+    keys, seen = {}, set(taken)
+    for w in workloads:
+        name = (w.get("metadata") or {}).get("name", "unknown")
+        key = name if name not in seen else f"{name}-{str(w.get('kind', 'unknown')).lower()}"
+        n = 2
+        while key in seen:
+            key, n = f"{name}-{str(w.get('kind', 'unknown')).lower()}-{n}", n + 1
+        seen.add(key)
+        keys[id(w)] = key
+    return keys
+
+
 def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_services=None, all_routes=None):
     """
     Fetch all resources for an app with STRICT categorization.
@@ -928,12 +952,18 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
         print(f"No workloads found for app '{app_name}'", file=sys.stderr)
         return {}
 
+    # Each workload's grouping key, which also names its output file. Normally
+    # its name — but two KINDS may share one (fluentd's DaemonSet forwarder and
+    # StatefulSet aggregator are both 'fluentd'), and keyed by name alone the
+    # second silently replaced the first, taking its Services and config with it.
+    wl_keys = workload_keys(workloads)
+
     # Step 2: Extract referenced resources per workload
     workload_refs = {}
     all_refs = {rt: {} for rt in REFERENCED_RESOURCE_TYPES}
 
     for workload in workloads:
-        workload_name = workload.get("metadata", {}).get("name", "unknown")
+        workload_name = wl_keys[id(workload)]
         pod_spec = extract_pod_spec_from_resource(workload)
         per_workload_refs = {rt: set() for rt in REFERENCED_RESOURCE_TYPES}
         if pod_spec:
@@ -1037,8 +1067,7 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
                 match_labels = selector.get("matchLabels", {})
                 if isinstance(match_labels, dict) and match_labels:
                     if all(svc_selector.get(k) == v for k, v in match_labels.items()):
-                        wl_name = workload.get("metadata", {}).get("name", "")
-                        matching_workloads.append(wl_name)
+                        matching_workloads.append(wl_keys[id(workload)])
         service_to_workloads[svc_name] = matching_workloads
 
     # Step 5: Discover routes
@@ -1055,11 +1084,11 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
     # Build microservice grouping
     microservices = {}
     for workload in workloads:
-        workload_name = workload.get("metadata", {}).get("name", "unknown")
+        workload_name = wl_keys[id(workload)]
         kind = workload.get("kind", "Unknown")
         yaml_str = yaml.dump(workload, default_flow_style=False, sort_keys=False)
         microservices[workload_name] = {
-            "workload": (workload_name, kind, yaml_str),
+            "workload": (workload.get("metadata", {}).get("name", "unknown"), kind, yaml_str),
             "resources": [],
         }
 
@@ -1258,6 +1287,78 @@ def write_shared_yaml(shared_entries, output_path):
     )
     print(f"  Wrote {path}", file=sys.stderr)
 
+# Kinds file_unclaimed leaves out: the converter drops these by design
+# (convert_to_universal_chart.DROPPED_KINDS), so filing them only adds noise.
+UNCLAIMED_SKIP_KINDS = {"NetworkPolicy", "ServiceMonitor"}
+UNCLAIMED_WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "DeploymentConfig"}
+
+
+def _written_objects(ns_path):
+    seen = set()
+    for f in sorted(Path(ns_path).rglob("*.y*ml")) if Path(ns_path).exists() else []:
+        try:
+            for d in yaml.safe_load_all(f.read_text(encoding="utf-8")):
+                if isinstance(d, dict):
+                    seen.add((d.get("kind"), (d.get("metadata") or {}).get("name")))
+        except yaml.YAMLError:
+            pass
+    return seen
+
+
+def file_unclaimed(ns_path, docs):
+    """Give every object of a PASTED dump a home in the converter's input.
+
+    A live-cluster pull is selective on purpose — it follows what workloads
+    reference and skips Roles, because a real namespace is full of objects that
+    are not the app's (OpenShift's admin bindings, other teams' config). A
+    pasted dump, or a rendered Helm chart, is the opposite: everything in it is
+    the app. There the selective pull silently lost argocd-cm, argocd-secret,
+    every Role/RoleBinding and every cluster-scoped object.
+
+    So whatever the pull did not write is filed here: a workload as its own
+    microservice file (it was not discovered as an app), everything else into
+    shared.yaml, where the converter gives it the namespace's shared release —
+    or, for a kind the chart has no template for, extraDeploy, verbatim.
+    Helm test hooks (Pods annotated helm.sh/hook: test) are run-once checks,
+    not part of a deployment, and are skipped. Returns report lines.
+    """
+    ns_path = Path(ns_path)
+    written = _written_objects(ns_path)
+    notes, shared_add = [], []
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        kind, name = d.get("kind"), (d.get("metadata") or {}).get("name")
+        if not kind or not name or (kind, name) in written or kind in UNCLAIMED_SKIP_KINDS:
+            continue
+        hook = str(((d.get("metadata") or {}).get("annotations") or {}).get("helm.sh/hook", ""))
+        if kind == "Pod" and "test" in [h.strip() for h in hook.split(",")]:
+            notes.append(f"{kind}/{name}: a Helm test hook — not part of the deployment, skipped")
+            written.add((kind, name))
+            continue
+        written.add((kind, name))
+        if kind in UNCLAIMED_WORKLOAD_KINDS:
+            stem, n = name, 2
+            while (ns_path / f"{stem}.yaml").exists():
+                stem, n = f"{name}-{kind.lower()}" if n == 2 else f"{name}-{kind.lower()}-{n}", n + 1
+            ns_path.mkdir(parents=True, exist_ok=True)
+            (ns_path / f"{stem}.yaml").write_text(
+                yaml.dump(clean_resource(d), default_flow_style=False, sort_keys=False, allow_unicode=True),
+                encoding="utf-8")
+            notes.append(f"{kind}/{name}: not discovered as an app — converted on its own as '{stem}'")
+            continue
+        shared_add.append(clean_resource(d))
+        notes.append(f"{kind}/{name}: referenced by no workload — kept in the namespace's shared release")
+    if shared_add:
+        ns_path.mkdir(parents=True, exist_ok=True)
+        path = ns_path / "shared.yaml"
+        existing = [x for x in yaml.safe_load_all(path.read_text(encoding="utf-8")) if x] \
+            if path.exists() else []
+        path.write_text(yaml.dump_all(existing + shared_add, default_flow_style=False, sort_keys=False,
+                                      allow_unicode=True), encoding="utf-8")
+    return notes
+
+
 # ---------------------------------------------------------------------------
 # Single resource handler
 # ---------------------------------------------------------------------------
@@ -1402,9 +1503,9 @@ def handle_full_namespace(namespace, args):
     other_extras = [r for r in extras if r.get("kind") != "HorizontalPodAutoscaler"]
     hpa_by_target = {}
     for hpa in hpas:
-        target = ((hpa.get("spec") or {}).get("scaleTargetRef") or {}).get("name")
-        if target:
-            hpa_by_target.setdefault(target, []).append(hpa)
+        ref = (hpa.get("spec") or {}).get("scaleTargetRef") or {}
+        if ref.get("name"):
+            hpa_by_target.setdefault(ref["name"], []).append((ref.get("kind"), hpa))
     placed_hpa = set()
 
     for app_id in app_ids:
@@ -1415,7 +1516,14 @@ def handle_full_namespace(namespace, args):
             print(f"Warning: No resources found for '{app_id}', skipping.", file=sys.stderr)
             continue
         for wl_name in list(all_resources):
-            for hpa in hpa_by_target.get(wl_name, []):
+            wl = all_resources[wl_name].get("workload")
+            if not wl:
+                continue
+            # By the workload's own name and kind, not its grouping key (which
+            # is '<name>-<kind>' when two kinds share a name).
+            for target_kind, hpa in hpa_by_target.get(wl[0], []):
+                if target_kind and target_kind != wl[1]:
+                    continue
                 hpa_name = hpa.get("metadata", {}).get("name", "unknown")
                 all_resources[wl_name]["resources"].append(
                     (hpa_name, "HorizontalPodAutoscaler", yaml.dump(hpa, default_flow_style=False, sort_keys=False)))
@@ -1427,7 +1535,16 @@ def handle_full_namespace(namespace, args):
                 elif kind == "Route":
                     matched_route_names.add(name)
         shared_sink.extend(all_resources.pop(SHARED_KEY, {}).get("resources", []))
-        combined.update(all_resources)
+        # Two apps may each hold a workload of one name; update() kept only the
+        # last. The later one is filed under '<name>-<kind>' instead.
+        for key, entry in all_resources.items():
+            if key in combined:
+                wl = entry.get("workload") or (key, "unknown", "")
+                alt, n = f"{key}-{str(wl[1]).lower()}", 2
+                while alt in combined:
+                    alt, n = f"{key}-{str(wl[1]).lower()}-{n}", n + 1
+                key = alt
+            combined[key] = entry
 
     # An Ingress goes with the microservice whose Service(s) it routes to, the
     # way a Route already does. In shared.yaml the converter builds it into a

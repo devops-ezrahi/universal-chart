@@ -26,8 +26,9 @@ spec:
   {{- with $spec.activeDeadlineSeconds }}
   activeDeadlineSeconds: {{ . }}
   {{- end }}
-  {{- with $spec.ttlSecondsAfterFinished }}
-  ttlSecondsAfterFinished: {{ . }}
+  {{- /* hasKey: 0 means "delete as soon as it finishes", unset means never. */}}
+  {{- if and (hasKey ($spec | default dict) "ttlSecondsAfterFinished") (not (kindIs "invalid" $spec.ttlSecondsAfterFinished)) }}
+  ttlSecondsAfterFinished: {{ $spec.ttlSecondsAfterFinished }}
   {{- end }}
   {{- /* See the matching comment in cronjob.yaml: hasKey, because 0 is legal
          and meaningful for both of these. */}}

@@ -492,7 +492,7 @@ empty string and silently drops traffic instead of erroring. */}}
 {{- if (and .Values.ingress .Values.ingress.enabled) }}
 {{- range $host := .Values.ingress.hosts }}
 {{- range $path := $host.paths }}
-{{- if and (not $path.portName) (not ($root.Values.service | default dict).ports) }}
+{{- if and (not $path.portName) (not $path.portNumber) (not ($root.Values.service | default dict).ports) }}
 {{- fail (printf "ingress.hosts[%s].paths has no portName and service.ports is empty — the Ingress backend port would be blank" $host.host) }}
 {{- end }}
 {{- end }}

@@ -45,6 +45,9 @@ spec:
   {{- if hasKey .Values.service "allocateLoadBalancerNodePorts" }}
   allocateLoadBalancerNodePorts: {{ .Values.service.allocateLoadBalancerNodePorts }}
   {{- end }}
+  {{- with .Values.service.trafficDistribution }}
+  trafficDistribution: {{ . }}
+  {{- end }}
   {{- with .Values.service.externalIPs }}
   externalIPs:
     {{- toYaml . | nindent 4 }}
@@ -70,6 +73,10 @@ spec:
     {{- end }}
   {{- if ne .Values.service.type "ExternalName" }}
   selector:
+    {{- /* An explicit selector, as extra `services` already take: a Service that
+           fronts pods of ANOTHER release (a StatefulSet's headless Service kept
+           in the namespace's `shared` release) selected nothing with this
+           release's own labels. */}}
     {{- with .Values.service.selector }}
     {{- toYaml . | nindent 4 }}
     {{- else }}

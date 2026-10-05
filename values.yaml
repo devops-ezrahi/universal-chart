@@ -285,6 +285,8 @@ service:
   # any caller's own -f values.yaml that names its ports differently, and
   # would target a "http"-named container port that may not exist. Declare
   # ports explicitly per release instead (see COOKBOOK.md / README.md).
+  # selector: {}               # explicit pod selector; default is this release's own labels
+  # trafficDistribution: PreferClose
   ports: {}
   # http:
   #   port: 80
@@ -323,6 +325,9 @@ ingress:
   #     - path: /
   #       pathType: Prefix
   #       portName: http
+  #     - path: /api
+  #       serviceName: api-server   # this path's own backend (default: ingress.serviceName, then the primary Service)
+  #       portNumber: 8080          # a numbered backend port instead of portName
   tls: []
 
 # ---------------------------------------------------------------------------
@@ -515,6 +520,9 @@ jobs: {}
 # ---------------------------------------------------------------------------
 # ServiceAccount
 # ---------------------------------------------------------------------------
+# Pod-level token mount, separate from the ServiceAccount's own setting below.
+# Unset: the pod follows serviceAccount.automountServiceAccountToken.
+# automountServiceAccountToken: true
 serviceAccount:
   create: true
   name: ""

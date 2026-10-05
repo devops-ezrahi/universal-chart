@@ -47,6 +47,8 @@ spec:
             value: *project
           - name: destinationServer
             value: https://kubernetes.default.svc
+          - name: autoSync
+            value: 'false'
         path: ms-applicationSet
         repoURL: https://github.com/devops-ezrahi/universal-chart.git
         targetRevision: main

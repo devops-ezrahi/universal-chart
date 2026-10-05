@@ -26,6 +26,32 @@ Usage: {{- include "universal-chart.initContainers" (dict "containers" .Values.i
 {{- end }}
 
 {{/*
+envFrom refs in the order they apply. Later sources win a key both define, so
+order is meaning — and Helm ranges a map in sorted key order. `order` (the
+converter's envFromOrder) names keys in the raw order; the rest follow sorted.
+*/}}
+{{- define "universal-chart.envFrom" -}}
+{{- $refs := .refs | default dict }}
+{{- $order := .order | default list }}
+{{- $keys := list }}
+{{- range $k := $order }}{{- if hasKey $refs $k }}{{- $keys = append $keys $k }}{{- end }}{{- end }}
+{{- range $k, $_ := $refs }}{{- if not (has $k $order) }}{{- $keys = append $keys $k }}{{- end }}{{- end }}
+{{- range $name := $keys }}
+{{- $spec := index $refs $name | default dict }}
+{{- /* `name` when the key cannot be the object's name: a ConfigMap and a
+       Secret of ONE name (Harbor's harbor-core) need two keys. */}}
+- {{ $spec.type | default "configMapRef" }}:
+    name: {{ $spec.name | default $name }}
+    {{- if hasKey $spec "optional" }}
+    optional: {{ $spec.optional }}
+    {{- end }}
+  {{- with $spec.prefix }}
+  prefix: {{ . | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 =============================================================================
 SHARED POD SPEC — used by Deployment, StatefulSet, DaemonSet
 =============================================================================
@@ -40,8 +66,15 @@ Call: {{- include "universal-chart.podSpec" . | nindent 6 }}
 {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
 serviceAccountName: {{ include "universal-chart.serviceAccountName" . }}
 {{- end }}
-{{- /* Unset = omitted, as on a manifest that never set it; false must still render. */}}
-{{- if kindIs "bool" .Values.serviceAccount.automountServiceAccountToken }}
+{{- /* The POD's token mount, which is not the ServiceAccount's. Hardened charts
+       (Bitnami, Argo CD, Traefik) set the SA to false and the pod to true, so the
+       one serviceAccount value cannot say both — and a controller that inherited
+       the SA's `false` lost its API token. A top-level automountServiceAccountToken
+       wins when present; without it the pod follows the SA's, and with neither set
+       it is omitted, as on a manifest that never set it (false must still render). */}}
+{{- if hasKey .Values "automountServiceAccountToken" }}
+automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
+{{- else if kindIs "bool" .Values.serviceAccount.automountServiceAccountToken }}
 automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
 {{- end }}
 
@@ -220,14 +253,7 @@ MAIN CONTAINER — all possible container spec fields
   {{- with .Values.envFrom }}
   {{- $envFrom := . }}
   envFrom:
-    {{- range $name := (include "universal-chart.orderedKeys" (dict "map" $envFrom "order" $.Values.envFromOrder) | fromJsonArray) }}
-    {{- $spec := index $envFrom $name }}
-    - {{ $spec.type | default "configMapRef" }}:
-        name: {{ $name }}
-      {{- if hasKey $spec "optional" }}
-      optional: {{ $spec.optional }}
-      {{- end }}
-    {{- end }}
+    {{- include "universal-chart.envFrom" (dict "refs" . "order" $.Values.envFromOrder) | trim | nindent 4 }}
   {{- end }}
 
   {{- with .Values.resources }}
@@ -312,6 +338,30 @@ restartPolicy: {{ .job.restartPolicy | default "OnFailure" }}
 {{- if or .job.serviceAccountName .Values.serviceAccount.create .Values.serviceAccount.name }}
 serviceAccountName: {{ .job.serviceAccountName | default (include "universal-chart.serviceAccountName" .) }}
 {{- end }}
+{{- /* Pod-level fields a Job's own manifest commonly sets — admission-webhook
+       and CRD-upgrade hooks pin themselves to Linux nodes, opt out of service
+       links, or run without a token. Each renders only when the job declares
+       it (hasKey where false/0 is the meaningful value), so a job that names
+       none renders exactly as before. */}}
+{{- if hasKey .job "automountServiceAccountToken" }}
+automountServiceAccountToken: {{ .job.automountServiceAccountToken }}
+{{- end }}
+{{- if hasKey .job "enableServiceLinks" }}
+enableServiceLinks: {{ .job.enableServiceLinks }}
+{{- end }}
+{{- if hasKey .job "terminationGracePeriodSeconds" }}
+terminationGracePeriodSeconds: {{ .job.terminationGracePeriodSeconds }}
+{{- end }}
+{{- with .job.priorityClassName }}
+priorityClassName: {{ . }}
+{{- end }}
+{{- with .job.dnsPolicy }}
+dnsPolicy: {{ . }}
+{{- end }}
+{{- with .job.hostAliases }}
+hostAliases:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 {{- with .Values.imagePullSecrets }}
 imagePullSecrets:
   {{- toYaml . | nindent 2 }}
@@ -363,6 +413,19 @@ containers:
     args:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+    {{- with .job.workingDir }}
+    workingDir: {{ . }}
+    {{- end }}
+    {{- with .job.ports }}
+    ports:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- range $probe := list "livenessProbe" "readinessProbe" "startupProbe" "lifecycle" }}
+    {{- with index $.job $probe }}
+    {{ $probe }}:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- end }}
     {{- with .job.env }}
     env:
       {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.job.envOrder "stringValues" true) | nindent 6 }}
@@ -370,11 +433,7 @@ containers:
     {{- with .job.envFrom }}
     {{- $envFrom := . }}
     envFrom:
-      {{- range $name := (include "universal-chart.orderedKeys" (dict "map" $envFrom "order" $.job.envFromOrder) | fromJsonArray) }}
-      {{- $spec := index $envFrom $name }}
-      - {{ $spec.type | default "configMapRef" }}:
-          name: {{ $name }}
-      {{- end }}
+      {{- include "universal-chart.envFrom" (dict "refs" . "order" $.job.envFromOrder) | trim | nindent 6 }}
     {{- end }}
     {{- with .job.resources }}
     resources:
@@ -393,12 +452,17 @@ containers:
 volumes:
   {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.job.volumeOrder) | nindent 2 }}
 {{- end }}
-{{- with .Values.nodeSelector }}
+{{- /* The job's own scheduling wins; without one it keeps the release's. */}}
+{{- with (.job.nodeSelector | default .Values.nodeSelector) }}
 nodeSelector:
   {{- toYaml . | nindent 2 }}
 {{- end }}
-{{- with .Values.tolerations }}
+{{- with (.job.tolerations | default .Values.tolerations) }}
 tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .job.affinity }}
+affinity:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}

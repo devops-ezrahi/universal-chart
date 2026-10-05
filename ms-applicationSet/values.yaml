@@ -18,6 +18,13 @@ folder: ""
 # base/ mirrors those sub-folders: values/group1/ms1.yaml reads base/group1/ms1.yaml.
 valuesGlob: "*.yaml"
 
+# Whether each generated Application syncs itself (syncPolicy.automated, with
+# prune and selfHeal). false leaves every microservice's Application OutOfSync
+# until someone presses Sync in Argo CD. The default keeps the existing
+# behaviour; convert_to_universal_chart.py's rootApplicationSet passes false
+# unless run with --auto-sync true.
+autoSync: true
+
 project: default
 destinationServer: https://kubernetes.default.svc
 destinationName: ""   # a registered cluster name; wins over destinationServer when set

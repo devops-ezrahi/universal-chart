@@ -54,6 +54,10 @@ metadata:
   {{- end }}
 rules:
   {{- toYaml $spec.rules | nindent 2 }}
+{{- with $spec.aggregationRule }}
+aggregationRule:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 {{- end }}
 
 {{/* ClusterRoleBindings */}}
