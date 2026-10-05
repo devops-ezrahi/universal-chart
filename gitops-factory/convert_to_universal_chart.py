@@ -198,7 +198,7 @@ def env_normalized_ms_name(namespace: str, ms_name: str) -> str:
     stripped, so 'filter-service-black-b2b-tst' and 'filter-service-yellow-b2b'
     both become 'filter-service-b2b'. Opt-in, because it merges releases the
     default rule deliberately keeps apart."""
-    if NAME_TOKENS:
+    if NAME_TOKENS and ms_name not in TOKEN_EXEMPT_STEMS:
         ms_name = strip_name_tokens(ms_name, NAME_TOKENS)
     namespace = k8s_ns(namespace)
     ns_suffix = namespace.rsplit("-", 1)[-1] if "-" in namespace else None
@@ -215,6 +215,33 @@ def env_normalized_ms_name(namespace: str, ms_name: str) -> str:
 # --env-group token and from --env-suffixes (which also empties
 # KNOWN_ENV_SUFFIXES, replacing that rule).
 NAME_TOKENS: set[str] = set()
+
+# File stems NAME_TOKENS must leave alone: ones whose stripped name no OTHER
+# stem in the run shares (see token_exempt_stems). Filled once per run, before
+# any name is normalized, so every caller — the build, the folder assignment,
+# the fidelity check — agrees on a release's name.
+TOKEN_EXEMPT_STEMS: set[str] = set()
+
+
+def token_exempt_stems(stems, tokens) -> set[str]:
+    """Stems a token is NOT stripped from, because stripping it folds nothing.
+
+    The tokens exist to bring the copies of ONE microservice together across
+    environments and variants: 'pay-dev' + 'pay-prd' -> 'pay', 'ms1-yellow' +
+    'ms1-black' -> 'ms1'. A token that only happens to be a word of the name —
+    'project-api.yaml', the same in every namespace, while 'project' is also an
+    env suffix — produced a release called 'api' (and, as a group token, a
+    'project/' variant folder) with no second file to share it with. So a strip
+    is kept only when at least two DIFFERENT stems in the run land on the same
+    name; a stem alone in its family keeps the name it has, whatever namespaces
+    it appears in."""
+    if not tokens:
+        return set()
+    families: dict[str, set[str]] = defaultdict(set)
+    for stem in stems:
+        families[strip_name_tokens(stem, tokens)].add(stem)
+    return {stem for norm, members in families.items() if len(members) == 1 and norm != SHARED_DIR_NAME
+            for stem in members if stem != norm}
 
 
 def _token_re(tokens) -> "re.Pattern":
@@ -632,7 +659,12 @@ VOLATILE_METADATA_KEYS = (
 
 def load_multidoc(path: Path) -> list[dict]:
     text = path.read_text(encoding="utf-8")
-    return [d for d in yaml.safe_load_all(text) if d]
+    try:
+        return [d for d in yaml.safe_load_all(text) if d]
+    except yaml.YAMLError:
+        # A trailing TAB after a plain scalar: legal to Go's YAML (Helm renders
+        # it), fatal to PyYAML. See namespace_importer.parse_yaml_stream.
+        return [d for d in yaml.safe_load_all(re.sub(r"[ \t]+$", "", text, flags=re.M)) if d]
 
 
 # Keys pinned to the top of a generated values file, in this order, ahead of
@@ -651,7 +683,7 @@ TOP_LEVEL_KEY_ORDER = [
     "progressDeadlineSeconds", "minReadySeconds", "podManagementPolicy", "serviceName", "strategy",
     "containerName", "command", "args", "workingDir", "restartPolicy", "terminationGracePeriodSeconds",
     "containerRestartPolicy", "terminationMessagePath", "terminationMessagePolicy",
-    "env", "envFrom", "ports", "resources", "livenessProbe", "readinessProbe", "startupProbe",
+    "env", "envFrom", "envFromOrder", "ports", "resources", "livenessProbe", "readinessProbe", "startupProbe",
     "containerRestartRules", "lifecycle",
     "volumes", "volumeMounts", "pvc", "volumeClaimTemplates", "persistentVolumeClaimRetentionPolicy",
     "persistentVolumes", "storageClasses",
@@ -660,7 +692,7 @@ TOP_LEVEL_KEY_ORDER = [
     "externalSecrets", "checksums", "cronjobs", "jobs", "hpa", "vpa", "pdb",
     "nodeSelector", "tolerations", "topologySpreadConstraints", "priorityClassName", "runtimeClassName",
     "schedulerName", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
-    "hostAliases", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
+    "hostAliases", "automountServiceAccountToken", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
     "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations",
     "podAnnotations", "podLabels", "labels", "sidecars", "initContainers", "initContainerOrder",
 ]
@@ -1367,6 +1399,13 @@ class MicroserviceContext:
     pod_sa_names: Optional[set] = None
     primary_route_set: bool = False
     primary_service_set: bool = False
+    # Each Service's raw selector, by final name, with whether it is the primary
+    # one — read by rewire_service_selectors once the whole namespace is built.
+    raw_selectors: dict = field(default_factory=dict)
+    # The pod spec's own automountServiceAccountToken (None when unset), and
+    # whether the ServiceAccount document set its own — see handle_workload.
+    pod_automount: Any = None
+    sa_automount_from_doc: bool = False
     # Full (untrimmed) image/env, kept only so build_minimal_values can pull
     # the tag / literal env vars out of them — ctx.values["image"]/["env"]
     # themselves deliberately EXCLUDE tag / literal env (see
@@ -1438,7 +1477,17 @@ def envfrom_list_to_map(envfrom_list) -> dict:
         entry = {"type": typ}
         if ref.get("optional") is not None:
             entry["optional"] = ref["optional"]
-        out[ref["name"]] = entry
+        # `prefix` sits beside the ref, not inside it, and renames every key
+        # the pod sees — dropped, the app read none of the variables it expects.
+        if e.get("prefix"):
+            entry["prefix"] = e["prefix"]
+        key = ref["name"]
+        # A ConfigMap and a Secret of one name (Harbor's harbor-core) are two
+        # entries; keyed by name alone the second replaced the first.
+        if key in out:
+            entry["name"] = key
+            key = f"{key}-{'secret' if typ == 'secretRef' else 'configmap'}"
+        out[key] = entry
     return out
 
 
@@ -1579,11 +1628,22 @@ def remap_env(env_map: dict, ctx: MicroserviceContext) -> dict:
     return env_map
 
 
+def envfrom_order(ef_map: dict) -> Optional[list]:
+    """The raw order of envFrom refs, when it is not the sorted order the chart
+    would otherwise use. Later refs win a key both define, so it is meaning."""
+    keys = list(ef_map)
+    return keys if len(keys) > 1 and keys != sorted(keys) else None
+
+
 def remap_envfrom(ef_map: dict, ctx: MicroserviceContext) -> dict:
     out = {}
     for name, entry in ef_map.items():
         kind = "ConfigMap" if entry.get("type") == "configMapRef" else "Secret"
-        out[ctx.name_map[kind].get(name, name)] = entry
+        if "name" in entry:  # keyed apart from its object (envfrom_list_to_map)
+            entry = {**entry, "name": ctx.name_map[kind].get(entry["name"], entry["name"])}
+            out[name] = entry
+        else:
+            out[ctx.name_map[kind].get(name, name)] = entry
     return out
 
 
@@ -1687,6 +1747,8 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
             v["env"] = structural_env
     if c.get("envFrom"):
         v["envFrom"] = remap_envfrom(envfrom_list_to_map(c["envFrom"]), ctx)
+        if envfrom_order(v["envFrom"]):
+            v["envFromOrder"] = envfrom_order(v["envFrom"])
     if c.get("resources"):
         v["resources"] = c["resources"]
     for probe in ("livenessProbe", "readinessProbe", "startupProbe"):
@@ -1838,9 +1900,17 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
     # ServiceAccount, a raw `automountServiceAccountToken: false` on the pod
     # was silently dropped and the chart then rendered the default `true` —
     # quietly undoing the hardening.
+    #
+    # The pod's value is also remembered on its own: hardened charts set the SA
+    # to false and the pod to true, and once the ServiceAccount document has
+    # said its own value the pod's must not overwrite it (that flipped the SA
+    # object). build_microservice then writes the chart's top-level pod value
+    # wherever the two disagree.
     if "automountServiceAccountToken" in pod_spec:
-        v.setdefault("serviceAccount", {})["automountServiceAccountToken"] = \
-            pod_spec["automountServiceAccountToken"]
+        ctx.pod_automount = pod_spec["automountServiceAccountToken"]
+        if not ctx.sa_automount_from_doc:
+            v.setdefault("serviceAccount", {})["automountServiceAccountToken"] = \
+                pod_spec["automountServiceAccountToken"]
 
     if raw_labels(doc):
         v["labels"] = raw_labels(doc)
@@ -2141,6 +2211,8 @@ def build_service_entry(doc: dict) -> dict:
             entry["sessionAffinityConfig"] = spec["sessionAffinityConfig"]
     if spec.get("publishNotReadyAddresses") is not None:
         entry["publishNotReadyAddresses"] = spec["publishNotReadyAddresses"]
+    if spec.get("trafficDistribution"):
+        entry["trafficDistribution"] = spec["trafficDistribution"]
     # `is not None`, not truthiness — and that is the whole risk in this field.
     # The Kubernetes default is TRUE, so losing an explicit `true` is harmless
     # and losing an explicit `false` silently flips a LoadBalancer into
@@ -2193,6 +2265,7 @@ def handle_service(doc: dict, ctx: MicroserviceContext, final_name: str) -> None
         )
     entry = build_service_entry(doc)
     entry["enabled"] = True
+    ctx.raw_selectors[final_name] = (not ctx.primary_service_set, (doc.get("spec") or {}).get("selector") or {})
     if not ctx.primary_service_set:
         ctx.primary_service_set = True
         entry.pop("selector", None)  # primary service always uses the chart's own selector labels
@@ -2204,6 +2277,60 @@ def handle_service(doc: dict, ctx: MicroserviceContext, final_name: str) -> None
         ctx.values["service"] = entry
     else:
         ctx.values.setdefault("services", {})[final_name] = entry
+
+
+SERVICE_SELECTOR_LABEL_PREFIX = "svc.universal-chart.io/"
+
+
+def rewire_service_selectors(releases: list[tuple["MicroserviceContext", list[dict]]]) -> list[str]:
+    """Point every Service at the pods it selected in the raw manifests.
+
+    The chart relabels pods: app.kubernetes.io/name and /instance become the
+    RELEASE's, so a raw selector naming the source chart's values
+    (`instance: redis, name: redis`) matches nothing once converted. A primary
+    Service of a release that has its own pods is fine — the chart's own
+    selector is that release's pods. Everything else is resolved here, across
+    the whole namespace: a headless Service kept in `shared` for two
+    StatefulSets, Kafka's client Service, an extra Service of a release.
+
+    The pods the raw selector matched are found from the raw pod templates; if
+    the raw selector still holds in what they render (all its labels survive in
+    podLabels) it is kept, otherwise each matched workload gets one stable
+    label, `svc.universal-chart.io/<service>: "true"`, and the Service selects
+    that. Returns report lines.
+    """
+    pods = []
+    for ctx, docs in releases:
+        for d in docs:
+            if d.get("kind") in WORKLOAD_KINDS:
+                labels = ((((d.get("spec") or {}).get("template") or {}).get("metadata") or {})
+                          .get("labels") or {})
+                pods.append((ctx, d, labels))
+    notes = []
+    for ctx, _ in releases:
+        for svc, (primary, sel) in sorted(ctx.raw_selectors.items()):
+            entry = ctx.values.get("service") if primary else (ctx.values.get("services") or {}).get(svc)
+            if not sel or not isinstance(entry, dict):
+                continue
+            matched = [(c, d) for c, d, labels in pods
+                       if all(labels.get(k) == v for k, v in sel.items())]
+            if not matched:
+                continue
+            if primary and ctx.saw_workload and all(c is ctx for c, _ in matched):
+                continue
+            survives = all(all(((c.values.get("podLabels") or {}).get(k)) == v for k, v in sel.items())
+                           for c, _ in matched)
+            if survives:
+                entry["selector"] = dict(sel)
+                continue
+            key = SERVICE_SELECTOR_LABEL_PREFIX + svc
+            for c, _ in matched:
+                c.values.setdefault("podLabels", {})[key] = "true"
+            entry["selector"] = {key: "true"}
+            targets = sorted({f"{d.get('kind')}/{(d.get('metadata') or {}).get('name')}" for _, d in matched})
+            notes.append(f"Service/{svc}: its raw selector names labels the chart rewrites, so it "
+                         f"selects {', '.join(targets)} through the pod label '{key}'")
+    return notes
 
 
 def handle_configmap(doc: dict, ctx: MicroserviceContext, name: str) -> None:
@@ -2281,23 +2408,209 @@ ARGOCD_MANIFESTS = False
 # metadata.name and its label/annotation VALUES — deliberately never its data
 # payload, so a kept microservice whose ConfigMap merely carries a kafka URL is
 # not dropped by `--exclude kafka`. --keep wins over --exclude.
+#
+# --include is the allow-list the other two lack: a microservice file is
+# converted only when something in it matches. --exclude still wins over it.
+#
+# A pattern starting with `=` is an exact object NAME instead of a substring
+# (`=web` picks Deployment/web, not web-worker) — what a picker listing
+# workloads by name needs, and what typing `--exclude web` could never say.
+# `key=value` is one exact label (`app.kubernetes.io/part-of=payments`).
 EXCLUDE_PATTERNS: list[str] = []
 KEEP_PATTERNS: list[str] = []
+INCLUDE_PATTERNS: list[str] = []
+
+
+def matches_patterns(doc: dict, patterns: list[str]) -> bool:
+    meta = doc.get("metadata") or {}
+    name = str(meta.get("name") or "")
+    strings = [name]
+    strings += [str(v) for v in (meta.get("labels") or {}).values()]
+    strings += [str(v) for v in clean_annotations(meta.get("annotations")).values()]
+    strings = [s.lower() for s in strings]
+    labels = meta.get("labels") or {}
+    for p in patterns:
+        if p.startswith("="):
+            if p[1:] == name:
+                return True
+        elif "=" in p:
+            # `key=value`: that exact label, the way a selector would ask for it.
+            key, _, value = p.partition("=")
+            if str(labels.get(key.strip(), "\x00")) == value.strip():
+                return True
+        elif any(p.lower() in s for s in strings):
+            return True
+    return False
 
 
 def is_excluded(doc: dict) -> bool:
     if not EXCLUDE_PATTERNS:
         return False
-    meta = doc.get("metadata") or {}
-    strings = [str(meta.get("name") or "")]
-    strings += [str(v) for v in (meta.get("labels") or {}).values()]
-    strings += [str(v) for v in clean_annotations(meta.get("annotations")).values()]
-    strings = [s.lower() for s in strings]
+    return matches_patterns(doc, EXCLUDE_PATTERNS) and not matches_patterns(doc, KEEP_PATTERNS)
 
-    def hit(patterns: list[str]) -> bool:
-        return any(p.lower() in s for p in patterns for s in strings)
 
-    return hit(EXCLUDE_PATTERNS) and not hit(KEEP_PATTERNS)
+ROUTING_KINDS = ("Ingress", "Route")
+
+
+def _object_refs(doc: dict) -> set[tuple[str, str]]:
+    """Every (kind, name) one object points at by name — the forward edges of
+    place_shared_by_use's graph."""
+    refs = {(k, n) for k, n, _ in collect_object_references(doc)}
+    spec = doc.get("spec") or {}
+    kind = doc.get("kind")
+
+    def walk(node):
+        if isinstance(node, dict):
+            claim = node.get("persistentVolumeClaim")
+            if isinstance(claim, dict) and isinstance(claim.get("claimName"), str):
+                refs.add(("PersistentVolumeClaim", claim["claimName"]))
+            for s in node.get("imagePullSecrets") or []:
+                if isinstance(s, dict) and isinstance(s.get("name"), str):
+                    refs.add(("Secret", s["name"]))
+            svc = node.get("service")
+            if kind == "Ingress" and isinstance(svc, dict) and isinstance(svc.get("name"), str):
+                refs.add(("Service", svc["name"]))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+    walk(spec)
+    if kind in ("RoleBinding", "ClusterRoleBinding"):
+        ref = doc.get("roleRef") or {}
+        if ref.get("name"):
+            refs.add((ref.get("kind") or "Role", ref["name"]))
+    if kind == "ExternalSecret":
+        store = spec.get("secretStoreRef") or {}
+        if store.get("name"):
+            refs.add((store.get("kind") or "SecretStore", store["name"]))
+    if kind in ("SecretStore", "ClusterSecretStore"):
+        refs |= {(k, n) for k, n, _ in _collect_ref_targets(spec)}
+        sa = ((((spec.get("provider") or {}).get("vault") or {}).get("auth") or {})
+              .get("kubernetes") or {}).get("serviceAccountRef") or {}
+        if sa.get("name"):
+            refs.add(("ServiceAccount", sa["name"]))
+    return refs
+
+
+def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict]]],
+                        skipped: list[list[dict]]) -> tuple[list[dict], list[str]]:
+    """With --include / --exclude, `shared` holds only what at least TWO of the
+    microservices still being converted use. Each shared object is placed by
+    who uses it among the kept ones — two or more: stays shared; one: moves
+    into that microservice (appended to `kept` in place); none, but a skipped
+    one does: dropped. One nobody uses at all (argocd-cm, read through the
+    API) stays when the run includes it by pattern, or includes nothing and
+    excludes something else; otherwise it is dropped.
+
+    "Uses" is followed through the objects: a pod's mounts/env/pull secrets/
+    claims/ServiceAccount; a Service selecting its pods; an Ingress or Route
+    to that Service; a RoleBinding for its ServiceAccount, and the Role it
+    binds; an HPA/PDB on it; an ExternalSecret writing a Secret it reads, and
+    that store's own SA/CA. Returns report lines."""
+    owners = [(stem, docs) for stem, docs in kept] + [(None, docs) for docs in skipped]
+
+    def pod_specs(docs):
+        for d in docs:
+            spec = d.get("spec") or {}
+            if d.get("kind") == "CronJob":
+                spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+            if d.get("kind") in WORKLOAD_KINDS | {"Job", "CronJob"}:
+                tpl = spec.get("template") or {}
+                yield d, (tpl.get("metadata") or {}).get("labels") or {}, tpl.get("spec") or {}
+
+    # Who uses each (kind, name): a set of owner indexes (kept or skipped).
+    users: dict[tuple[str, str], set[int]] = defaultdict(set)
+    sa_users: dict[str, set[int]] = defaultdict(set)
+    for i, (_, docs) in enumerate(owners):
+        for d in docs:
+            # A microservice uses what it declares itself, too — so a shared
+            # Ingress to its own Service finds it.
+            users[(d.get("kind"), (d.get("metadata") or {}).get("name"))].add(i)
+            for ref in _object_refs(d):
+                users[ref].add(i)
+        for d, _, pod in pod_specs(docs):
+            sa = pod.get("serviceAccountName") or pod.get("serviceAccount") or "default"
+            sa_users[sa].add(i)
+            users[("ServiceAccount", sa)].add(i)
+            users[(d.get("kind"), (d.get("metadata") or {}).get("name"))].add(i)
+
+    def reverse_users(doc) -> set[int]:
+        """Users found from the object's side: what it selects or targets."""
+        kind, spec = doc.get("kind"), doc.get("spec") or {}
+        out: set[int] = set()
+        if kind == "Service" and spec.get("selector"):
+            sel = spec["selector"]
+            out |= {i for i, (_, docs) in enumerate(owners)
+                    for _, labels, _ in pod_specs(docs) if all(labels.get(k) == v for k, v in sel.items())}
+        if kind == "PodDisruptionBudget":
+            sel = (spec.get("selector") or {}).get("matchLabels") or {}
+            if sel:
+                out |= {i for i, (_, docs) in enumerate(owners)
+                        for _, labels, _ in pod_specs(docs) if all(labels.get(k) == v for k, v in sel.items())}
+        if kind == "HorizontalPodAutoscaler":
+            ref = spec.get("scaleTargetRef") or {}
+            out |= users.get((ref.get("kind"), ref.get("name")), set())
+        if kind in ("RoleBinding", "ClusterRoleBinding"):
+            for subj in doc.get("subjects") or []:
+                if subj.get("kind") == "ServiceAccount":
+                    out |= sa_users.get(subj.get("name"), set()) | users.get(("ServiceAccount", subj.get("name")), set())
+        if kind == "ExternalSecret":
+            target = (spec.get("target") or {}).get("name") or (doc.get("metadata") or {}).get("name")
+            out |= users.get(("Secret", target), set())
+        if kind in ROUTING_KINDS:  # belongs to whoever owns the Service it routes to
+            for ref in _object_refs(doc):
+                if ref[0] == "Service":
+                    out |= users.get(ref, set())
+        return out
+
+    key = lambda d: (d.get("kind"), (d.get("metadata") or {}).get("name"))
+    used: dict[tuple, set[int]] = {key(d): set(users.get(key(d), set())) for d in shared_docs}
+    # To a fixed point: what a shared object points at is used by its users
+    # (a Role by its binding's, a store by its ExternalSecret's) — except a
+    # route, which points the other way: it is used BY its Service's users.
+    changed = True
+    while changed:
+        changed = False
+        for d in shared_docs:
+            k = key(d)
+            new = used[k] | reverse_users(d)
+            for other in shared_docs:
+                if other.get("kind") not in ROUTING_KINDS and k in _object_refs(other):
+                    new |= used[key(other)]
+            if new != used[k]:
+                used[k] = new
+                users[k] |= new
+                changed = True
+
+    n_kept = len(kept)
+    stay, notes = [], []
+    for d in shared_docs:
+        k = key(d)
+        live = sorted(i for i in used[k] if i < n_kept)
+        label = f"{k[0]}/{k[1]}"
+        if len(live) >= 2:
+            stay.append(d)
+        elif len(live) == 1:
+            stem, docs = kept[live[0]]
+            if k not in {key(x) for x in docs}:
+                docs.append(d)
+            notes.append(f"shared {label}: only '{stem}' still uses it — moved into that microservice")
+        elif used[k]:
+            notes.append(f"shared {label}: used only by microservices left out of this run — dropped")
+        elif (INCLUDE_PATTERNS and matches_patterns(d, INCLUDE_PATTERNS)) or \
+                (not INCLUDE_PATTERNS and not is_excluded(d)) or matches_patterns(d, KEEP_PATTERNS):
+            stay.append(d)
+        else:
+            notes.append(f"shared {label}: used by no microservice and not named by --include — dropped")
+    return stay, notes
+
+
+def is_included(docs: list[dict]) -> bool:
+    """--include: whether a microservice FILE is selected. Without the flag,
+    every file is. shared.yaml is never filtered by it — what several
+    microservices share is kept whichever of them are picked."""
+    return not INCLUDE_PATTERNS or any(matches_patterns(d, INCLUDE_PATTERNS) for d in docs)
 
 
 def record_eso_api_version(doc: dict, ctx: MicroserviceContext) -> None:
@@ -2484,7 +2797,12 @@ def handle_rolebinding(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     subjects = []
     for s in doc.get("subjects", []) or []:
         s = dict(s)
-        s.pop("namespace", None)
+        # A subject in the binding's own namespace is the default, and dropping
+        # it keeps the release portable across namespaces. One naming ANOTHER
+        # namespace (argo-workflows binds `default`'s workflow SA) is kept:
+        # dropped, the binding silently granted this namespace's SA instead.
+        if s.get("namespace") in (None, k8s_ns(ctx.namespace)):
+            s.pop("namespace", None)
         if s.get("kind") == "ServiceAccount":
             s["name"] = ctx.name_map["ServiceAccount"].get(s["name"], s["name"])
         subjects.append(s)
@@ -2562,6 +2880,7 @@ def handle_serviceaccount(doc: dict, ctx: MicroserviceContext, name: str) -> Non
             sa["annotations"] = ann
         if "automountServiceAccountToken" in doc:
             sa["automountServiceAccountToken"] = doc["automountServiceAccountToken"]
+            ctx.sa_automount_from_doc = True
         ctx.values["serviceAccount"] = _carry_automount(ctx, sa)
     else:
         extra = copy.deepcopy(doc)
@@ -2618,14 +2937,26 @@ def handle_ingress(doc: dict, ctx: MicroserviceContext) -> None:
         paths = []
         for p in (rule.get("http", {}) or {}).get("paths", []) or []:
             svc = ((p.get("backend") or {}).get("service") or {})
-            port_name = (svc.get("port") or {}).get("name")
+            port = svc.get("port") or {}
+            port_name = port.get("name")
             if svc.get("name") and backend_svc is None:
                 backend_svc = svc["name"]
-            paths.append({"path": p.get("path", "/"), "pathType": p.get("pathType", "Prefix"), "portName": port_name})
+            entry = {"path": p.get("path", "/"), "pathType": p.get("pathType", "Prefix"), "portName": port_name}
+            # A port addressed by NUMBER has no name to carry; `portName: null`
+            # made the chart fall back to the primary Service's first port, or
+            # fail outright when this release has none (Harbor's shared Ingress).
+            if port_name is None and port.get("number") is not None:
+                del entry["portName"]
+                entry["portNumber"] = port["number"]
+            # A path routed to a different Service than the Ingress's first
+            # backend keeps its own — Harbor sends / to the portal and /api to core.
+            if svc.get("name") and svc["name"] != backend_svc:
+                entry["serviceName"] = ctx.name_map["Service"].get(svc["name"], svc["name"])
+            paths.append(entry)
         h["paths"] = paths
         hosts.append(h)
-    # Which Service the Ingress routes to. The chart renders ONE backend for
-    # every path, so only the first name is carried — but it must be carried:
+    # Which Service the Ingress routes to by default: the first backend (a path
+    # naming another one carries its own serviceName above) — and it must be carried:
     # once the primary Service keeps its raw '<app>-service' name, an Ingress
     # still pointing at the release fullname routes to nothing. Remapped
     # through name_map in case collision resolution renamed the Service.
@@ -2774,6 +3105,30 @@ def claim_subresource_key(ctx: MicroserviceContext, top_key: str, raw_name: str)
     return mine
 
 
+JOB_POD_FIELDS = ("automountServiceAccountToken", "enableServiceLinks", "terminationGracePeriodSeconds",
+                  "priorityClassName", "dnsPolicy", "hostAliases", "nodeSelector", "tolerations", "affinity")
+JOB_CONTAINER_FIELDS = ("workingDir", "ports", "livenessProbe", "readinessProbe", "startupProbe", "lifecycle")
+
+
+def carry_job_pod_fields(pod_spec: dict, main: dict, dest: dict) -> None:
+    """The pod- and container-level fields a Job's own manifest sets that the
+    chart's jobPodSpec renders per job — kept in ONE place so handle_job and
+    handle_cronjob cannot drift. Admission-webhook and CRD-upgrade hooks pin
+    themselves to Linux nodes, opt out of service links or a token, and a
+    descheduler CronJob runs system-cluster-critical with a liveness probe;
+    each of those used to be dropped. `is not None`, so false and 0 survive.
+    """
+    for k in JOB_POD_FIELDS:
+        val = pod_spec.get(k)
+        if isinstance(val, dict):
+            val = {sk: sv for sk, sv in val.items() if sv is not None}
+        if val is not None and val != {} and val != []:
+            dest[k] = val
+    for k in JOB_CONTAINER_FIELDS:
+        if main.get(k) not in (None, {}, []):
+            dest[k] = main[k]
+
+
 def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     spec = doc.get("spec", {}) or {}
     jt = (spec.get("jobTemplate") or {}).get("spec") or {}
@@ -2819,6 +3174,7 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
         job_template["podSecurityContext"] = pod_tpl_spec["securityContext"]
     if main.get("securityContext"):
         job_template["securityContext"] = main["securityContext"]
+    carry_job_pod_fields(pod_tpl_spec, main, job_template)
     # `parallelism` and `completions` join the list rather than being captured
     # separately: the report rates parallelism P8 (its lowest) because the value
     # it saw was 1, the Kubernetes default. That reasoning holds for the value
@@ -2866,6 +3222,8 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
         ctx.sub_full_env[("cronjobs", sub_name)] = full_env
     if main.get("envFrom"):
         job_template["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
+        if envfrom_order(job_template["envFrom"]):
+            job_template["envFromOrder"] = envfrom_order(job_template["envFrom"])
     if main.get("resources"):
         job_template["resources"] = main["resources"]
     if main.get("volumeMounts"):
@@ -2928,6 +3286,7 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
         entry["podSecurityContext"] = pod_spec["securityContext"]
     if main.get("securityContext"):
         entry["securityContext"] = main["securityContext"]
+    carry_job_pod_fields(pod_spec, main, entry)
     # Same list as handle_cronjob, and kept in step with it deliberately: a Job
     # and a CronJob's jobTemplate are the same spec, and every time these two
     # have drifted apart it has produced a defect in one of them (see folder 5,
@@ -2961,6 +3320,8 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
         ctx.sub_full_env[("jobs", sub_name)] = full_env
     if main.get("envFrom"):
         entry["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
+        if envfrom_order(entry["envFrom"]):
+            entry["envFromOrder"] = envfrom_order(entry["envFrom"])
     if main.get("resources"):
         entry["resources"] = main["resources"]
     if main.get("volumeMounts"):
@@ -2999,13 +3360,29 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
 
 # --- cluster-scoped builders -------------------------------------------------
 
+def _with_metadata(entry: dict, doc: dict) -> dict:
+    """Labels and annotations, which rbac.yaml renders for these kinds too. Not
+    cosmetic on a ClusterRole: `rbac.authorization.k8s.io/aggregate-to-*` labels
+    are how its rules reach admin/edit/view, and a Helm hook annotation is what
+    makes a CRD-upgrade Job's ClusterRole exist before that Job runs."""
+    if raw_labels(doc):
+        entry["labels"] = raw_labels(doc)
+    ann = clean_annotations((doc.get("metadata") or {}).get("annotations"))
+    if ann:
+        entry["annotations"] = ann
+    return entry
+
+
 def build_clusterrole_entry(doc: dict) -> dict:
-    return {"rules": doc.get("rules", [])}
+    entry = {"rules": doc.get("rules", [])}
+    if doc.get("aggregationRule"):
+        entry["aggregationRule"] = doc["aggregationRule"]
+    return _with_metadata(entry, doc)
 
 
 def build_clusterrolebinding_entry(doc: dict) -> dict:
     subjects = [dict(s) for s in doc.get("subjects", []) or []]
-    return {"roleRef": (doc.get("roleRef") or {}).get("name", ""), "subjects": subjects}
+    return _with_metadata({"roleRef": (doc.get("roleRef") or {}).get("name", ""), "subjects": subjects}, doc)
 
 
 def build_storageclass_entry(doc: dict) -> dict:
@@ -3306,6 +3683,20 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
                     f"chart rejects {k} with no pods to target")
     if not ctx.saw_service and "service" not in ctx.values:
         ctx.values["service"] = {"enabled": False}
+
+    # The pod's token mount where it differs from the ServiceAccount's (see
+    # handle_workload). Only then, so a release whose two agree is unchanged.
+    sa_auto = (ctx.values.get("serviceAccount") or {}).get("automountServiceAccountToken")
+    if ctx.pod_automount is not None and sa_auto is not None and sa_auto != ctx.pod_automount:
+        ctx.values["automountServiceAccountToken"] = ctx.pod_automount
+
+    # A release with no pods (shared, a config/RBAC-only one) has no use for the
+    # chart's default ServiceAccount — it rendered a stray one named after the
+    # release, and with fullnameOverride pinned to a real Service's name it
+    # collided with the ServiceAccount of that name another release owns.
+    if not ctx.saw_workload and not ctx.primary_sa_set and not ctx.values.get("cronjobs") \
+            and not ctx.values.get("jobs"):
+        ctx.values.setdefault("serviceAccount", {}).setdefault("create", False)
 
     if ctx.extra_deploy:
         ctx.values["extraDeploy"] = ctx.extra_deploy
@@ -3615,7 +4006,8 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               values_path: str = "", argocd_namespace: str = "argocd",
                               project: str = "default",
                               destination_server: str = "https://kubernetes.default.svc",
-                              destination_name: str = "", nested: bool = False) -> dict:
+                              destination_name: str = "", nested: bool = False,
+                              auto_sync: bool = False) -> dict:
     """One Application per NAMESPACE DIRECTORY in this tree.
 
     A git "directories" generator over the tree root: every top-level
@@ -3690,6 +4082,9 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                                 {"name": "chartRepoURL", "value": chart_repo_url},
                                 {"name": "chartRevision", "value": chart_revision},
                                 {"name": "chartPath", "value": chart_path},
+                                # The microservice Applications the chart renders:
+                                # manual sync unless --auto-sync true.
+                                {"name": "autoSync", "value": "true" if auto_sync else "false"},
                             ]},
                         },
                     ],
@@ -3714,7 +4109,7 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
                                      values_repo_url: str, values_revision: str, values_path: str = "",
                                      argocd_namespace: str = "argocd", project: str = "default",
                                      destination_server: str = "https://kubernetes.default.svc",
-                                     destination_name: str = "") -> dict:
+                                     destination_name: str = "", auto_sync: bool = False) -> dict:
     """The one release that is NOT part of the per-namespace fan-out.
 
     It gets its own Application, sitting at the tree root next to the root
@@ -3746,7 +4141,7 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
             ],
             "destination": _destination(destination_server, destination_name, namespace),
             "syncPolicy": {
-                "automated": {"prune": True, "selfHeal": True},
+                **({"automated": {"prune": True, "selfHeal": True}} if auto_sync else {}),
                 "syncOptions": ["CreateNamespace=true", "ServerSideApply=true"],
             },
         },
@@ -4224,7 +4619,24 @@ def _is_benign_default_loss(kind: str, path: tuple, value: Any) -> bool:
     if kind in WORKLOAD_KINDS and \
             path == ("spec", "template", "spec", "shareProcessNamespace") and value is False:
         return True
+    # A RoleBinding subject in the binding's own namespace: the namespace is
+    # the default there, and the converter drops it so the release stays
+    # portable (handle_rolebinding). A subject naming another one is kept.
+    # A claim template whose only labels are the identity pair the chart owns:
+    # the StatefulSet controller stamps its selector labels onto every PVC it
+    # creates, so carrying the source chart's copies would change nothing.
+    if kind == "StatefulSet" and len(path) == 5 and path[:2] == ("spec", "volumeClaimTemplates") \
+            and path[3:] == ("metadata", "labels") and isinstance(value, dict) \
+            and set(value) <= (FIDELITY_HELM_LABELS | {"app"}):
+        return True
+    if kind == "RoleBinding" and len(path) == 3 and path[0] == "subjects" and path[2] == "namespace" \
+            and value == _FIDELITY_NAMESPACE[0]:
+        return True
     return False
+
+
+# The namespace verify_raw_fidelity is comparing, for _is_benign_default_loss.
+_FIDELITY_NAMESPACE: list = [None]
 
 
 def _strip_helm_labels(doc: dict) -> dict:
@@ -4312,6 +4724,14 @@ def _by_name(items: list):
     return dict(zip(composite, items))
 
 
+_NO_DEFAULT = object()
+# What the API server writes for an empty value of these fields.
+KUBERNETES_FILLED_DEFAULTS = {"podManagementPolicy": "OrderedReady"}
+# Fields whose dropped value is exactly what the API server fills in anyway.
+KUBERNETES_DEFAULTS = {"hostNetwork": False, "hostIPC": False, "hostPID": False,
+                       "priorityClassName": "", "minReadySeconds": 0}
+
+
 def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list[tuple[str, str, str]]:
     """Deep-compare one raw object against its rendered counterpart.
 
@@ -4346,7 +4766,7 @@ def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list
         # carrying the legacy key alone, is still reported: those are cases
         # where something really is wrong.
         if isinstance(raw.get("serviceAccount"), str) and \
-                raw.get("serviceAccount") == raw.get("serviceAccountName"):
+                raw.get("serviceAccount") in (raw.get("serviceAccountName"), rendered.get("serviceAccountName")):
             skip = skip | {"serviceAccount"}
         # `checksum/*` pod annotations hold a hash of the referenced
         # ConfigMap/Secret content, and exist so that changing the content
@@ -4395,6 +4815,14 @@ def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list
                 # reported — that distinction is the whole of folder 15.
                 if val == {} or val == []:
                     continue
+                # A null is the same absence as {} — `envFrom:`, `nodePort:` and
+                # `annotations:` rendered empty by a source chart were ~120 of a
+                # 57-chart run's ~200 errors. And a value that IS the Kubernetes
+                # default for that field changes nothing when dropped; only those
+                # few, by exact value (0 and false stay reported everywhere else:
+                # ttlSecondsAfterFinished 0 and enableServiceLinks false matter).
+                if val is None or KUBERNETES_DEFAULTS.get(key, _NO_DEFAULT) == val:
+                    continue
                 if _is_benign_default_loss(kind, path + (key,), val):
                     continue
                 out.append(("LOST", _dot(path + (key,)), f"raw had {val!r}"))
@@ -4424,6 +4852,14 @@ def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list
         raw_map, rendered_map = _by_name(raw), _by_name(rendered)
         if raw_map is not None and rendered_map is not None:
             out = []
+            # Init containers run one after another, so their ORDER is part of
+            # the spec — matching by name alone hid a builder that sorted them
+            # (a migration running before the wait-for-database it depends on).
+            if path[-1:] == ("initContainers",):
+                raw_order = [n for n in raw_map if n in rendered_map]
+                rendered_order = [n for n in rendered_map if n in raw_map]
+                if raw_order != rendered_order:
+                    out.append(("CHANGED", _dot(path), f"order raw={raw_order} render={rendered_order}"))
             for name, item in raw_map.items():
                 if name not in rendered_map:
                     out.append(("LOST", _dot(path + (f"[{name}]",)), "present in raw, absent from render"))
@@ -4437,6 +4873,9 @@ def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list
             return [("CHANGED", _dot(path), f"raw={raw!r} render={rendered!r}")]
         return []
 
+    # An empty raw value the render spells as the API default it stands for.
+    if raw in (None, "") and path and KUBERNETES_FILLED_DEFAULTS.get(path[-1]) == rendered:
+        return []
     if raw != rendered:
         return [("CHANGED", _dot(path), f"raw={raw!r} render={rendered!r}")]
     return []
@@ -4524,6 +4963,10 @@ def _identity_free_hash(doc: dict) -> str:
     meta = d.get("metadata")
     if isinstance(meta, dict):
         meta.pop("name", None)
+    # The chart always writes a ServiceAccount's automountServiceAccountToken;
+    # `true` is what an unset one means, so it does not make it another object.
+    if d.get("kind") == "ServiceAccount" and d.get("automountServiceAccountToken") is True:
+        d.pop("automountServiceAccountToken")
     return content_hash(d)
 
 
@@ -4697,6 +5140,7 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
         shared_raw_stem = next((stem for entries in raw_index.values() for stem, _ in entries
                                 if env_normalized_ms_name(namespace, stem) == SHARED_DIR_NAME), None)
         report.append(f"\n=== {namespace} — {raw_total} raw objects vs {len(rendered_index)} rendered ===")
+        _FIDELITY_NAMESPACE[0] = namespace
 
         # Releases whose rendered output includes an HPA. The chart omits
         # spec.replicas for those on purpose (templates/deployment.yaml guards
@@ -4989,6 +5433,34 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
                     f"renamed on collision, so this reference should have followed "
                     f"the rename and now resolves to another microservice's object")
 
+        # --- Service selectors ------------------------------------------------
+        # spec.selector is in _fidelity_ignored_path because the chart derives
+        # it, so a Service whose selector matches NO pod after conversion was
+        # invisible here — a StatefulSet's headless Service, or Kafka's client
+        # Service, kept in `shared` with that release's labels. Checked by its
+        # effect instead: a raw Service that selected some pod must still.
+        def _pod_labels(doc):
+            spec = doc.get("spec") or {}
+            return (((spec.get("template") or {}).get("metadata") or {}).get("labels") or {})
+        raw_pods = [d for entries in raw_index.values() for _, d in entries if d.get("kind") in WORKLOAD_KINDS]
+        rendered_pods = [d for (k, _n), (_r, d) in rendered_index.items() if k in WORKLOAD_KINDS]
+        for (kind, name), raw_entries in sorted(raw_index.items()):
+            if kind != "Service" or (kind, name) not in rendered_index:
+                continue
+            raw_sel = ((raw_entries[0][1].get("spec") or {}).get("selector") or {})
+            release, rdoc = rendered_index[(kind, name)]
+            sel = (rdoc.get("spec") or {}).get("selector") or {}
+            if not raw_sel or not sel:
+                continue
+            matches = lambda selector, pods: [p for p in pods
+                                              if all(_pod_labels(p).get(k) == v for k, v in selector.items())]
+            if matches(raw_sel, raw_pods) and not matches(sel, rendered_pods):
+                stats["changed"] += 1
+                report.append(
+                    f"  ERROR  Service/{name} (release '{release}') CHANGED at spec.selector: "
+                    f"raw selected {[(p.get('kind'), (p.get('metadata') or {}).get('name')) for p in matches(raw_sel, raw_pods)]}, "
+                    f"the rendered selector {sel} selects no rendered pod")
+
     return report, stats
 
 
@@ -5193,11 +5665,25 @@ def main() -> None:
                           f"(base/, <folder>/defaults.yaml, <folder>/values/) is written, and wiring "
                           f"left by an earlier run is reported stale. A bare --argocd-manifests "
                           f"means true.")
+    ap.add_argument("--auto-sync", nargs="?", const=True, default=False, type=_bool_arg,
+                     metavar="true|false",
+                     help="whether the Applications that deploy releases sync themselves "
+                          "(syncPolicy.automated, prune + selfHeal). Off by default: each "
+                          "microservice's Application (through the ms-applicationSet chart's "
+                          "autoSync parameter) and the cluster-shared one wait for a manual Sync. "
+                          "The root Application and root ApplicationSet always reconcile, so a "
+                          "new namespace folder still appears in Argo CD on its own.")
     ap.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
                      help="skip whole stacks: a microservice file with any object whose name or "
                           "label/annotation VALUE contains PATTERN (case-insensitive) is skipped "
                           "entirely, and matching objects are removed from shared.yaml. Data "
                           "payloads are never matched. Repeatable, or comma-separated.")
+    ap.add_argument("--include", action="append", default=[], metavar="PATTERN",
+                     help="convert ONLY the microservice files with an object whose name or "
+                          "label/annotation VALUE contains PATTERN (case-insensitive); everything "
+                          "else is skipped. shared.yaml is never filtered by it, and --exclude "
+                          "still wins. `=NAME` matches an object name exactly (also in --exclude "
+                          "/ --keep). Repeatable, or comma-separated.")
     ap.add_argument("--keep", action="append", default=[], metavar="PATTERN",
                      help="exception to --exclude: an object matching a --keep PATTERN is never "
                           "excluded. Repeatable, or comma-separated.")
@@ -5254,12 +5740,13 @@ def main() -> None:
                           "finding is real.")
     args = ap.parse_args()
 
-    global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS
+    global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
+        INCLUDE_PATTERNS
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
-    EXCLUDE_PATTERNS, KEEP_PATTERNS = (
+    EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
-        for opt in (args.exclude, args.keep))
+        for opt in (args.exclude, args.keep, args.include))
     chart_keys = set((yaml.safe_load((Path(args.chart) / "values.yaml").read_text(encoding="utf-8"))
                       if (Path(args.chart) / "values.yaml").is_file() else None) or {})
     env_groups = [parse_env_group(spec, chart_keys) for spec in args.env_group]
@@ -5326,6 +5813,17 @@ def main() -> None:
     # in a different file or a different namespace.
     loaded: dict[str, tuple[Optional[list[dict]], list[tuple[str, list[dict]]], list[str]]] = {}
     ms_meta: dict[str, list[tuple[str, str]]] = {}  # namespace -> [(file stem, variant folder)]
+
+    # Before any name is normalized: which file names a token must not touch,
+    # because no other file would share the name it leaves (token_exempt_stems).
+    TOKEN_EXEMPT_STEMS.clear()
+    TOKEN_EXEMPT_STEMS.update(token_exempt_stems(
+        {f.stem for _, d in namespace_dirs for f in d.glob("*.yaml")}, NAME_TOKENS))
+    for stem in sorted(TOKEN_EXEMPT_STEMS):
+        all_warnings.append(
+            f"{stem}.yaml: kept as '{stem}' — it holds an env token, but no other file shares "
+            f"'{strip_name_tokens(stem, NAME_TOKENS)}', so it is one microservice named this "
+            f"in every namespace, not an environment's copy")
     for namespace, ns_dir in namespace_dirs:
         ns_warnings: list[str] = []
 
@@ -5353,22 +5851,36 @@ def main() -> None:
                                    f"object(s) removed by --exclude")
 
         ms_docs: list[tuple[str, list[dict]]] = []
+        skipped_docs: list[list[dict]] = []
         for ms_file in sorted(ns_dir.glob("*.yaml")):
             if ms_file == shared_path:  # loaded above as the shared release
                 continue
             docs = filter_transient([sanitize_object(d, ns_warnings) for d in load_multidoc(ms_file)],
                                     ns_warnings)
+            if not is_included(docs):
+                ns_warnings.append(f"{ms_file.name}: not selected by --include — no base/, values/ "
+                                   f"or release written")
+                skipped_docs.append(docs)
+                continue
             hit = next((d for d in docs if is_excluded(d)), None)
             if hit is not None:
                 ns_warnings.append(
                     f"{ms_file.name}: excluded by --exclude (matched {hit.get('kind')}/"
                     f"{(hit.get('metadata') or {}).get('name')}) — no base/, values/ or release written")
+                skipped_docs.append(docs)
                 continue
             ms_docs.append((ms_file.stem, docs))
+        # A selection decides what `shared` is for: what two or more of the
+        # microservices being converted use. One user takes it home; none drops it.
+        if (INCLUDE_PATTERNS or EXCLUDE_PATTERNS) and shared_docs:
+            shared_docs, notes = place_shared_by_use(shared_docs, ms_docs, skipped_docs)
+            ns_warnings.extend(notes)
+            shared_docs = shared_docs or None
         # The variant folder each file lands in: one level per folder group
         # whose token its name carries (ms1-yellow -> yellow/).
         stems = [stem for stem, _ in ms_docs]
-        folders = ["/".join(t for t in (g.token_in(stem) for g in folder_groups) if t) for stem in stems]
+        folders = ["" if stem in TOKEN_EXEMPT_STEMS
+                   else "/".join(t for t in (g.token_in(stem) for g in folder_groups) if t) for stem in stems]
         # Two files normalizing to one name in the SAME folder would be two
         # releases writing one values/ file — those keep their own file names.
         normalized = [env_normalized_ms_name(namespace, stem) for stem in stems]
@@ -5430,6 +5942,11 @@ def main() -> None:
             errs, warns = validate_resource_names(namespace, ms_name, ctx.values)
             name_errors += errs
             all_warnings += warns
+
+        releases = [(c, docs) for (_, c), (_, docs) in zip(ms_contexts, ms_docs)]
+        if namespace in per_namespace_shared:
+            releases.append((per_namespace_shared[namespace], shared_docs or []))
+        ns_warnings.extend(rewire_service_selectors(releases))
 
         per_namespace_ms[namespace] = ms_contexts
         per_namespace_warnings[namespace] = ns_warnings
@@ -5677,7 +6194,8 @@ def main() -> None:
             args.cluster_shared_namespace, args.chart_repo_url, args.chart_path, args.chart_revision,
             args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
-            destination_server=args.destination_server, destination_name=args.argocd_cluster)
+            destination_server=args.destination_server, destination_name=args.argocd_cluster,
+            auto_sync=args.auto_sync)
         # At the tree ROOT, next to the root ApplicationSet: that is where the
         # root Application looks for it by name, and cluster-shared/ itself is
         # excluded from the root ApplicationSet's directory generator because
@@ -5721,7 +6239,7 @@ def main() -> None:
             args.chart_path, args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
-            nested=any("/" in k for k in out_keys))
+            nested=any("/" in k for k in out_keys), auto_sync=args.auto_sync)
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"

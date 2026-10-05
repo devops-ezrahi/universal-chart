@@ -64,6 +64,9 @@ spec:
   {{- if hasKey $spec "allocateLoadBalancerNodePorts" }}
   allocateLoadBalancerNodePorts: {{ $spec.allocateLoadBalancerNodePorts }}
   {{- end }}
+  {{- with $spec.trafficDistribution }}
+  trafficDistribution: {{ . }}
+  {{- end }}
   ports:
     {{- range $pname, $pspec := $spec.ports }}
     - name: {{ $pname }}

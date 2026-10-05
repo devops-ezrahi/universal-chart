@@ -82,9 +82,13 @@ spec:
           targetRevision: {{ $branch | quote }}
           ref: Values
       syncPolicy:
+        {{- /* toString: Argo CD hands helm parameters over as --set, but a
+               value typed into its UI or a values file may arrive as "false". */}}
+        {{- if ne (toString .Values.autoSync) "false" }}
         automated:
           prune: true
           selfHeal: true
+        {{- end }}
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true

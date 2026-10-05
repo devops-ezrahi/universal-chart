@@ -1,0 +1,171 @@
+suite: Fields a converted Helm chart needs (automount, selectors, per-path backends, job pod fields)
+templates:
+  - templates/deployment.yaml
+  - templates/service.yaml
+  - templates/services.yaml
+  - templates/ingress.yaml
+  - templates/job.yaml
+  - templates/cronjob.yaml
+tests:
+  - it: pod follows the ServiceAccount's automount when no pod value is set
+    template: templates/deployment.yaml
+    set:
+      serviceAccount: { automountServiceAccountToken: false }
+    asserts:
+      - equal:
+          path: 'spec.template.spec.automountServiceAccountToken'
+          value: false
+
+  - it: a pod-level automountServiceAccountToken wins over the ServiceAccount's
+    template: templates/deployment.yaml
+    set:
+      serviceAccount: { automountServiceAccountToken: false }
+      automountServiceAccountToken: true
+    asserts:
+      - equal:
+          path: 'spec.template.spec.automountServiceAccountToken'
+          value: true
+
+  - it: the primary Service keeps the release selector by default
+    template: templates/service.yaml
+    release: { name: web }
+    asserts:
+      - equal:
+          path: 'spec.selector["app.kubernetes.io/instance"]'
+          value: web
+      - notExists:
+          path: 'spec.trafficDistribution'
+
+  - it: the primary Service takes an explicit selector and trafficDistribution
+    template: templates/service.yaml
+    set:
+      service: { selector: { app: redis }, trafficDistribution: PreferClose }
+    asserts:
+      - equal:
+          path: 'spec.selector'
+          value: { app: redis }
+      - equal:
+          path: 'spec.trafficDistribution'
+          value: PreferClose
+
+  - it: an extra Service takes trafficDistribution
+    template: templates/services.yaml
+    set:
+      services:
+        headless: { enabled: true, clusterIP: None, ports: { tcp: { port: 1 } }, trafficDistribution: PreferClose }
+    asserts:
+      - equal:
+          path: 'spec.trafficDistribution'
+          value: PreferClose
+
+  - it: an Ingress path may name its own backend Service and a port number
+    template: templates/ingress.yaml
+    set:
+      service: { ports: { http: { port: 80 } } }
+      ingress:
+        enabled: true
+        hosts:
+          - host: h
+            paths:
+              - { path: /, serviceName: ui, portNumber: 8080 }
+              - { path: /api }
+    asserts:
+      - equal:
+          path: 'spec.rules[0].http.paths[0].backend.service'
+          value: { name: ui, port: { number: 8080 } }
+      - equal:
+          path: 'spec.rules[0].http.paths[1].backend.service.port'
+          value: { name: http }
+
+  - it: a numbered port needs no service.ports
+    template: templates/ingress.yaml
+    set:
+      service: { enabled: false, ports: {} }
+      ingress:
+        enabled: true
+        hosts: [ { host: h, paths: [ { path: /, serviceName: core, portNumber: 80 } ] } ]
+    asserts:
+      - equal:
+          path: 'spec.rules[0].http.paths[0].backend.service.port.number'
+          value: 80
+
+  - it: a job renders none of the new pod fields unless it declares them
+    template: templates/job.yaml
+    set:
+      jobs: { j: { command: [echo] } }
+    asserts:
+      - notExists:
+          path: 'spec.template.spec.automountServiceAccountToken'
+      - notExists:
+          path: 'spec.template.spec.enableServiceLinks'
+      - notExists:
+          path: 'spec.template.spec.affinity'
+      - notExists:
+          path: 'spec.ttlSecondsAfterFinished'
+
+  - it: a job carries its own pod-level and container fields
+    template: templates/job.yaml
+    set:
+      nodeSelector: { zone: a }
+      jobs:
+        j:
+          ttlSecondsAfterFinished: 0
+          automountServiceAccountToken: true
+          enableServiceLinks: false
+          terminationGracePeriodSeconds: 0
+          priorityClassName: system-cluster-critical
+          nodeSelector: { kubernetes.io/os: linux }
+          affinity: { podAntiAffinity: {} }
+          ports: [ { containerPort: 10258 } ]
+          livenessProbe: { httpGet: { path: /healthz, port: 10258 } }
+    asserts:
+      - equal:
+          path: 'spec.ttlSecondsAfterFinished'
+          value: 0
+      - equal:
+          path: 'spec.template.spec.automountServiceAccountToken'
+          value: true
+      - equal:
+          path: 'spec.template.spec.enableServiceLinks'
+          value: false
+      - equal:
+          path: 'spec.template.spec.terminationGracePeriodSeconds'
+          value: 0
+      - equal:
+          path: 'spec.template.spec.priorityClassName'
+          value: system-cluster-critical
+      - equal:
+          path: 'spec.template.spec.nodeSelector'
+          value: { kubernetes.io/os: linux }
+      - equal:
+          path: 'spec.template.spec.affinity'
+          value: { podAntiAffinity: {} }
+      - equal:
+          path: 'spec.template.spec.containers[0].ports[0].containerPort'
+          value: 10258
+      - equal:
+          path: 'spec.template.spec.containers[0].livenessProbe.httpGet.path'
+          value: /healthz
+
+  - it: a job without its own nodeSelector keeps the release's
+    template: templates/job.yaml
+    set:
+      nodeSelector: { zone: a }
+      jobs: { j: { command: [echo] } }
+    asserts:
+      - equal:
+          path: 'spec.template.spec.nodeSelector'
+          value: { zone: a }
+
+  - it: a CronJob keeps ttlSecondsAfterFinished 0 and its priority class
+    template: templates/cronjob.yaml
+    set:
+      cronjobs:
+        c: { schedule: "* * * * *", jobTemplate: { ttlSecondsAfterFinished: 0, priorityClassName: x } }
+    asserts:
+      - equal:
+          path: 'spec.jobTemplate.spec.ttlSecondsAfterFinished'
+          value: 0
+      - equal:
+          path: 'spec.jobTemplate.spec.template.spec.priorityClassName'
+          value: x

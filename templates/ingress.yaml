@@ -28,9 +28,16 @@ spec:
             pathType: {{ .pathType | default "Prefix" }}
             backend:
               service:
-                name: {{ $.Values.ingress.serviceName | default (include "universal-chart.primaryServiceName" $) }}
+                {{- /* A path may name its own backend: one Ingress routing / to a
+                       UI and /api to a server is ordinary (Harbor), and a backend
+                       addressed by port NUMBER has no name to give. */}}
+                name: {{ .serviceName | default $.Values.ingress.serviceName | default (include "universal-chart.primaryServiceName" $) }}
                 port:
+                  {{- if .portNumber }}
+                  number: {{ .portNumber }}
+                  {{- else }}
                   name: {{ .portName | default (include "universal-chart.firstKey" $.Values.service.ports) }}
+                  {{- end }}
           {{- end }}
     {{- end }}
 {{- end }}

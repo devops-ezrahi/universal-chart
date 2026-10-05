@@ -61,6 +61,8 @@ spec:
             value: main
           - name: chartPath
             value: .
+          - name: autoSync
+            value: 'false'
         path: ms-applicationSet
         repoURL: https://github.com/devops-ezrahi/universal-chart.git
         targetRevision: main

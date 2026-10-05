@@ -45,8 +45,9 @@ spec:
       {{- with $jt.activeDeadlineSeconds }}
       activeDeadlineSeconds: {{ . }}
       {{- end }}
-      {{- with $jt.ttlSecondsAfterFinished }}
-      ttlSecondsAfterFinished: {{ . }}
+      {{- /* hasKey: 0 means "delete as soon as it finishes", unset means never. */}}
+      {{- if and (hasKey $jt "ttlSecondsAfterFinished") (not (kindIs "invalid" $jt.ttlSecondsAfterFinished)) }}
+      ttlSecondsAfterFinished: {{ $jt.ttlSecondsAfterFinished }}
       {{- end }}
       {{- /* hasKey rather than `with`: `parallelism: 0` is a legal way to
              suspend a Job and `with` would skip it, which is the same trap
