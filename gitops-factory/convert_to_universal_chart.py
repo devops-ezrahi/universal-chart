@@ -198,7 +198,7 @@ def env_normalized_ms_name(namespace: str, ms_name: str) -> str:
     stripped, so 'filter-service-black-b2b-tst' and 'filter-service-yellow-b2b'
     both become 'filter-service-b2b'. Opt-in, because it merges releases the
     default rule deliberately keeps apart."""
-    if NAME_TOKENS:
+    if NAME_TOKENS and ms_name not in TOKEN_EXEMPT_STEMS:
         ms_name = strip_name_tokens(ms_name, NAME_TOKENS)
     namespace = k8s_ns(namespace)
     ns_suffix = namespace.rsplit("-", 1)[-1] if "-" in namespace else None
@@ -215,6 +215,33 @@ def env_normalized_ms_name(namespace: str, ms_name: str) -> str:
 # --env-group token and from --env-suffixes (which also empties
 # KNOWN_ENV_SUFFIXES, replacing that rule).
 NAME_TOKENS: set[str] = set()
+
+# File stems NAME_TOKENS must leave alone: ones whose stripped name no OTHER
+# stem in the run shares (see token_exempt_stems). Filled once per run, before
+# any name is normalized, so every caller — the build, the folder assignment,
+# the fidelity check — agrees on a release's name.
+TOKEN_EXEMPT_STEMS: set[str] = set()
+
+
+def token_exempt_stems(stems, tokens) -> set[str]:
+    """Stems a token is NOT stripped from, because stripping it folds nothing.
+
+    The tokens exist to bring the copies of ONE microservice together across
+    environments and variants: 'pay-dev' + 'pay-prd' -> 'pay', 'ms1-yellow' +
+    'ms1-black' -> 'ms1'. A token that only happens to be a word of the name —
+    'project-api.yaml', the same in every namespace, while 'project' is also an
+    env suffix — produced a release called 'api' (and, as a group token, a
+    'project/' variant folder) with no second file to share it with. So a strip
+    is kept only when at least two DIFFERENT stems in the run land on the same
+    name; a stem alone in its family keeps the name it has, whatever namespaces
+    it appears in."""
+    if not tokens:
+        return set()
+    families: dict[str, set[str]] = defaultdict(set)
+    for stem in stems:
+        families[strip_name_tokens(stem, tokens)].add(stem)
+    return {stem for norm, members in families.items() if len(members) == 1 and norm != SHARED_DIR_NAME
+            for stem in members if stem != norm}
 
 
 def _token_re(tokens) -> "re.Pattern":
@@ -5622,6 +5649,17 @@ def main() -> None:
     # in a different file or a different namespace.
     loaded: dict[str, tuple[Optional[list[dict]], list[tuple[str, list[dict]]], list[str]]] = {}
     ms_meta: dict[str, list[tuple[str, str]]] = {}  # namespace -> [(file stem, variant folder)]
+
+    # Before any name is normalized: which file names a token must not touch,
+    # because no other file would share the name it leaves (token_exempt_stems).
+    TOKEN_EXEMPT_STEMS.clear()
+    TOKEN_EXEMPT_STEMS.update(token_exempt_stems(
+        {f.stem for _, d in namespace_dirs for f in d.glob("*.yaml")}, NAME_TOKENS))
+    for stem in sorted(TOKEN_EXEMPT_STEMS):
+        all_warnings.append(
+            f"{stem}.yaml: kept as '{stem}' — it holds an env token, but no other file shares "
+            f"'{strip_name_tokens(stem, NAME_TOKENS)}', so it is one microservice named this "
+            f"in every namespace, not an environment's copy")
     for namespace, ns_dir in namespace_dirs:
         ns_warnings: list[str] = []
 
@@ -5668,7 +5706,8 @@ def main() -> None:
         # The variant folder each file lands in: one level per folder group
         # whose token its name carries (ms1-yellow -> yellow/).
         stems = [stem for stem, _ in ms_docs]
-        folders = ["/".join(t for t in (g.token_in(stem) for g in folder_groups) if t) for stem in stems]
+        folders = ["" if stem in TOKEN_EXEMPT_STEMS
+                   else "/".join(t for t in (g.token_in(stem) for g in folder_groups) if t) for stem in stems]
         # Two files normalizing to one name in the SAME folder would be two
         # releases writing one values/ file — those keep their own file names.
         normalized = [env_normalized_ms_name(namespace, stem) for stem in stems]

@@ -291,3 +291,38 @@ def test_matches_patterns_exact_is_by_name_only():
     assert conv.matches_patterns(doc, ["web"])
     assert not conv.matches_patterns(doc, ["=web"])
     assert conv.matches_patterns(doc, ["=web-worker"])
+
+
+# --- an env token inside a microservice's own name ---------------------------
+
+def test_token_stems_fold_only_when_another_stem_shares_the_name():
+    tokens = {"dev", "prd", "project", "yellow", "black"}
+    stems = {"project-api", "pay-dev", "pay-prd", "ms1-yellow", "ms1-black", "shared-prd", "web"}
+    assert conv.token_exempt_stems(stems, tokens) == {"project-api"}
+    assert conv.token_exempt_stems(stems, set()) == set()
+
+
+def _two_namespaces(tmp_path, files):
+    inp = tmp_path / "in"
+    for ns in ("dev", "prd"):
+        (inp / ns).mkdir(parents=True)
+        for name in files(ns):
+            (inp / ns / f"{name}.yaml").write_text(yaml.safe_dump(_deploy(name)))
+    return inp
+
+
+@pytest.mark.parametrize("flags", [["--env-suffixes", "dev,prd,project"], ["--env-group", "site=project,other"]])
+def test_a_microservice_named_like_an_env_token_keeps_its_name(tmp_path, flags):
+    """project-api.yaml in every namespace, with 'project' an env token: it is
+    one microservice called project-api, not an 'api' in a 'project' variant."""
+    inp = _two_namespaces(tmp_path, lambda ns: ["project-api", f"pay-{ns}"])
+    out = tmp_path / "out"
+    r = subprocess.run([sys.executable, str(CONVERTER), "--input", str(inp), "--output", str(out),
+                        "--chart", str(CHART_DIR), "--skip-verify", *flags],
+                       capture_output=True, text=True, cwd=GITOPS_DIR)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (out / "base" / "project-api.yaml").exists()
+    assert (out / "dev" / "values" / "project-api.yaml").exists()
+    assert not (out / "dev" / "project").exists()
+    if "--env-suffixes" in flags:
+        assert (out / "base" / "pay.yaml").exists()  # the real env copies still fold
