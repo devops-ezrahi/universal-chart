@@ -2415,6 +2415,7 @@ ARGOCD_MANIFESTS = False
 # A pattern starting with `=` is an exact object NAME instead of a substring
 # (`=web` picks Deployment/web, not web-worker) — what a picker listing
 # workloads by name needs, and what typing `--exclude web` could never say.
+# `key=value` is one exact label (`app.kubernetes.io/part-of=payments`).
 EXCLUDE_PATTERNS: list[str] = []
 KEEP_PATTERNS: list[str] = []
 INCLUDE_PATTERNS: list[str] = []
@@ -2427,9 +2428,15 @@ def matches_patterns(doc: dict, patterns: list[str]) -> bool:
     strings += [str(v) for v in (meta.get("labels") or {}).values()]
     strings += [str(v) for v in clean_annotations(meta.get("annotations")).values()]
     strings = [s.lower() for s in strings]
+    labels = meta.get("labels") or {}
     for p in patterns:
         if p.startswith("="):
             if p[1:] == name:
+                return True
+        elif "=" in p:
+            # `key=value`: that exact label, the way a selector would ask for it.
+            key, _, value = p.partition("=")
+            if str(labels.get(key.strip(), "\x00")) == value.strip():
                 return True
         elif any(p.lower() in s for s in strings):
             return True
@@ -2440,6 +2447,163 @@ def is_excluded(doc: dict) -> bool:
     if not EXCLUDE_PATTERNS:
         return False
     return matches_patterns(doc, EXCLUDE_PATTERNS) and not matches_patterns(doc, KEEP_PATTERNS)
+
+
+ROUTING_KINDS = ("Ingress", "Route")
+
+
+def _object_refs(doc: dict) -> set[tuple[str, str]]:
+    """Every (kind, name) one object points at by name — the forward edges of
+    place_shared_by_use's graph."""
+    refs = {(k, n) for k, n, _ in collect_object_references(doc)}
+    spec = doc.get("spec") or {}
+    kind = doc.get("kind")
+
+    def walk(node):
+        if isinstance(node, dict):
+            claim = node.get("persistentVolumeClaim")
+            if isinstance(claim, dict) and isinstance(claim.get("claimName"), str):
+                refs.add(("PersistentVolumeClaim", claim["claimName"]))
+            for s in node.get("imagePullSecrets") or []:
+                if isinstance(s, dict) and isinstance(s.get("name"), str):
+                    refs.add(("Secret", s["name"]))
+            svc = node.get("service")
+            if kind == "Ingress" and isinstance(svc, dict) and isinstance(svc.get("name"), str):
+                refs.add(("Service", svc["name"]))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+    walk(spec)
+    if kind in ("RoleBinding", "ClusterRoleBinding"):
+        ref = doc.get("roleRef") or {}
+        if ref.get("name"):
+            refs.add((ref.get("kind") or "Role", ref["name"]))
+    if kind == "ExternalSecret":
+        store = spec.get("secretStoreRef") or {}
+        if store.get("name"):
+            refs.add((store.get("kind") or "SecretStore", store["name"]))
+    if kind in ("SecretStore", "ClusterSecretStore"):
+        refs |= {(k, n) for k, n, _ in _collect_ref_targets(spec)}
+        sa = ((((spec.get("provider") or {}).get("vault") or {}).get("auth") or {})
+              .get("kubernetes") or {}).get("serviceAccountRef") or {}
+        if sa.get("name"):
+            refs.add(("ServiceAccount", sa["name"]))
+    return refs
+
+
+def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict]]],
+                        skipped: list[list[dict]]) -> tuple[list[dict], list[str]]:
+    """With --include / --exclude, `shared` holds only what at least TWO of the
+    microservices still being converted use. Each shared object is placed by
+    who uses it among the kept ones — two or more: stays shared; one: moves
+    into that microservice (appended to `kept` in place); none, but a skipped
+    one does: dropped. One nobody uses at all (argocd-cm, read through the
+    API) stays when the run includes it by pattern, or includes nothing and
+    excludes something else; otherwise it is dropped.
+
+    "Uses" is followed through the objects: a pod's mounts/env/pull secrets/
+    claims/ServiceAccount; a Service selecting its pods; an Ingress or Route
+    to that Service; a RoleBinding for its ServiceAccount, and the Role it
+    binds; an HPA/PDB on it; an ExternalSecret writing a Secret it reads, and
+    that store's own SA/CA. Returns report lines."""
+    owners = [(stem, docs) for stem, docs in kept] + [(None, docs) for docs in skipped]
+
+    def pod_specs(docs):
+        for d in docs:
+            spec = d.get("spec") or {}
+            if d.get("kind") == "CronJob":
+                spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+            if d.get("kind") in WORKLOAD_KINDS | {"Job", "CronJob"}:
+                tpl = spec.get("template") or {}
+                yield d, (tpl.get("metadata") or {}).get("labels") or {}, tpl.get("spec") or {}
+
+    # Who uses each (kind, name): a set of owner indexes (kept or skipped).
+    users: dict[tuple[str, str], set[int]] = defaultdict(set)
+    sa_users: dict[str, set[int]] = defaultdict(set)
+    for i, (_, docs) in enumerate(owners):
+        for d in docs:
+            # A microservice uses what it declares itself, too — so a shared
+            # Ingress to its own Service finds it.
+            users[(d.get("kind"), (d.get("metadata") or {}).get("name"))].add(i)
+            for ref in _object_refs(d):
+                users[ref].add(i)
+        for d, _, pod in pod_specs(docs):
+            sa = pod.get("serviceAccountName") or pod.get("serviceAccount") or "default"
+            sa_users[sa].add(i)
+            users[("ServiceAccount", sa)].add(i)
+            users[(d.get("kind"), (d.get("metadata") or {}).get("name"))].add(i)
+
+    def reverse_users(doc) -> set[int]:
+        """Users found from the object's side: what it selects or targets."""
+        kind, spec = doc.get("kind"), doc.get("spec") or {}
+        out: set[int] = set()
+        if kind == "Service" and spec.get("selector"):
+            sel = spec["selector"]
+            out |= {i for i, (_, docs) in enumerate(owners)
+                    for _, labels, _ in pod_specs(docs) if all(labels.get(k) == v for k, v in sel.items())}
+        if kind == "PodDisruptionBudget":
+            sel = (spec.get("selector") or {}).get("matchLabels") or {}
+            if sel:
+                out |= {i for i, (_, docs) in enumerate(owners)
+                        for _, labels, _ in pod_specs(docs) if all(labels.get(k) == v for k, v in sel.items())}
+        if kind == "HorizontalPodAutoscaler":
+            ref = spec.get("scaleTargetRef") or {}
+            out |= users.get((ref.get("kind"), ref.get("name")), set())
+        if kind in ("RoleBinding", "ClusterRoleBinding"):
+            for subj in doc.get("subjects") or []:
+                if subj.get("kind") == "ServiceAccount":
+                    out |= sa_users.get(subj.get("name"), set()) | users.get(("ServiceAccount", subj.get("name")), set())
+        if kind == "ExternalSecret":
+            target = (spec.get("target") or {}).get("name") or (doc.get("metadata") or {}).get("name")
+            out |= users.get(("Secret", target), set())
+        if kind in ROUTING_KINDS:  # belongs to whoever owns the Service it routes to
+            for ref in _object_refs(doc):
+                if ref[0] == "Service":
+                    out |= users.get(ref, set())
+        return out
+
+    key = lambda d: (d.get("kind"), (d.get("metadata") or {}).get("name"))
+    used: dict[tuple, set[int]] = {key(d): set(users.get(key(d), set())) for d in shared_docs}
+    # To a fixed point: what a shared object points at is used by its users
+    # (a Role by its binding's, a store by its ExternalSecret's) — except a
+    # route, which points the other way: it is used BY its Service's users.
+    changed = True
+    while changed:
+        changed = False
+        for d in shared_docs:
+            k = key(d)
+            new = used[k] | reverse_users(d)
+            for other in shared_docs:
+                if other.get("kind") not in ROUTING_KINDS and k in _object_refs(other):
+                    new |= used[key(other)]
+            if new != used[k]:
+                used[k] = new
+                users[k] |= new
+                changed = True
+
+    n_kept = len(kept)
+    stay, notes = [], []
+    for d in shared_docs:
+        k = key(d)
+        live = sorted(i for i in used[k] if i < n_kept)
+        label = f"{k[0]}/{k[1]}"
+        if len(live) >= 2:
+            stay.append(d)
+        elif len(live) == 1:
+            stem, docs = kept[live[0]]
+            if k not in {key(x) for x in docs}:
+                docs.append(d)
+            notes.append(f"shared {label}: only '{stem}' still uses it — moved into that microservice")
+        elif used[k]:
+            notes.append(f"shared {label}: used only by microservices left out of this run — dropped")
+        elif (INCLUDE_PATTERNS and matches_patterns(d, INCLUDE_PATTERNS)) or \
+                (not INCLUDE_PATTERNS and not is_excluded(d)) or matches_patterns(d, KEEP_PATTERNS):
+            stay.append(d)
+        else:
+            notes.append(f"shared {label}: used by no microservice and not named by --include — dropped")
+    return stay, notes
 
 
 def is_included(docs: list[dict]) -> bool:
@@ -5687,6 +5851,7 @@ def main() -> None:
                                    f"object(s) removed by --exclude")
 
         ms_docs: list[tuple[str, list[dict]]] = []
+        skipped_docs: list[list[dict]] = []
         for ms_file in sorted(ns_dir.glob("*.yaml")):
             if ms_file == shared_path:  # loaded above as the shared release
                 continue
@@ -5695,14 +5860,22 @@ def main() -> None:
             if not is_included(docs):
                 ns_warnings.append(f"{ms_file.name}: not selected by --include — no base/, values/ "
                                    f"or release written")
+                skipped_docs.append(docs)
                 continue
             hit = next((d for d in docs if is_excluded(d)), None)
             if hit is not None:
                 ns_warnings.append(
                     f"{ms_file.name}: excluded by --exclude (matched {hit.get('kind')}/"
                     f"{(hit.get('metadata') or {}).get('name')}) — no base/, values/ or release written")
+                skipped_docs.append(docs)
                 continue
             ms_docs.append((ms_file.stem, docs))
+        # A selection decides what `shared` is for: what two or more of the
+        # microservices being converted use. One user takes it home; none drops it.
+        if (INCLUDE_PATTERNS or EXCLUDE_PATTERNS) and shared_docs:
+            shared_docs, notes = place_shared_by_use(shared_docs, ms_docs, skipped_docs)
+            ns_warnings.extend(notes)
+            shared_docs = shared_docs or None
         # The variant folder each file lands in: one level per folder group
         # whose token its name carries (ms1-yellow -> yellow/).
         stems = [stem for stem, _ in ms_docs]

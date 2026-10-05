@@ -275,8 +275,10 @@ def test_include_converts_only_the_matching_microservices(tmp_path):
                                  "billing": [_deploy("billing")], "shared": [cm]},
                       "app", "--skip-verify", "--include", "web")
     assert r.returncode == 0, r.stdout + r.stderr
-    # Substring: both web files; shared.yaml is never filtered by --include.
-    assert _bases(out) == ["shared", "web", "web-worker"]
+    # Substring: both web files. `common` is used by nobody and not named by
+    # --include, so shared has nothing left to hold.
+    assert _bases(out) == ["web", "web-worker"]
+    assert "ConfigMap/common: used by no microservice" in (out / "report" / "conflicts_and_warnings.txt").read_text()
 
 
 def test_an_exact_pattern_matches_one_name_and_exclude_still_wins(tmp_path):
@@ -326,3 +328,82 @@ def test_a_microservice_named_like_an_env_token_keeps_its_name(tmp_path, flags):
     assert not (out / "dev" / "project").exists()
     if "--env-suffixes" in flags:
         assert (out / "base" / "pay.yaml").exists()  # the real env copies still fold
+
+
+# --- shared holds only what the selection still shares ------------------------
+
+def _uses(name, cms=(), sa=None, labels=None):
+    d = _deploy(name)
+    pod = d["spec"]["template"]["spec"]
+    pod["containers"][0]["envFrom"] = [{"configMapRef": {"name": c}} for c in cms]
+    if sa:
+        pod["serviceAccountName"] = sa
+    if labels:
+        d["metadata"]["labels"] = labels
+    return d
+
+
+def _cm(name, labels=None):
+    return {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": name, **({"labels": labels} if labels else {})},
+            "data": {"a": "1"}}
+
+
+def _selection(tmp_path, *flags):
+    sa = {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "billing-sa"}}
+    role = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": {"name": "billing-role"}, "rules": []}
+    rb = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": {"name": "billing-rb"},
+          "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "billing-role"},
+          "subjects": [{"kind": "ServiceAccount", "name": "billing-sa"}]}
+    svc = {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "worker-svc"},
+           "spec": {"selector": {"app": "worker"}, "ports": [{"name": "http", "port": 80}]}}
+    ing = {"apiVersion": "networking.k8s.io/v1", "kind": "Ingress", "metadata": {"name": "worker-ing"},
+           "spec": {"rules": [{"host": "w", "http": {"paths": [{"path": "/", "pathType": "Prefix", "backend": {
+               "service": {"name": "worker-svc", "port": {"name": "http"}}}}]}}]}}
+    files = {
+        "web": [_uses("web", cms=["cm-ab", "cm-ac"])],
+        "worker": [_uses("worker", cms=["cm-ab"])],
+        "billing": [_uses("billing", cms=["cm-ac"], sa="billing-sa", labels={"team": "billing"})],
+        "shared": [_cm("cm-ab"), _cm("cm-ac"), sa, role, rb, svc, ing,
+                   _cm("loose-billing", {"team": "billing"}), _cm("loose-other")],
+    }
+    r, out = _convert(tmp_path, files, "app", "--skip-verify", *flags)
+    assert r.returncode == 0, r.stdout + r.stderr
+    load = lambda rel: yaml.safe_load((out / "base" / f"{rel}.yaml").read_text()) if (out / "base" / f"{rel}.yaml").exists() else None
+    return load, (out / "report" / "conflicts_and_warnings.txt").read_text()
+
+
+def test_include_keeps_shared_for_what_two_picked_microservices_share(tmp_path):
+    load, report = _selection(tmp_path, "--include", "=web,=worker")
+    shared, web, worker = load("shared"), load("web"), load("worker")
+    assert list(shared["configMaps"]) == ["cm-ab"]               # web + worker
+    assert "cm-ac" in web["configMaps"]                          # billing left: web alone uses it
+    assert worker["service"]["name"] == "worker-svc"             # selects only worker's pods: it is worker's now
+    assert worker["ingress"]["enabled"]                          # routes to worker's Service
+    assert "rbac" not in shared and "serviceAccount" not in {k for k in shared if shared[k] and k == "rbac"}
+    assert "billing-role" in report and "left out of this run" in report
+    assert "loose-other" in report and "loose-billing" in report  # nobody uses them, not included
+
+
+def test_exclude_trims_shared_the_same_way(tmp_path):
+    load, _ = _selection(tmp_path, "--exclude", "=billing")
+    shared = load("shared")
+    # Nobody uses the two loose ones, and `=billing` excludes neither by name.
+    assert sorted(shared["configMaps"]) == ["cm-ab", "loose-billing", "loose-other"]
+    assert "cm-ac" in load("web")["configMaps"]
+
+
+def test_a_label_pattern_selects_by_key_and_value(tmp_path):
+    load, _ = _selection(tmp_path, "--include", "team=billing")
+    billing, shared = load("billing"), load("shared")
+    assert load("web") is None
+    # billing alone now: everything it uses comes home, and the included loose one stays shared.
+    assert "cm-ac" in billing["configMaps"]
+    assert billing["rbac"]["roleBindings"]["billing-rb"]
+    assert list((shared or {}).get("configMaps", {})) == ["loose-billing"]
+
+
+def test_label_patterns_need_the_exact_label():
+    doc = {"metadata": {"name": "x", "labels": {"team": "billing-ops"}}}
+    assert not conv.matches_patterns(doc, ["team=billing"])
+    assert conv.matches_patterns(doc, ["team=billing-ops"])
+    assert not conv.matches_patterns(doc, ["owner=billing-ops"])
