@@ -254,3 +254,40 @@ def test_ms_applicationset_autosync(flag, automated):
                        capture_output=True, text=True, check=True)
     doc = yaml.safe_load(r.stdout)
     assert ("automated" in doc["spec"]["template"]["spec"]["syncPolicy"]) is automated
+
+
+# --- --include and exact `=name` patterns ------------------------------------
+
+def _deploy(name):
+    return {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": name},
+            "spec": {"selector": {"matchLabels": {"app": name}},
+                     "template": {"metadata": {"labels": {"app": name}},
+                                  "spec": {"containers": [{"name": name, "image": f"reg/{name}:1"}]}}}}
+
+
+def _bases(out):
+    return sorted(p.stem for p in (out / "base").glob("*.yaml"))
+
+
+def test_include_converts_only_the_matching_microservices(tmp_path):
+    cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "common"}, "data": {"a": "1"}}
+    r, out = _convert(tmp_path, {"web": [_deploy("web")], "web-worker": [_deploy("web-worker")],
+                                 "billing": [_deploy("billing")], "shared": [cm]},
+                      "app", "--skip-verify", "--include", "web")
+    assert r.returncode == 0, r.stdout + r.stderr
+    # Substring: both web files; shared.yaml is never filtered by --include.
+    assert _bases(out) == ["shared", "web", "web-worker"]
+
+
+def test_an_exact_pattern_matches_one_name_and_exclude_still_wins(tmp_path):
+    files = {"web": [_deploy("web")], "web-worker": [_deploy("web-worker")], "billing": [_deploy("billing")]}
+    r, out = _convert(tmp_path, files, "app", "--skip-verify", "--include", "=web,=billing", "--exclude", "=billing")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _bases(out) == ["web"]
+
+
+def test_matches_patterns_exact_is_by_name_only():
+    doc = {"metadata": {"name": "web-worker", "labels": {"app": "web"}}}
+    assert conv.matches_patterns(doc, ["web"])
+    assert not conv.matches_patterns(doc, ["=web"])
+    assert conv.matches_patterns(doc, ["=web-worker"])

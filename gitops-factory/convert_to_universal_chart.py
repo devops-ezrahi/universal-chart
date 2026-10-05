@@ -2381,23 +2381,45 @@ ARGOCD_MANIFESTS = False
 # metadata.name and its label/annotation VALUES — deliberately never its data
 # payload, so a kept microservice whose ConfigMap merely carries a kafka URL is
 # not dropped by `--exclude kafka`. --keep wins over --exclude.
+#
+# --include is the allow-list the other two lack: a microservice file is
+# converted only when something in it matches. --exclude still wins over it.
+#
+# A pattern starting with `=` is an exact object NAME instead of a substring
+# (`=web` picks Deployment/web, not web-worker) — what a picker listing
+# workloads by name needs, and what typing `--exclude web` could never say.
 EXCLUDE_PATTERNS: list[str] = []
 KEEP_PATTERNS: list[str] = []
+INCLUDE_PATTERNS: list[str] = []
+
+
+def matches_patterns(doc: dict, patterns: list[str]) -> bool:
+    meta = doc.get("metadata") or {}
+    name = str(meta.get("name") or "")
+    strings = [name]
+    strings += [str(v) for v in (meta.get("labels") or {}).values()]
+    strings += [str(v) for v in clean_annotations(meta.get("annotations")).values()]
+    strings = [s.lower() for s in strings]
+    for p in patterns:
+        if p.startswith("="):
+            if p[1:] == name:
+                return True
+        elif any(p.lower() in s for s in strings):
+            return True
+    return False
 
 
 def is_excluded(doc: dict) -> bool:
     if not EXCLUDE_PATTERNS:
         return False
-    meta = doc.get("metadata") or {}
-    strings = [str(meta.get("name") or "")]
-    strings += [str(v) for v in (meta.get("labels") or {}).values()]
-    strings += [str(v) for v in clean_annotations(meta.get("annotations")).values()]
-    strings = [s.lower() for s in strings]
+    return matches_patterns(doc, EXCLUDE_PATTERNS) and not matches_patterns(doc, KEEP_PATTERNS)
 
-    def hit(patterns: list[str]) -> bool:
-        return any(p.lower() in s for p in patterns for s in strings)
 
-    return hit(EXCLUDE_PATTERNS) and not hit(KEEP_PATTERNS)
+def is_included(docs: list[dict]) -> bool:
+    """--include: whether a microservice FILE is selected. Without the flag,
+    every file is. shared.yaml is never filtered by it — what several
+    microservices share is kept whichever of them are picked."""
+    return not INCLUDE_PATTERNS or any(matches_patterns(d, INCLUDE_PATTERNS) for d in docs)
 
 
 def record_eso_api_version(doc: dict, ctx: MicroserviceContext) -> None:
@@ -5465,6 +5487,12 @@ def main() -> None:
                           "label/annotation VALUE contains PATTERN (case-insensitive) is skipped "
                           "entirely, and matching objects are removed from shared.yaml. Data "
                           "payloads are never matched. Repeatable, or comma-separated.")
+    ap.add_argument("--include", action="append", default=[], metavar="PATTERN",
+                     help="convert ONLY the microservice files with an object whose name or "
+                          "label/annotation VALUE contains PATTERN (case-insensitive); everything "
+                          "else is skipped. shared.yaml is never filtered by it, and --exclude "
+                          "still wins. `=NAME` matches an object name exactly (also in --exclude "
+                          "/ --keep). Repeatable, or comma-separated.")
     ap.add_argument("--keep", action="append", default=[], metavar="PATTERN",
                      help="exception to --exclude: an object matching a --keep PATTERN is never "
                           "excluded. Repeatable, or comma-separated.")
@@ -5521,12 +5549,13 @@ def main() -> None:
                           "finding is real.")
     args = ap.parse_args()
 
-    global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS
+    global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
+        INCLUDE_PATTERNS
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
-    EXCLUDE_PATTERNS, KEEP_PATTERNS = (
+    EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
-        for opt in (args.exclude, args.keep))
+        for opt in (args.exclude, args.keep, args.include))
     chart_keys = set((yaml.safe_load((Path(args.chart) / "values.yaml").read_text(encoding="utf-8"))
                       if (Path(args.chart) / "values.yaml").is_file() else None) or {})
     env_groups = [parse_env_group(spec, chart_keys) for spec in args.env_group]
@@ -5625,6 +5654,10 @@ def main() -> None:
                 continue
             docs = filter_transient([sanitize_object(d, ns_warnings) for d in load_multidoc(ms_file)],
                                     ns_warnings)
+            if not is_included(docs):
+                ns_warnings.append(f"{ms_file.name}: not selected by --include — no base/, values/ "
+                                   f"or release written")
+                continue
             hit = next((d for d in docs if is_excluded(d)), None)
             if hit is not None:
                 ns_warnings.append(
