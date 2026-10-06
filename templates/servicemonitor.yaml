@@ -1,5 +1,5 @@
 {{- include "universal-chart.renderValues" . }}
-{{- if .Values.serviceMonitor.enabled }}
+{{- if (and .Values.serviceMonitor .Values.serviceMonitor.enabled) }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

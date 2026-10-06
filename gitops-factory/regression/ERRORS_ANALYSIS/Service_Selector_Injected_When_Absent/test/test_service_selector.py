@@ -114,15 +114,17 @@ def test_a_selector_is_injected_even_though_the_raw_service_had_none():
 # Finding 1 — the checker was already right
 # --------------------------------------------------------------------------
 
-def test_the_fidelity_checker_already_suppresses_the_injected_selector():
-    assert conv._fidelity_ignored_path("Service", ("spec", "selector")) is True
+def test_the_fidelity_checker_reports_a_changed_selector():
+    """SUPERSEDED: the selector used to be chart-derived and suppressed. The
+    converter now carries the live selector (service.selector / selectorLabels),
+    so a render that changes it is a real diff and must be reported."""
+    assert conv._fidelity_ignored_path("Service", ("spec", "selector")) is False
 
     raw = _services()[0]
     rendered = yaml.safe_load(yaml.safe_dump(raw))
     rendered["spec"]["selector"] = {"app.kubernetes.io/name": "log-agent"}
     diffs = conv._fidelity_diff("Service", raw, rendered)
-    assert not any("selector" in d[1] for d in diffs), (
-        f"the injected selector is reported after all; diffs={diffs}")
+    assert any("selector" in d[1] for d in diffs), f"diffs={diffs}"
 
 
 def test_a_real_service_field_is_still_compared():

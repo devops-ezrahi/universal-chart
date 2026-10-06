@@ -23,6 +23,17 @@ spec:
               value: http://db.prd.svc:5432
             - name: COLOR
               value: "yellow"
+            - name: LOG_LEVEL
+              value: info
+            - name: FEATURE_FLAG
+              value: "off"
+          volumeMounts:
+            - name: settings-yellow
+              mountPath: /etc/ms1
+      volumes:
+        - name: settings-yellow
+          configMap:
+            name: ms1-settings-yellow
 ---
 apiVersion: v1
 kind: Service
@@ -36,3 +47,30 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ms1-settings-yellow
+  namespace: prd
+data:
+  app.conf: |
+    color = yellow
+    retries = 3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ms1-report-yellow
+  namespace: prd
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: report
+              image: registry.example.org/ms1-report:1.0.0
+              args: ["--color", "yellow"]

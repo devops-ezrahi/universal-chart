@@ -42,6 +42,8 @@ import unicodedata
 from pathlib import Path
 from urllib.parse import unquote
 
+from yaml_style import BlockDumper
+
 # Kubernetes label used to identify apps in topology view
 TOPOLOGY_LABEL = "app.kubernetes.io/part-of"
 
@@ -1252,6 +1254,7 @@ def write_resources_to_namespace(all_resources, output_path, shared_sink=None):
         if resources_to_write:
             content = yaml.dump_all(
                 resources_to_write,
+                Dumper=BlockDumper,
                 default_flow_style=False,
                 sort_keys=False,
                 allow_unicode=True,
@@ -1279,7 +1282,7 @@ def write_shared_yaml(shared_entries, output_path):
         return
     path = output_path / "shared.yaml"
     path.write_text(
-        yaml.dump_all(docs, default_flow_style=False, sort_keys=False, allow_unicode=True),
+        yaml.dump_all(docs, Dumper=BlockDumper, default_flow_style=False, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
     print(f"  Wrote {path}", file=sys.stderr)
@@ -1369,7 +1372,7 @@ def handle_single_resource(url):
     data = yaml.safe_load(raw_yaml)
     if data:
         cleaned = clean_resource(data)
-        print(yaml.dump(cleaned, default_flow_style=False, sort_keys=False, allow_unicode=True))
+        print(yaml.dump(cleaned, Dumper=BlockDumper, default_flow_style=False, sort_keys=False, allow_unicode=True))
 
 # ---------------------------------------------------------------------------
 # Topology URL handler
@@ -1542,6 +1545,22 @@ def handle_full_namespace(namespace, args):
                     alt, n = f"{key}-{str(wl[1]).lower()}-{n}", n + 1
                 key = alt
             combined[key] = entry
+
+    # An Ingress goes with the microservice whose Service(s) it routes to, the
+    # way a Route already does. In shared.yaml the converter builds it into a
+    # release with no Service, and the chart then refuses to render the backend.
+    svc_owner = {name: key for key, entry in combined.items()
+                 for name, kind, _ in entry.get("resources", []) if kind == "Service"}
+    for ing in [r for r in other_extras if r.get("kind") == "Ingress"]:
+        spec = ing.get("spec") or {}
+        backends = [spec.get("defaultBackend")] + [p.get("backend") for rule in spec.get("rules") or []
+                                                    for p in (rule.get("http") or {}).get("paths") or []]
+        owners = {svc_owner.get(((b or {}).get("service") or {}).get("name")) for b in backends if b}
+        if len(owners) == 1 and None not in owners:
+            combined[owners.pop()]["resources"].append(
+                ((ing.get("metadata") or {}).get("name", "unknown"), "Ingress",
+                 yaml.dump(ing, default_flow_style=False, sort_keys=False)))
+            other_extras.remove(ing)
 
     # Everything else in the namespace goes to the combined shared.yaml:
     # RBAC, PDBs, ingresses, NADs, unmatched

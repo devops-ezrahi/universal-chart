@@ -72,6 +72,7 @@ from convert_to_universal_chart import (  # noqa: E402  (reuse, never redefine)
     BASE_DIR_NAME,
     DEFAULTS_FILE_NAME,
     VALUES_DIR_NAME,
+    base_file_for,
     dump_yaml,
     k8s_ns,
     namespace_dirs_of,
@@ -126,12 +127,10 @@ def microservice_paths(app_dir: Path, namespace: str, name: str) -> tuple[Path, 
     the base registry / release_slugs comment in convert_to_universal_chart.py's
     main()). Editing it via `set` affects every namespace that reuses it.
     """
-    ns_dir = app_dir / namespace
-    base_path = app_dir / BASE_DIR_NAME / f"{name}.yaml"
-    # values/ sub-folders only group files: find it wherever it sits.
-    minimal_path = next(iter(sorted((ns_dir / VALUES_DIR_NAME).rglob(f"{name}.yaml"))),
-                        ns_dir / VALUES_DIR_NAME / f"{name}.yaml")
-    return base_path, minimal_path
+    values_dir = app_dir / namespace / VALUES_DIR_NAME
+    # values/ sub-folders group files, and base/ mirrors the sub-folder.
+    minimal_path = next(iter(sorted(values_dir.rglob(f"{name}.yaml"))), values_dir / f"{name}.yaml")
+    return base_file_for(app_dir / BASE_DIR_NAME, values_dir, minimal_path), minimal_path
 
 
 def effective_values(app_dir: Path, namespace: str, name: str) -> dict:
@@ -205,11 +204,10 @@ def cmd_list(args: argparse.Namespace) -> None:
         if not values_dir.is_dir():
             continue
         ns_defaults = load_yaml(ns_dir / DEFAULTS_FILE_NAME)
-        names = sorted(p.stem for p in values_dir.rglob("*.yaml"))
         print(f"  {namespace}/  (namespace defaults.yaml: {len(ns_defaults)} top-level key(s))")
-        for name in names:
-            shared = "" if (app_dir / BASE_DIR_NAME / f"{name}.yaml").exists() else "  [no base/ file]"
-            print(f"    - {name}{shared}")
+        for vf in sorted(values_dir.rglob("*.yaml"), key=lambda p: p.stem):
+            shared = "" if base_file_for(app_dir / BASE_DIR_NAME, values_dir, vf).exists() else "  [no base/ file]"
+            print(f"    - {vf.stem}{shared}")
 
 
 def cmd_show(args: argparse.Namespace) -> None:
@@ -416,7 +414,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
                     errors.append(f"[{namespace}/{name}] schema: {'.'.join(str(p) for p in err.path)}: {err.message}")
 
             if args.chart:
-                base_vf = base_dir / f"{name}.yaml"
+                base_vf = base_file_for(base_dir, values_dir, vf)
                 value_files = [f for f in (base_vf, ns_defaults_vf) if f.exists()] + [vf]
                 cmd = ["helm", "template", name, args.chart, "--namespace", k8s_ns(namespace)]
                 for f in value_files:

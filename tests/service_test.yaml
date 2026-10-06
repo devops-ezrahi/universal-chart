@@ -174,3 +174,10 @@ tests:
     asserts:
       - isNotNull:
           path: spec.selector
+
+  - it: renders no Service when values delete the section with null
+    set:
+      service: null
+    asserts:
+      - hasDocuments:
+          count: 0

@@ -3,7 +3,7 @@
 """
 Do everything in one command.
 
-    python run_all.py
+    python convert_and_verify.py
 
 That is the whole interface. It runs the four steps below in order, stops at the
 first real problem, and prints plain-language results.
@@ -25,10 +25,10 @@ Where things end up
 
 Common uses
 -----------
-    python run_all.py                          # convert + check + sanitize
-    python run_all.py --cluster-scoped         # if step 1 reports a cluster conflict
-    python run_all.py --skip-convert           # re-sanitize an existing report
-    python run_all.py --input other-manifests/ --output other-out/
+    python convert_and_verify.py                          # convert + check + sanitize
+    python convert_and_verify.py --cluster-scoped         # if step 1 reports a cluster conflict
+    python convert_and_verify.py --skip-convert           # re-sanitize an existing report
+    python convert_and_verify.py --input other-manifests/ --output other-out/
 """
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
                 say("           objects are global, so they would overwrite each other.")
                 say()
                 say("  FIX:     re-run with --cluster-scoped, which creates it once:")
-                say(f"           python run_all.py --cluster-scoped")
+                say(f"           python convert_and_verify.py --cluster-scoped")
             else:
                 say("  PROBLEM: the conversion stopped. The output above says why.")
             return 1

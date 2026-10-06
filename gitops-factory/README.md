@@ -10,7 +10,7 @@ itself — so `--chart` defaults to `..` and nothing else needs cloning.
 (It used to be the separate, now archived, `devops-ezrahi/gitops-factory` repo.)
 
 `output/`, `output-showcase/` and `output-live-demo/` are generated and are not
-committed; `python3 run_all.py` rebuilds the showcase from `namespaces-showcase/`.
+committed; `python3 convert_and_verify.py` rebuilds the showcase from `namespaces-showcase/`.
 The large mock dump `namespaces/` is not committed either — generate it with
 `python generate_mock_environment.py --output namespaces --seed 42`.
 
@@ -28,6 +28,9 @@ The large mock dump `namespaces/` is not committed either — generate it with
 | `values/` sub-folders | `values/group1/ms1.yaml` is only grouping: the release is still `ms1`, reads `base/ms1.yaml`, and a re-run rewrites the file where it is. A file name may appear once per namespace folder (verification fails on duplicates). With Argo CD's new git-file globbing set the ms-applicationSet `valuesGlob` to `**/*.yaml`. |
 | A name that merely contains a token | `--env-suffixes` / `--env-group` tokens only fold names that actually differ across files: `pay-dev` + `pay-prd` → `pay`, `ms1-yellow` + `ms1-black` → `ms1`. A file whose stripped name no other file shares — `project-api.yaml` in every namespace while `project` is also a token — keeps its own name and gets no variant folder, with one report line saying so. |
 | `--env-suffixes tok,tok` | Strip these words from anywhere in a file name, replacing the default rule (strip a trailing suffix equal to the namespace's). They never make folders: values differing by them become `{{ .Values.environment }}` (`env` is the chart's env-var map), with `environment: dev` in every folder's `defaults.yaml`. A word given to both `--env-suffixes` and `--env-group` counts as a suffix. |
+| Group tokens in keys | A map key differing only by group words (a volume `certs-black`/`certs-yellow`, a CronJob, sidecar, init container, ConfigMap, env var name) becomes one templated key in `base/` — `certs-{{ .Values.color }}` — and the chart `tpl`s keys too. A list (args, a sidecar's env) is templated whole the same way. Top-level keys (the chart's own) are never renamed. |
+| Literal env in base | A literal env var (`value: x`) is treated like any other value: in `base/` when it is the same in every namespace, in `values/` only where it differs. `--env-in-values` restores the old split, where every literal env var was written into every namespace's `values/` file. |
+| Root ApplicationSet | One git files generator on `**/defaults.yaml` finds every namespace and variant folder. The values repo, branch and project are YAML anchors (`&repoURL`, `&branch`, `&project`), said once and reused as helm parameters; a commented `exclude` shows how to switch a namespace off. Without `--values-repo-url` it carries the placeholder `<values-repo-url>` to replace by hand. |
 | `--root-set-name`, `--argocd-destination-namespace`, `--argocd-cluster` | Name the root ApplicationSet; alias of `--argocd-namespace`; deploy to a registered cluster *name* instead of `--destination-server`'s URL. |
 | `{{` in source data | Escaped in every values file (`{{ "{{" }}`) so the chart's `tpl` pass leaves an Alertmanager/Go template in a ConfigMap literal. |
 | Shared promotion | ConfigMaps/Secrets/etc. declared byte-identically by several microservices move into the namespace `shared` release under their original name (Services/Routes excluded). Recorded in `report/renames.json`. |
@@ -45,9 +48,106 @@ The large mock dump `namespaces/` is not committed either — generate it with
 | `values_editor.py` | Values-authoring/editing CLI for microservices you're adding or tuning **by hand** (not converted from a raw dump) — defaults.yaml-aware, so it never asks you to duplicate what a lower layer already covers. See [values_editor.py — hand-authoring microservices](#values_editorpy--hand-authoring-microservices). |
 | `ui/multi-app-manager.html` | The same idea as `values_editor.py`, as a browser UI — open multiple apps' output trees side by side, browse/edit visually, no install. See [ui/multi-app-manager.html — browser UI](#uimulti-app-managerhtml--browser-ui). |
 | `generate_mock_environment.py` | Generates a large, deliberately messy mock raw-dump fixture. |
-| `run_all.py` | Convert + name check + fidelity check + sanitize, in one command. The default entry point. |
+| `namespaces_to_chart.py` | Namespaces in, values tree out: pulls each `-n` namespace with `namespace_importer.py`, runs the converter over the dump, and passes every other flag to it (`--env-suffixes`, `--env-group`, `--argocd-manifests`, …). `-o` gets only the tree and nothing else is left behind (`--report DIR` / `--dump DIR` keep those). `--oc kubectl` for plain Kubernetes; `--from-yaml` answers the importer from manifest files instead of a cluster. |
+| `convert_and_verify.py` | Convert + name check + fidelity check + sanitize, in one command. The default entry point. |
 | `regression/` | The pytest regression suite — one folder per fixed defect (`STATUS.md`, `error.txt`, fixtures, a test). `pytest` runs it; see `pytest.ini`. |
 | `docs/` | `BUGFIX-REPORT.md` (what was fixed in the chart and the converter) and `README_REGRESSION_ANALYSIS.md` (cross-reference of the two analysis rounds). |
+
+## namespaces_to_chart.py — namespaces in, chart out
+
+The shortest path from a running namespace to a values tree: one command runs
+`namespace_importer.py` over every namespace you name, then
+`convert_to_universal_chart.py` over what it pulled, and leaves **only the
+chart tree** in `-o`. No dump folder, no report, nothing beside it.
+
+```bash
+# Live cluster (oc on PATH, logged in)
+python namespaces_to_chart.py -n shop-dev -n shop-prd -o out
+
+# Plain Kubernetes
+python namespaces_to_chart.py -n shop-dev,shop-prd -o out --oc kubectl --kubeconfig ~/.kube/lab
+
+# No cluster: answer the importer from manifest files or folders
+python namespaces_to_chart.py --from-yaml dump/ extra.yaml -o out
+```
+
+### What it does
+
+1. **Pull.** Each `-n` namespace goes through the importer's own
+   full-namespace mode — the same as `namespace_importer.py -n <ns>`:
+   workloads grouped into microservices (`part-of` → `app` → workload name),
+   the ConfigMaps/Secrets/SAs/claims they reference, `shared.yaml` for what
+   several of them use, runtime metadata stripped. An Ingress travels with the
+   microservice whose Service it routes to.
+2. **Convert.** The converter runs over that pull. **Every option this script
+   does not know is handed to the converter unchanged**, so anything in
+   `convert_to_universal_chart.py --help` works here too.
+3. **Verify.** Unless you pass `--skip-verify`, every release is rendered with
+   `helm template` against the chart this script ships beside, and checked so
+   no two releases claim the same object. It works from any directory.
+4. **Clean up.** The pull and the converter's report are deleted. `-o` holds
+   `base/` and one folder per namespace (plus the ArgoCD wiring, if you asked
+   for it).
+
+### Options
+
+| Option | Meaning |
+|---|---|
+| `-n NS` | Namespace to pull. Repeat it, or comma-separate: `-n a -n b,c`. |
+| `-o DIR` | Where the values tree is written. Required. |
+| `--oc CLI` | Cluster CLI to call. Default `oc`; `kubectl` works for plain Kubernetes (OpenShift-only kinds like Routes are then just not found). |
+| `--kubeconfig FILE` | Passed to every `oc`/`kubectl` call. |
+| `--from-yaml PATH…` | Read manifests from files/folders instead of a cluster (`kubectl get -o yaml` output, a `List`, several documents per file — anything). Documents are grouped by their own `metadata.namespace`; with `-n`, only those namespaces are kept. |
+| `--default-namespace NS` | With `--from-yaml`: the namespace for documents that name none (what `helm template` renders). Without it, such a document is an error. |
+| `--dump DIR` | Keep the importer's pull here instead of a temp dir. Must be empty or new. Useful to hand-edit the pull and then run the converter on it yourself. |
+| `--report DIR` | Keep the converter's report (`conflicts_and_warnings.txt`, `conversion_report.json`, `renames.json`) here. |
+| anything else | Passed to the converter: `--env-suffixes`, `--env-group`, `--argocd-manifests`, `--values-repo-url`, `--chart-revision`, `--skip-verify`, … |
+
+`--input` and `--output` are the script's own business and are refused.
+
+### Common recipes
+
+```bash
+# Environment suffixes stripped from names, colour variants grouped,
+# ArgoCD wiring written, report kept for review
+python namespaces_to_chart.py -n pay-dev,pay-stg,pay-prd -o values \
+    --env-suffixes dev,stg,prd --env-group color=black,yellow \
+    --argocd-manifests true --values-repo-url https://git.example.com/gitops/pay-values.git \
+    --report values-report
+
+# A packaged chart, rendered first, converted like any other manifests
+helm template shop ./shop-chart -n shop-dev > shop.yaml
+python namespaces_to_chart.py --from-yaml shop.yaml --default-namespace shop-dev -o out
+```
+
+### What it prints
+
+- `==> pulling namespace <ns>` per namespace, then the importer's own fetch
+  summary.
+- `warning: nothing was pulled from '<ns>'` for a namespace with no workloads
+  — it is left out of the tree rather than failing the run.
+- `==> N referenced object(s) could not be fetched` — a Secret, ConfigMap or
+  store some workload references that the cluster (or the YAML) does not have.
+  The tree is still written; the reference is left as it was.
+- The converter's summary, and — without `--report` — a note that the report
+  path it names is gone.
+
+The exit code is the converter's: `0` means converted **and** verified.
+
+### What it does not carry
+
+- **Cluster-scoped objects nothing references.** The importer pulls a
+  namespace, so a ClusterRole, ClusterRoleBinding or StorageClass that no
+  namespaced object points at is not pulled. Add those to the converter's
+  input by hand: `--dump pulled/`, drop them in, then run
+  `convert_to_universal_chart.py --input pulled …` yourself.
+- **Variant folders.** A cluster has namespaces, not `prd/yellow`; variant
+  folders come from the converter's `--env-group`, or from a hand-arranged
+  `--dump`.
+
+The devops-portal's **Convert** runs the same importer over pasted YAML
+(its `SPLIT_DUMP` adapter is what `--from-yaml` mirrors), so a tree from this
+script and one converted in the portal come out the same.
 
 ## Input contract
 
@@ -71,7 +171,7 @@ output/
     defaults.yaml                      # NAMESPACE defaults — group values + labels identical across every release in this
                                         # namespace, the 'shared' release included, plus group values
                                         # (environment: dev) from --env-suffixes / --env-group
-    values/                            # image + literal env + minor per-namespace tweaks ONLY —
+    values/                            # image + whatever differs from base in this namespace ONLY —
                                         # hand-editable, one file per release-slug. Its existence is what
                                         # deploys the release: this directory IS the fan-out.
       <release-slug>.yaml
@@ -99,9 +199,7 @@ chart that lives in the Universal Chart repo:
 
 ```
 kubectl apply -f output/rootApplication.yaml.txt     # once, by hand
-  └─ deploys rootApplicationSet.yaml                 # git directories generator over output/*
-       │                                             # (git files generator on '**/defaults.yaml'
-       │                                             #  when variant folders exist)
+  └─ deploys rootApplicationSet.yaml                 # git files generator on '**/defaults.yaml'
        └─ one Application per <namespace>/ folder, each deploying ms-applicationSet
             └─ one ApplicationSet per folder          # git files generator over <folder>/values/<valuesGlob>
                  └─ one Application per release, rendering the Universal Chart
@@ -149,7 +247,7 @@ environment-agnostic file is written **once**, under its own name
 that name reuses it — that's the whole point: the same "buildkit" or
 "jenkins-restore" utility deployed into five namespaces gets ONE base file,
 not five duplicates. Each namespace still gets its own flat `values/` tree
-holding only that namespace's image tag + literal env + minor tweaks.
+holding only that namespace's image tag + whatever differs from base there.
 
 **release-slug**: normally the microservice's own name. It only becomes
 `<namespace>-<microservice>` when two namespaces declare a microservice by
@@ -181,10 +279,63 @@ one filename, so a release whose slug had to be disambiguated still resolves
 both halves correctly.
 
 `shared` is an ordinary release like any other — `base/shared.yaml` plus
-`<namespace>/values/shared.yaml`, discovered by the same fan-out. Being named
-identically "shared" in every namespace, it is exactly the case release-slug
-disambiguation exists for, so two namespaces with genuinely different shared
-content get `base/<namespace>-shared.yaml` rather than silently sharing one.
+`<namespace>/values/shared.yaml`, discovered by the same fan-out. Namespaces
+whose shared release declares the same objects (`shop-dev`, `shop-tst`,
+`shop-prd` each holding `ConfigMap/shop-common`) are one release, split like a
+microservice: what every copy agrees on goes in `base/shared.yaml`, and each
+`values/shared.yaml` holds only what differs there, e.g. `ENV: prd`. With
+`--env-suffixes` or `--env-group` even that becomes a template in `base/` and
+`values/shared.yaml` is `{}`. Every namespace still has its own
+`values/shared.yaml`, since that file is what deploys the release. A namespace
+whose shared objects have nothing in common with the first group's (another
+app's namespaces in the same run), or that ends in the same `-<token>` as one
+already in it, gets its own name: `pay-shared` for `pay-dev` + `pay-prd`, or
+`<namespace>-shared` for a namespace on its own. Before this, a shared release
+that differed in a single env word was forked into one
+`<namespace>-shared.yaml` per namespace.
+
+## Cutting a live app over from its old ArgoCD apps
+
+The aim is that the cutover restarts no pods. The only difference should be
+`argocd.argoproj.io/instance`, which ArgoCD stamps on each object's own
+metadata. That label never reaches the pod template, so changing it doesn't
+restart anything.
+
+Pods restart only when `spec.template` or `spec.selector` changes. The selector
+is immutable, so changing it forces ArgoCD to delete and recreate the workload,
+which kills every pod at once. To keep both unchanged, the converter carries
+the following over from the source manifest:
+
+- The **existing selector**, as `selectorLabels`. The pod template keeps every
+  raw label, including identity labels such as `app`.
+- The **list order** of env, ports, volumeMounts, volumes, envFrom and sidecars
+  (`envOrder`, `portOrder`, ...). Helm would otherwise render them sorted.
+- An explicit **empty container `securityContext: {}`**.
+- **No** `serviceAccountName` or `automountServiceAccountToken` the pod didn't
+  have. A pod running as `default` gets `serviceAccount.create: false`.
+- **No** `kubectl.kubernetes.io/restartedAt` or
+  `openshift.openshift.io/restartedAt`. These are stamps from a manual
+  `oc rollout restart`, not configuration.
+
+The chart also no longer defaults a Route's `insecureEdgeTerminationPolicy` to
+`Redirect`.
+
+Order of operations, per namespace:
+
+1. Remove the old tree from ArgoCD **without cascading**. Every resource stays
+   running:
+   `scripts/argo-orphan-tree.sh <old-root-app> -n <argocd-ns>`
+   This is a dry run; it prints the tree and every command. Add `--apply` to
+   execute it.
+   - The script turns off auto-sync parents-first and deletes ApplicationSets
+     with `--cascade=orphan`.
+   - It then removes each Application's finalizers before deleting it, deepest
+     first, in parallel.
+   - It refuses to run if the tree reaches any app made by `ms-applicationSet`.
+2. Apply the new ApplicationSet. If you want to review the diff first, disable
+   auto-sync on it.
+3. `argocd app diff <app>` should show nothing under `spec.template` or
+   `spec.selector`. After the sync, `oc get rs` should show no new ReplicaSet.
 
 ## defaults.yaml — factoring out what's common
 
@@ -584,6 +735,9 @@ python convert_to_universal_chart.py --input namespaces --output output
 The mock fixture above exists to stress-test the converter at scale; onboarding a
 real app follows the exact same input contract, just with real data:
 
+> Steps 1 and 3 in one command, with verification and nothing left beside
+> the tree: [`namespaces_to_chart.py`](#namespaces_to_chartpy--namespaces-in-chart-out).
+
 1. **Dump the namespace's desired state.** The easy way is
    `namespace_importer.py`, which splits the namespace into per-microservice
    files and a `shared.yaml` for you (and brings each ExternalSecret's
@@ -664,7 +818,7 @@ real app follows the exact same input contract, just with real data:
    - `base/<slug>.yaml` is auto-generated / do-not-edit — treat it as such
      and re-run the converter instead of hand-patching it.
    - `<folder>/values/<slug>.yaml` is explicitly the safe, hand-editable
-     override layer (image tag + literal env vars only) — this is where day-2
+     override layer (image tag + what differs per namespace) — this is where day-2
      changes belong (e.g. a config value a developer needs to tweak without
      re-running the whole conversion).
    - `<folder>/defaults.yaml` is also auto-generated / do-not-edit — see

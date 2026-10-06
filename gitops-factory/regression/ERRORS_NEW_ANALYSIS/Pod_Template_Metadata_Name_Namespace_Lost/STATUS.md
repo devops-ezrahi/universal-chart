@@ -73,7 +73,7 @@ nothing. The strip was temporarily neutralised (`for key in ():`) and the full
 pipeline re-run:
 
 ```
-python run_all.py --cluster-scoped --input namespaces-showcase --output <scratch>\out22RED
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out22RED
 
     fields LOST                                  3
     fields CHANGED                               0
@@ -93,7 +93,7 @@ before the edit (`diff -q` → identical).
 ## 5. Proof — GREEN, with the rule restored
 
 ```
-python run_all.py --cluster-scoped --input namespaces-showcase --output <scratch>\out22GREEN
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out22GREEN
 
     fields LOST                                  0
     fields CHANGED                               0
@@ -218,7 +218,7 @@ loop.
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
 python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Pod_Template_Metadata_Name_Namespace_Lost/test/ -v
-python run_all.py --cluster-scoped --input namespaces-showcase --output <scratch>\out22
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out22
 ```
 
 ---

@@ -39,7 +39,7 @@ which is exactly why the corruption had one narrow, hard-to-spot home.
 `error.txt` reached the same hypothesis unaided — "On Windows, open() with no
 encoding= argument defaults to the system ANSI codepage (cp1252 here), which is
 almost certainly the culprit" — and named the fix pattern already in this repo:
-`run_all.py` calls `subprocess.run(..., encoding="utf-8", errors="replace")`.
+`convert_and_verify.py` calls `subprocess.run(..., encoding="utf-8", errors="replace")`.
 
 ## 3. Files changed
 
@@ -56,7 +56,7 @@ A byte sequence that is genuinely not UTF-8 should surface as U+FFFD in the
 diff, where the fidelity checker reports it as a CHANGED field. The default
 (`strict`) would raise and abort a 25-release verification run on one bad byte
 — turning a visible, localised data problem into an opaque crash. Matches
-`run_all.py`.
+`convert_and_verify.py`.
 
 ### The second half — `dump_yaml(allow_unicode=True)`
 

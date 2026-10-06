@@ -16,7 +16,7 @@
   "env_group_combinations": [
     {
       "release": "ms1",
-      "path": "env.DB_URL",
+      "path": "env.DB_URL.value",
       "template": "http://db.{{ .Values.environment }}.svc:5432",
       "injection": {
         "environment": {
@@ -27,7 +27,7 @@
     },
     {
       "release": "ms1",
-      "path": "env.ENVIRONMENT",
+      "path": "env.ENVIRONMENT.value",
       "template": "{{ .Values.environment }}",
       "injection": {
         "environment": {
@@ -38,7 +38,7 @@
     },
     {
       "release": "ms2",
-      "path": "env.DB_URL",
+      "path": "env.DB_URL.value",
       "template": "http://db.{{ .Values.environment }}.svc:5432",
       "injection": {
         "environment": {
@@ -49,7 +49,7 @@
     },
     {
       "release": "ms2",
-      "path": "env.ENVIRONMENT",
+      "path": "env.ENVIRONMENT.value",
       "template": "{{ .Values.environment }}",
       "injection": {
         "environment": {

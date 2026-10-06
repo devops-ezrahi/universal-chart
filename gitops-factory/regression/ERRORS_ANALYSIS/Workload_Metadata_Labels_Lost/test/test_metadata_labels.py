@@ -134,9 +134,8 @@ def test_raw_labels_keeps_custom_labels_and_drops_chart_owned_ones():
         "argocd.argoproj.io/instance must not be carried — the chart would be "
         "guessing the Application name")
     assert got["app.kubernetes.io/part-of"] == "shop-web"
-    assert "app" not in got, (
-        "`app` is the pre-Helm convention for app.kubernetes.io/name and is the "
-        "chart's to set; carrying it would contradict selectorLabels")
+    # SUPERSEDED: identity labels (`app`, name, instance, ...) are carried now —
+    # the chart renders them verbatim under chartLabels: false.
 
 
 @pytest.mark.parametrize("kind,name,values_path", [
@@ -178,8 +177,13 @@ def test_every_handler_captures_metadata_labels(kind, name, values_path):
 def test_pod_template_labels_still_work():
     """Control: the one path that already worked (podLabels) must not change."""
     ctx = conv.MicroserviceContext(namespace=NS, name=RELEASE)
-    conv.handle_workload(_doc("Deployment"), ctx, "Deployment")
-    assert ctx.values["podLabels"] == {"team": "storefront"}
+    doc = _doc("Deployment")
+    conv.handle_workload(yaml.safe_load(yaml.safe_dump(doc)), ctx, "Deployment")
+    selector = (doc["spec"].get("selector") or {}).get("matchLabels") or {}
+    assert ctx.values.get("selectorLabels", {}) == selector
+    # Pod template = selectorLabels + podLabels, exactly the live template.
+    assert {**selector, **ctx.values["podLabels"]} == doc["spec"]["template"]["metadata"]["labels"]
+    assert ctx.values["podLabels"]["team"] == "storefront"
 
 
 # --------------------------------------------------------------------------

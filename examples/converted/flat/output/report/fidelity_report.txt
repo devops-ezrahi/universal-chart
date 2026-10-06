@@ -1,10 +1,10 @@
 Round-trip fidelity report — raw input vs `helm template` of the converted output.
 
 RUN IDENTITY — counts below describe THIS run and no other.
-  run id:         c214b97886a2-63ddd3d09556
-  converter:      c214b97886a2  (convert_to_universal_chart.py)
-  input:          63ddd3d09556  (..\examples\converted\flat\input)
-  output:         ..\examples\converted\flat\output
+  run id:         37c182c8073c-d6d5235e78f8
+  converter:      37c182c8073c  (convert_to_universal_chart.py)
+  input:          d6d5235e78f8  (../examples/converted/flat/input)
+  output:         ../examples/converted/flat/output
   Compare two fidelity reports ONLY when their run ids match. A differing
   run id means the converter, the input, or both changed — so a count that
   moved between them may be more data rather than a regression, and the two
@@ -24,10 +24,10 @@ Fields the render ADDED are counted but not listed: a Helm chart filling in a
 Kubernetes default the raw dump omitted is normal and harmless.
 
 objects matched:            8
-  of those, relocated:      4
+  of those, relocated:      0
 fields LOST (raw -> render): 0
 fields CHANGED:             0
-fields ADDED (chart default, informational): 44
+fields ADDED (chart default, informational): 36
 objects in raw but rendered by nothing:      0
 objects rendered with no raw source:         0
 render failures:            0
@@ -36,10 +36,6 @@ dangling references (rename lost a reference): 0
 ERROR BREAKDOWN BY CATEGORY (generated from the lines below): none
 
 
-=== dev — 4 raw objects vs 6 rendered ===
-  INFO   ServiceAccount/ms1: created by the chart for release 'ms1' (serviceAccount.create) — no raw source expected
-  INFO   ServiceAccount/ms2: created by the chart for release 'ms2' (serviceAccount.create) — no raw source expected
+=== dev — 4 raw objects vs 4 rendered ===
 
-=== prd — 4 raw objects vs 6 rendered ===
-  INFO   ServiceAccount/ms1: created by the chart for release 'ms1' (serviceAccount.create) — no raw source expected
-  INFO   ServiceAccount/ms2: created by the chart for release 'ms2' (serviceAccount.create) — no raw source expected
+=== prd — 4 raw objects vs 4 rendered ===

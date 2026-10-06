@@ -62,6 +62,10 @@ def test_values_subfolders_survive_a_rerun(tmp_path):
     group = out / "prd/yellow/values/group1"
     group.mkdir()
     (out / "prd/yellow/values/ms1.yaml").rename(group / "ms1.yaml")
+    # base/ mirrors the values/ sub-folder, for every folder deploying ms1.
+    for f in [p for p in sorted(out.rglob("ms1.yaml")) if p.parent.name != "group1"]:
+        (f.parent / "group1").mkdir(exist_ok=True)
+        f.rename(f.parent / "group1" / f.name)
 
     proc = _convert(FIXTURE, out)
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -70,6 +74,7 @@ def test_values_subfolders_survive_a_rerun(tmp_path):
 
     # The same file name in two group folders is two Applications with one name.
     (out / "prd/yellow/values/group2").mkdir()
+    shutil.copytree(out / "base/group1", out / "base/group2")
     shutil.copy(group / "ms1.yaml", out / "prd/yellow/values/group2/ms1.yaml")
     proc = _convert(FIXTURE, out)
     assert proc.returncode != 0 and "DUPLICATE RELEASE in 'prd/yellow'" in proc.stdout

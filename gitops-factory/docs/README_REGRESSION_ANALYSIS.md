@@ -303,7 +303,7 @@ UTF-8. Decoding UTF-8 bytes as cp1252 is precisely the mojibake in the report:
 Every `read_text` / `write_text` in the converter already passes
 `encoding="utf-8"`. This one call site does not, and it is the only place the
 pipeline crosses a process boundary. `UTF8_Encoding_Corruption_In_ConfigMap_Data`
-names the fix pattern already present in this repo: `run_all.py` calls
+names the fix pattern already present in this repo: `convert_and_verify.py` calls
 `subprocess.run(..., encoding="utf-8", errors="replace")`.
 
 ---

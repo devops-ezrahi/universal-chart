@@ -25,7 +25,7 @@ This is the ONE place the pipeline crosses a process boundary — every
 read_text/write_text in the converter already passes encoding="utf-8".
 error.txt guessed the same thing and named the in-repo fix pattern: "run_all.py
 calls subprocess.run(..., capture_output=True, text=True, encoding='utf-8',
-errors='replace')".
+errors='replace')" (run_all.py is now convert_and_verify.py).
 
 SECOND HALF, also named by error.txt ("dump_yaml() — confirm it passes
 allow_unicode=True"): PyYAML escaped non-ASCII to \\uXXXX and collapsed the

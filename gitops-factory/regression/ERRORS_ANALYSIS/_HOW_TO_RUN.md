@@ -47,7 +47,7 @@ never by line number. Record the real location in STATUS.md.
 
 ```powershell
 cd C:\repos\homelab\universal\gitops-factory
-python run_all.py
+python convert_and_verify.py
 ```
 
 That is the whole interface. It runs four steps in order and stops at the first real
@@ -72,17 +72,17 @@ This is your regression gate.
 
 ### Other useful forms (verified flags)
 ```powershell
-python run_all.py --cluster-scoped          # if STEP 1 reports a CLUSTER CONFLICT
-python run_all.py --skip-convert            # re-check + re-sanitize existing output only
-python run_all.py --input namespaces --output output          # the other input set
-python run_all.py --seed 42                 # reproducible anonymizer aliases, for diffing runs
+python convert_and_verify.py --cluster-scoped          # if STEP 1 reports a CLUSTER CONFLICT
+python convert_and_verify.py --skip-convert            # re-check + re-sanitize existing output only
+python convert_and_verify.py --input namespaces --output output          # the other input set
+python convert_and_verify.py --seed 42                 # reproducible anonymizer aliases, for diffing runs
 ```
 
 ---
 
 ## 2. Running the converter directly (finer control)
 
-`run_all.py` STEP 1 shells out to exactly this:
+`convert_and_verify.py` STEP 1 shells out to exactly this:
 
 ```powershell
 cd C:\repos\homelab\universal\gitops-factory
@@ -213,7 +213,7 @@ python -m pytest output-showcase\ERRORS_ANALYSIS\<Folder>\test\ -v
 python -m pytest output-showcase\ERRORS_ANALYSIS\ -v
 
 # 5. full pipeline; exit code 0 is the gate
-python run_all.py
+python convert_and_verify.py
 echo "exit=$LASTEXITCODE"
 
 # 6. strict fidelity gate for this specific defect

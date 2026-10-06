@@ -1,4 +1,4 @@
-# Auto-generated MINIMAL override for 'ms1' — image + literal env,
+# Auto-generated MINIMAL override for 'ms1' — image, replicas,
 # plus (if present) this namespace's own structural difference from the
 # shared base/ms1.yaml (see conflicts_and_warnings.txt).
 # This is the client's single source of truth for day-2 tuning; safe to hand-edit
@@ -9,3 +9,14 @@ image:
   tag: 1.0.0
 
 replicaCount: 1
+
+env:
+  FEATURE_FLAG:
+    value: 'off'
+
+cronjobs:
+  ms1-report-{{ .Values.color }}:
+    jobTemplate:
+      image:
+        repository: registry.example.org/ms1-report
+        tag: 1.0.0

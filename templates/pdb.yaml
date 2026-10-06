@@ -1,5 +1,5 @@
 {{- include "universal-chart.renderValues" . }}
-{{- if .Values.pdb.enabled }}
+{{- if (and .Values.pdb .Values.pdb.enabled) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

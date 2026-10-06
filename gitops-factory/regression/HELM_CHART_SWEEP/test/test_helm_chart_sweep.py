@@ -230,8 +230,8 @@ def test_file_unclaimed_gives_every_pasted_object_a_home(tmp_path):
 # --- Argo CD wiring ---------------------------------------------------------
 
 def test_generated_wiring_leaves_sync_manual_by_default():
-    appset = conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
-                                            "https://v", "main")
+    appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
+                                                           "https://v", "main"))
     params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
     assert {"name": "autoSync", "value": "false"} in params
     app = conv.build_cluster_shared_application("platform", "https://c", ".", "main", "https://v", "main")
@@ -239,8 +239,8 @@ def test_generated_wiring_leaves_sync_manual_by_default():
 
 
 def test_auto_sync_true_turns_it_back_on():
-    appset = conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
-                                            "https://v", "main", auto_sync=True)
+    appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
+                                                           "https://v", "main", auto_sync=True))
     params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
     assert {"name": "autoSync", "value": "true"} in params
 

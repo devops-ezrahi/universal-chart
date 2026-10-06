@@ -18,7 +18,7 @@ metadata:
   {{- end }}
 spec:
   serviceName: {{ .Values.serviceName | default (include "universal-chart.fullname" .) }}
-  {{- if not .Values.hpa.enabled }}
+  {{- if not (and .Values.hpa .Values.hpa.enabled) }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
@@ -37,10 +37,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "universal-chart.selectorLabels" . | nindent 8 }}
-        {{- with .Values.podLabels }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
+        {{- include "universal-chart.podTemplateLabels" . | nindent 8 }}
       {{- $checksums := include "universal-chart.checksumAnnotations" . }}
       {{- if or $checksums .Values.podAnnotations }}
       annotations:

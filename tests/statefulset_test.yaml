@@ -100,3 +100,20 @@ tests:
       - equal:
           path: spec.volumeClaimTemplates[0].spec.volumeMode
           value: Block
+
+  - it: keeps an explicit empty container securityContext and selectorLabels
+    set:
+      workload.type: statefulset
+      securityContext: {}
+      selectorLabels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/instance: redis-black-b2b-tst
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value: {}
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: redis
+            app.kubernetes.io/instance: redis-black-b2b-tst

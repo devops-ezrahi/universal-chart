@@ -192,8 +192,11 @@ def test_every_value_file_the_chart_references_is_actually_on_disk(tmp_path):
                 # ArgoCD's git files generator: .path.path is the file's folder
                 # (repo-relative), .path.filename its name.
                 resolved = re.sub(r"\{\{\s*\.path\.filename\s*\}\}", values_file.name, rel)
-                resolved = re.sub(r"\{\{\s*\.path\.path\s*\}\}",
-                                  values_file.parent.relative_to(out).as_posix(), resolved)
+                # base/ reads `.path.path | trimPrefix "<folder>/values"` to
+                # mirror a values/ sub-folder; evaluate that pipe too.
+                path = values_file.parent.relative_to(out).as_posix()
+                resolved = re.sub(r'\{\{\s*\.path\.path\s*(?:\|\s*trimPrefix\s*"([^"]*)"\s*)?\}\}',
+                                  lambda m: path.removeprefix(m.group(1) or ""), resolved)
                 assert (out / resolved).exists(), (
                     f"{ns_dir.name}: the chart references {vf} -> {resolved}, "
                     f"which the converter never wrote")

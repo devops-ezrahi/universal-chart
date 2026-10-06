@@ -95,7 +95,7 @@ python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Sanitizer_Drops_Unparsed_Li
                  test_sanitize_fidelity_report.py -q
 56 passed in 1.84s
 
-python run_all.py --cluster-scoped --input namespaces-showcase --output output-showcase
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output output-showcase
     fields LOST     0
     fields CHANGED  0
     render failures 0
@@ -141,7 +141,7 @@ documented rather than "fixed".
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
 python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Sanitizer_Drops_Unparsed_Lines/test -v
-python run_all.py --cluster-scoped --input namespaces-showcase --output output-showcase
+python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output output-showcase
 ```
 
 ---

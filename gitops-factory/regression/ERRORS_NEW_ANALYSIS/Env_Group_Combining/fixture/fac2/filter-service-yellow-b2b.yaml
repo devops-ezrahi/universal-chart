@@ -31,6 +31,16 @@ spec:
           envFrom:
             - configMapRef:
                 name: filter-alerts
+          volumeMounts:
+            - name: certs-yellow
+              mountPath: /etc/certs/yellow
+        - name: proxy-yellow
+          image: registry.example.org/proxy:2.0
+          args: ["--color", "yellow"]
+      volumes:
+        - name: certs-yellow
+          secret:
+            secretName: certs-yellow
 ---
 apiVersion: v1
 kind: Service
@@ -65,3 +75,33 @@ metadata:
   namespace: fac2
 data:
   ALERT: "{{ $labels.pod }} is down in fac2"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settings-yellow
+  namespace: fac2
+data:
+  mode: yellow
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: report-yellow
+  namespace: fac2
+spec:
+  schedule: "0 1 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: report
+              image: registry.example.org/report:1.0
+              env:
+                - name: COLOR
+                  value: yellow
+              envFrom:
+                - configMapRef:
+                    name: settings-yellow

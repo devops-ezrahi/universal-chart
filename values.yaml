@@ -7,6 +7,14 @@ fullnameOverride: ""
 
 # -- Extra labels added to ALL resources
 commonLabels: {}
+# false = every object gets exactly its own `labels` (+ commonLabels), with no
+# chart identity labels (name/instance/version/helm.sh/chart/managed-by). The
+# converter sets it so a migrated object keeps its live labels one-to-one.
+chartLabels: true
+# Overrides the computed selector (app.kubernetes.io/name + instance) used by
+# workload matchLabels, pod template labels and Service/PDB selectors. Selectors
+# are immutable, so a migrated workload must keep its live ones.
+selectorLabels: {}
 # -- Extra annotations added to ALL resources
 commonAnnotations: {}
 
@@ -77,12 +85,14 @@ strategy: {}
 # ---------------------------------------------------------------------------
 podAnnotations: {}
 podLabels: {}
-
 # ---------------------------------------------------------------------------
 # Security Contexts
 # ---------------------------------------------------------------------------
 podSecurityContext: {}
-securityContext: {}
+# -- Main container securityContext. Unset (null) renders nothing; an explicit
+# `{}` renders `securityContext: {}` (kept so a migrated pod template that
+# carried an empty one is reproduced exactly, and its pods are not restarted).
+securityContext: null
 
 # ---------------------------------------------------------------------------
 # Container — main container spec
@@ -105,6 +115,17 @@ ports: {}
 #   protocol: TCP
 # grpc:
 #   containerPort: 9090
+# -- Render order of ports / env / envFrom / volumeMounts / volumes / sidecars,
+# by map key. Keys not listed follow in sorted order. Kubernetes stores these as
+# lists, so a different order is a pod-template change (= pods restart); for
+# env it is also semantic ($(VAR) expands only earlier vars). The converter
+# writes each one in the raw manifest's order.
+portOrder: []
+envOrder: []
+envFromOrder: []
+volumeMountOrder: []
+volumeOrder: []
+sidecarOrder: []
 
 # ---------------------------------------------------------------------------
 # Environment variables — MAP-BASED (keyed by env var name)
@@ -320,7 +341,9 @@ route:
   annotations: {}
   tls:
     termination: edge
-    insecureEdgeTerminationPolicy: Redirect
+    # -- Rendered only when set (None / Allow / Redirect). Not defaulted: a
+    # Route that never had it must not silently start redirecting HTTP.
+    # insecureEdgeTerminationPolicy: Redirect
 
 # ---------------------------------------------------------------------------
 # Extra OpenShift Routes — MAP-BASED (keyed by route name), beyond the
@@ -504,7 +527,8 @@ serviceAccount:
   create: true
   name: ""
   annotations: {}
-  automountServiceAccountToken: true
+  # Unset = not rendered (Kubernetes default: mounted). Set true/false to pin it.
+  # automountServiceAccountToken: false
 
 # ---------------------------------------------------------------------------
 # RBAC — MAP-BASED (keyed by role/binding name)
