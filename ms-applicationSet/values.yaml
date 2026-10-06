@@ -25,6 +25,22 @@ valuesGlob: "*.yaml"
 # unless run with --auto-sync true.
 autoSync: true
 
+# The ApplicationSet controller puts resources-finalizer.argocd.argoproj.io on
+# every Application it generates and puts it back whenever it is removed by
+# hand. With that finalizer, deleting an Application (or this ApplicationSet)
+# deletes every workload it deployed. true stops the controller adding it:
+# deleting the Application or the ApplicationSet leaves the workloads running.
+preserveResourcesOnDeletion: false
+
+# What the ApplicationSet controller may do to the Applications it generates
+# (spec.syncPolicy.applicationsSync). Empty = Argo CD's default ("sync": create,
+# update and delete). "create-only" / "create-delete" stop it updating existing
+# Applications, so a hand edit to one (a removed finalizer included) stays.
+# "create-update" never deletes an Application whose values file was removed.
+# Needs the controller's policy override enabled
+# (applicationsetcontroller.enable.policy.override).
+applicationsSync: ""
+
 project: default
 destinationServer: https://kubernetes.default.svc
 destinationName: ""   # a registered cluster name; wins over destinationServer when set
