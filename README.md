@@ -823,7 +823,14 @@ empty = the namespace folder itself), `valuesGlob` (default `*.yaml`; use
 `**/*.yaml` with Argo CD's new git-file globbing), `project`,
 `destinationServer`, `destinationName` (a registered cluster name, wins over
 `destinationServer`), `chartRepoURL`, `chartRevision` and `chartPath`
-have defaults in its `values.yaml`. The generated ApplicationSets carry
+have defaults in its `values.yaml`. `nameSuffix` (e.g. `pr-42`) is appended to
+the ApplicationSet's and every Application's name (`ms1-dev` → `ms1-dev-pr-42`)
+and to nothing else — same namespace, same Helm release name, so the same
+objects. That lets a second copy pointing at another `chartRevision` or
+`originBranch` sit next to the original in Argo CD: keep the copy on
+`autoSync: false` and its diff tree shows exactly what your change would do to
+the live objects (two auto-synced copies would fight over them). The generated
+ApplicationSets carry
 `ignoreDifferences` for the pod-security fields OpenShift admission mutates on
 the live object, so Applications do not flip OutOfSync every reconcile.
 

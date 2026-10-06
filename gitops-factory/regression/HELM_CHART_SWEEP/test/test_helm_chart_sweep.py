@@ -256,6 +256,41 @@ def test_ms_applicationset_autosync(flag, automated):
     assert ("automated" in doc["spec"]["template"]["spec"]["syncPolicy"]) is automated
 
 
+def test_name_suffix_renames_argo_objects_only():
+    appset = conv.build_root_applicationset("root-pr-42", "https://c", "ms-applicationSet", "main", ".",
+                                            "https://v", "main", name_suffix="-pr-42")
+    tmpl = appset["spec"]["template"]
+    assert tmpl["metadata"]["name"] == "{{path.basename}}-pr-42"
+    params = tmpl["spec"]["sources"][0]["helm"]["parameters"]
+    assert {"name": "nameSuffix", "value": "pr-42"} in params
+    assert {"name": "namespace", "value": "{{path.basename}}"} in params
+    nested = conv.build_root_applicationset("r", "https://c", "ms-applicationSet", "main", ".",
+                                            "https://v", "main", nested=True, name_suffix="pr-42")
+    assert nested["spec"]["template"]["metadata"]["name"] == '{{ .path.path | replace "/" "-" }}-pr-42'
+    app = conv.build_cluster_shared_application("platform", "https://c", ".", "main", "https://v", "main",
+                                                name_suffix="pr-42")
+    assert app["metadata"]["name"] == "cluster-shared-resources-pr-42"
+    assert app["spec"]["destination"]["namespace"] == "platform"
+    plain = conv.build_root_applicationset("r", "https://c", "ms-applicationSet", "main", ".", "https://v", "main")
+    assert not any(p["name"] == "nameSuffix" for p in plain["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"])
+
+
+@needs_helm
+@pytest.mark.parametrize("suffix", ["pr-42", "-pr-42"])
+def test_ms_applicationset_name_suffix(suffix):
+    r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"),
+                        "--set", "namespace=prd,folder=prd/yellow,originRepoURL=r,originBranch=m",
+                        "--set", f"nameSuffix={suffix}"],
+                       capture_output=True, text=True, check=True)
+    doc = yaml.safe_load(r.stdout)
+    tmpl = doc["spec"]["template"]
+    assert doc["metadata"]["name"] == "prd-yellow-pr-42"
+    assert tmpl["metadata"]["name"].endswith("}}-prd-yellow-pr-42")
+    assert tmpl["metadata"]["labels"]["name-suffix"] == "pr-42"
+    assert tmpl["spec"]["destination"]["namespace"] == "prd"
+    assert "pr-42" not in tmpl["spec"]["sources"][0]["helm"]["releaseName"]
+
+
 # --- --include and exact `=name` patterns ------------------------------------
 
 def _deploy(name):
