@@ -279,10 +279,20 @@ one filename, so a release whose slug had to be disambiguated still resolves
 both halves correctly.
 
 `shared` is an ordinary release like any other — `base/shared.yaml` plus
-`<namespace>/values/shared.yaml`, discovered by the same fan-out. Being named
-identically "shared" in every namespace, it is exactly the case release-slug
-disambiguation exists for, so two namespaces with genuinely different shared
-content get `base/<namespace>-shared.yaml` rather than silently sharing one.
+`<namespace>/values/shared.yaml`, discovered by the same fan-out. Namespaces
+whose shared release declares the same objects (`shop-dev`, `shop-tst`,
+`shop-prd` each holding `ConfigMap/shop-common`) are one release, split like a
+microservice: what every copy agrees on goes in `base/shared.yaml`, and each
+`values/shared.yaml` holds only what differs there, e.g. `ENV: prd`. With
+`--env-suffixes` or `--env-group` even that becomes a template in `base/` and
+`values/shared.yaml` is `{}`. Every namespace still has its own
+`values/shared.yaml`, since that file is what deploys the release. A namespace
+whose shared objects have nothing in common with the first group's (another
+app's namespaces in the same run), or that ends in the same `-<token>` as one
+already in it, gets its own name: `pay-shared` for `pay-dev` + `pay-prd`, or
+`<namespace>-shared` for a namespace on its own. Before this, a shared release
+that differed in a single env word was forked into one
+`<namespace>-shared.yaml` per namespace.
 
 ## Cutting a live app over from its old ArgoCD apps
 

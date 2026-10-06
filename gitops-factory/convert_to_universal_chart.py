@@ -685,6 +685,13 @@ def folder_suffix(namespace: str) -> str:
     return namespace.partition("/")[2].replace("/", "-")
 
 
+def app_name_suffix(namespace: str) -> str:
+    """What ms-applicationSet appends to a release's file name to name its
+    Application: the namespace's last '-' token, plus the variant folder
+    ('devops-team-dev' -> 'dev', 'prd/yellow' -> 'prd-yellow')."""
+    return k8s_ns(namespace).rsplit("-", 1)[-1] + (f"-{folder_suffix(namespace)}" if "/" in namespace else "")
+
+
 def is_input_ns(d: Path) -> bool:
     return any(d.glob("*.yaml"))
 
@@ -4033,6 +4040,56 @@ def deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+def _env_stem(name: str) -> str:
+    """A name without its environment words, so 'shop-dev-config' in one
+    namespace and 'shop-prd-config' in the next compare equal."""
+    tokens = KNOWN_ENV_SUFFIXES | NAME_TOKENS
+    return strip_name_tokens(name, tokens) if tokens else name
+
+
+def group_shared_releases(shared: dict[str, "MicroserviceContext"],
+                          objects: dict[str, set[tuple[str, str]]]) -> list[list[str]]:
+    """Which namespaces' `shared` releases are one release, in first-seen order.
+
+    A namespace's shared.yaml holds what several of its microservices use, so
+    the dev, tst and prd namespaces of one app hold the same ConfigMaps and
+    Secrets, differing only by environment words in their values. Those are
+    one release — one base/shared.yaml, the differences in each
+    values/shared.yaml — the way a microservice running in every namespace is.
+
+    A namespace joins the first group it has an object in common with (env
+    words aside), or whose content is identical — unless that group already
+    has a namespace ending in the same '-<token>', since the two would get one
+    Application name (shared-dev) for two deployments. Otherwise (another
+    app's namespaces in the same run) it starts a group of its own."""
+    groups: list[tuple[list[str], set, set[str]]] = []  # (members, object keys, app suffixes)
+    for ns, ctx in shared.items():
+        keys = {(kind, _env_stem(str(name))) for kind, name in objects.get(ns, set())}
+        keys.add(("#content", content_hash(ctx.values)))
+        suffix = app_name_suffix(ns)
+        for members, group_keys, suffixes in groups:
+            if keys & group_keys and suffix not in suffixes:
+                members.append(ns)
+                group_keys |= keys
+                suffixes.add(suffix)
+                break
+        else:
+            groups.append(([ns], keys, {suffix}))
+    return [members for members, _, _ in groups]
+
+
+def shared_group_slug(members: list[str], taken: set[str]) -> str:
+    """The release name of a `shared` group other than the first: its
+    namespaces' name without the env word (pay-dev + pay-prd -> pay-shared),
+    else the first namespace's (pay-dev-shared) — never a name in `taken`."""
+    stems = {_env_stem(k8s_ns(ns)) for ns in members}
+    first = members[0].replace("/", "-")
+    candidates = [f"{stems.pop()}-{SHARED_DIR_NAME}"] if len(members) > 1 and len(stems) == 1 else []
+    candidates += [f"{first}-{SHARED_DIR_NAME}"]
+    candidates += [f"{first}-{SHARED_DIR_NAME}-{n}" for n in range(2, len(taken) + 3)]
+    return next(c for c in candidates if c not in taken)
+
+
 def write_base_file(base_dir: Path, slug: str, values: dict) -> None:
     """
     The comprehensive, environment-agnostic file for one microservice —
@@ -6020,6 +6077,7 @@ def main() -> None:
     per_namespace_ms: dict[str, list[tuple[str, MicroserviceContext]]] = {}
     out_ms: dict[str, list[tuple[str, MicroserviceContext]]] = {}  # per OUTPUT folder
     per_namespace_shared: dict[str, MicroserviceContext] = {}
+    per_namespace_shared_objects: dict[str, set[tuple[str, str]]] = {}  # (kind, name) it declares
     per_namespace_warnings: dict[str, list[str]] = {}
     # Names Kubernetes would reject. Collected across the WHOLE run and
     # reported together at the end of Pass 1 — before a single file is
@@ -6142,6 +6200,8 @@ def main() -> None:
                 cluster_values, ns_warnings, owner_label="_shared", known_pv_names=known_pv_names,
             )
             per_namespace_shared[namespace] = shared_ctx
+            per_namespace_shared_objects[namespace] = {
+                (d.get("kind"), (d.get("metadata") or {}).get("name")) for d in shared_docs}
             errs, warns = validate_resource_names(namespace, SHARED_DIR_NAME, shared_ctx.values)
             name_errors += errs
             all_warnings += warns
@@ -6235,13 +6295,16 @@ def main() -> None:
     # only one instance needs no splitting — its whole values IS the base,
     # same as before.
     #
-    # 'shared' releases are deliberately EXCLUDED from this grouping and
-    # keep the original byte-identical-or-fork behavior instead: unlike
-    # 'postgres' or 'cache-warmer', every namespace's 'shared' is unrelated
-    # content that only coincidentally shares the generic name "shared".
-    # common_subtree across those would produce a base/shared.yaml that is the
-    # accidental intersection of unrelated resource pools; the fork keeps each
-    # namespace's shared content whole under base/<namespace>-shared.yaml.
+    # 'shared' releases are not grouped by their name: two apps' namespaces in
+    # one run each have a 'shared' that only coincidentally shares the generic
+    # name, and common_subtree across those would make base/shared.yaml the
+    # accidental intersection of unrelated resource pools. They are grouped by
+    # the objects they declare instead (group_shared_releases): the dev/tst/prd
+    # copies of one app's shared ConfigMaps and Secrets are one release, split
+    # into base/ and values/ exactly like a microservice. Before that, a shared
+    # release differing in a single env word forked into one
+    # base/<namespace>-shared.yaml per namespace. A group other than the first
+    # still gets a namespace-qualified name (shared_group_slug).
     groups: dict[str, list[tuple[str, MicroserviceContext]]] = {}
     for namespace, ms_list in out_ms.items():
         for name, ctx in ms_list:
@@ -6255,29 +6318,32 @@ def main() -> None:
     # find_stale_output).
     expected_values: dict[str, set] = {}
     env_group_applied: list[dict] = []
-    for name, entries in groups.items():
+
+    def publish(slug: str, release: str, entries: list[tuple[str, MicroserviceContext]]) -> None:
+        """Write base/<slug>.yaml once for every (folder, ctx) in entries — what
+        all of them agree on, group words templated in — and leave the rest
+        (minimal_extras) for each one's own values/<slug>.yaml."""
+        for namespace, _ in entries:
+            release_slugs[(namespace, release)] = slug
         if len(entries) == 1:
-            namespace, ctx = entries[0]
-            write_base_file(base_dir, name, ctx.values)
-            release_slugs[(namespace, name)] = name
-            continue
+            write_base_file(base_dir, slug, entries[0][1].values)
+            return
         key_injections: dict = {}
         if env_groups:
             unify_group_keys(entries, env_groups, key_injections)
         shared_base = common_subtree([ctx.values for _, ctx in entries])
         injections = {}
         if env_groups:
-            injections, applied = combine_env_groups(name, entries, env_groups, shared_base,
+            injections, applied = combine_env_groups(slug, entries, env_groups, shared_base,
                                                      args.interactive)
             for ns, inj in key_injections.items():
                 injections[ns] = {**inj, **injections.get(ns, {})}
-            env_group_applied += applied
-            all_warnings += [f"[{name}] env-group: {a['path']} -> {a['template']!r}"
-                             + (f", injected {a['injection']}" if a["injection"] else "")
-                             for a in applied]
-        write_base_file(base_dir, name, shared_base)
+            env_group_applied.extend(applied)
+            all_warnings.extend(f"[{slug}] env-group: {a['path']} -> {a['template']!r}"
+                                + (f", injected {a['injection']}" if a["injection"] else "")
+                                for a in applied)
+        write_base_file(base_dir, slug, shared_base)
         for namespace, ctx in entries:
-            release_slugs[(namespace, name)] = name
             remainder = subtract_defaults(ctx.values, shared_base)
             # The group values this release's templates read come from its
             # folder's defaults.yaml (folder_values); only a value that
@@ -6286,30 +6352,34 @@ def main() -> None:
                    if folder_values(namespace, env_groups).get(g) != v}
             extra = deep_merge(own, remainder)
             if extra:
-                minimal_extras[(namespace, name)] = extra
+                minimal_extras[(namespace, release)] = extra
             if remainder:
                 all_warnings.append(
-                    f"[{namespace}/{name}] shares base/{name}.yaml with its other namespaces' "
+                    f"[{namespace}/{release}] shares base/{slug}.yaml with its other namespaces' "
                     f"copies; {_leaf_paths(remainder)} differ and were pushed into this "
-                    f"namespace's own values/{name}.yaml instead"
+                    f"namespace's own values/{slug}.yaml instead"
                 )
 
-    # 'shared' releases: unchanged, original all-or-nothing mechanism.
-    base_registry: dict[str, tuple[str, dict]] = {}
-    for namespace, shared_ctx in per_namespace_shared.items():
-        name = SHARED_DIR_NAME
-        h = content_hash(shared_ctx.values)
-        slug = name
-        if slug in base_registry and base_registry[slug][0] != h:
-            slug = f"{namespace}-{name}"
+    for name, entries in groups.items():
+        publish(name, name, entries)
+
+    # 'shared' releases: the namespaces whose shared objects are the same ones
+    # (each environment's copy) are ONE release, published exactly like a
+    # microservice above. Another app's namespaces in the same run form a
+    # group of their own, under a name of their own (shared_group_slug).
+    shared_groups = group_shared_releases(per_namespace_shared, per_namespace_shared_objects)
+    taken = set(groups)
+    for i, members in enumerate(shared_groups):
+        slug = SHARED_DIR_NAME if i == 0 else shared_group_slug(members, taken)
+        taken.add(slug)
+        if i:
             all_warnings.append(
-                f"[{namespace}/{name}] base content differs from another namespace's "
-                f"'{name}' — writing base/{slug}.yaml instead of sharing base/{name}.yaml"
+                f"[{', '.join(members)}] '{SHARED_DIR_NAME}' is not another environment's copy of "
+                f"the one in {', '.join(shared_groups[0])} (no object in common, or a namespace "
+                f"ending in the same '-<token>') — writing base/{slug}.yaml instead of sharing "
+                f"base/{SHARED_DIR_NAME}.yaml"
             )
-        base_registry.setdefault(slug, (h, shared_ctx.values))
-        release_slugs[(namespace, name)] = slug
-    for slug, (_, values) in base_registry.items():
-        write_base_file(base_dir, slug, values)
+        publish(slug, SHARED_DIR_NAME, [(ns, per_namespace_shared[ns]) for ns in members])
 
     # Pass 3 — per namespace: this namespace's own defaults.yaml layer plus
     # each release's values/<slug>.yaml. base/ was already written in pass 2.5.
@@ -6370,7 +6440,8 @@ def main() -> None:
 
         if shared_ctx is not None:
             slug = release_slugs[(namespace, SHARED_DIR_NAME)]
-            write_microservice_output(out_ns_dir, SHARED_DIR_NAME, slug, namespace, shared_ctx)
+            write_microservice_output(out_ns_dir, SHARED_DIR_NAME, slug, namespace, shared_ctx,
+                                       minimal_extra=minimal_extras.get((namespace, SHARED_DIR_NAME)))
             expected_values[namespace].add(slug)
 
         ms_count = len(ms_contexts)
@@ -6399,8 +6470,7 @@ def main() -> None:
                 f"({len(slug)} chars; at most 53, lowercase DNS subdomain) — its ArgoCD Application "
                 f"cannot render. Rename the file (and set fullnameOverride to keep the object names)."
             )
-        key = (slug, k8s_ns(namespace).rsplit("-", 1)[-1]
-               + (f"-{folder_suffix(namespace)}" if "/" in namespace else ""))
+        key = (slug, app_name_suffix(namespace))
         if key in app_names and app_names[key] != namespace:
             all_warnings.append(
                 f"[{namespace}/{ms_name}] ArgoCD Application name '{key[0]}-{key[1]}' collides with "
