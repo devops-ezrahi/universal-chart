@@ -4295,7 +4295,8 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               values_path: str = "", argocd_namespace: str = "argocd",
                               project: str = "default",
                               destination_server: str = "https://kubernetes.default.svc",
-                              destination_name: str = "", auto_sync: bool = False) -> str:
+                              destination_name: str = "", auto_sync: bool = False,
+                              name_suffix: str = "") -> str:
     """One Application per namespace folder in this tree, as YAML text.
 
     Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
@@ -4313,6 +4314,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     its folder.
     """
     q = _yaml_scalar
+    name_suffix = name_suffix.lstrip("-")
     segments = [p for p in values_path.split("/") if p]
     rel = ".path.path" + (f' | trimPrefix "{"/".join(segments)}/"' if segments else "")
     params = [
@@ -4329,6 +4331,8 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         # The microservice Applications the chart renders: manual sync unless
         # --auto-sync true. Always written — the chart's own default is true.
         ("autoSync", q("true" if auto_sync else "false")),
+        # Only ever appended to Argo CD object names (see --name-suffix).
+        *([("nameSuffix", q(name_suffix))] if name_suffix else []),
     ]
     lines = [
         "apiVersion: argoproj.io/v1alpha1",
@@ -4355,7 +4359,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         "      labels:",
         "        app: *name",
         "        managed-by: universal-chart-converter",
-        "      name: " + q('{{ %s | replace "/" "-" }}' % rel),
+        "      name: " + q(_suffixed('{{ %s | replace "/" "-" }}' % rel, name_suffix)),
         "    spec:",
         f"      project: &project {q(project)}",
         "      sources:",
@@ -4378,6 +4382,12 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     return "\n".join(lines) + "\n"
 
 
+def _suffixed(name: str, suffix: str) -> str:
+    """name + '-suffix' (--name-suffix), a leading '-' on the suffix tolerated."""
+    suffix = suffix.lstrip("-")
+    return f"{name}-{suffix}" if suffix else name
+
+
 def _destination(server: str, name: str, namespace: str) -> dict:
     """ArgoCD destination: a registered cluster NAME (--argocd-cluster) wins over the URL."""
     return {"name": name, "namespace": namespace} if name else {"server": server, "namespace": namespace}
@@ -4387,7 +4397,8 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
                                      values_repo_url: str, values_revision: str, values_path: str = "",
                                      argocd_namespace: str = "argocd", project: str = "default",
                                      destination_server: str = "https://kubernetes.default.svc",
-                                     destination_name: str = "", auto_sync: bool = False) -> dict:
+                                     destination_name: str = "", auto_sync: bool = False,
+                                     name_suffix: str = "") -> dict:
     """The one release that is NOT part of the per-namespace fan-out.
 
     It gets its own Application, sitting at the tree root next to the root
@@ -4403,7 +4414,7 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
     return {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "Application",
-        "metadata": {"name": "cluster-shared-resources", "namespace": argocd_namespace},
+        "metadata": {"name": _suffixed("cluster-shared-resources", name_suffix), "namespace": argocd_namespace},
         "spec": {
             "project": project,
             "sources": [
@@ -4411,9 +4422,15 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
                     "repoURL": chart_repo_url,
                     "targetRevision": chart_revision,
                     "path": chart_path,
-                    "helm": {"valueFiles": [
-                        _values_ref(values_path, f"{CLUSTER_SHARED_DIR_NAME}/{VALUES_DIR_NAME}/cluster-shared-values.yaml")
-                    ]},
+                    "helm": {
+                        # Argo CD names the release after the Application; a
+                        # --name-suffix copy pins the unsuffixed name so it
+                        # renders the same objects.
+                        **({"releaseName": "cluster-shared-resources"} if name_suffix.lstrip("-") else {}),
+                        "valueFiles": [
+                            _values_ref(values_path, f"{CLUSTER_SHARED_DIR_NAME}/{VALUES_DIR_NAME}/cluster-shared-values.yaml"),
+                        ],
+                    },
                 },
                 {"repoURL": values_repo_url, "targetRevision": values_revision, "ref": "values"},
             ],
@@ -5925,6 +5942,15 @@ def main() -> None:
                           "deployed to the same cluster different names so they don't collide.")
     ap.add_argument("--root-set-name", default="",
                      help="name of the root ApplicationSet (default: '<--root-app-name>-set').")
+    ap.add_argument("--name-suffix", default="", metavar="SUFFIX",
+                     help="append '-SUFFIX' to every Argo CD object name this run produces — the root "
+                          "Application and ApplicationSet, each namespace's Application and "
+                          "ApplicationSet, every microservice Application (ms1-dev -> ms1-dev-SUFFIX) "
+                          "and cluster-shared-resources — and to nothing else: namespaces and helm "
+                          "release names, so every rendered object, stay the same. Deploys a second "
+                          "copy (another --values-revision / --chart-revision) next to the original; "
+                          "with --auto-sync false (the default) Argo CD's diff of the copy shows "
+                          "what it would change on the live objects.")
     # Kept so existing command lines still parse: the wiring it used to opt into
     # (rootApplication.yaml.txt, rootApplicationSet.yaml and, under
     # --cluster-scoped, cluster-shared/ + cluster-shared-application.yaml) is
@@ -6502,7 +6528,7 @@ def main() -> None:
             args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
-            auto_sync=args.auto_sync)
+            auto_sync=args.auto_sync, name_suffix=args.name_suffix)
         # At the tree ROOT, next to the root ApplicationSet: that is where the
         # root Application looks for it by name, and cluster-shared/ itself is
         # excluded from the root ApplicationSet's directory generator because
@@ -6543,13 +6569,17 @@ def main() -> None:
     # The whole ArgoCD wiring, written once everything it deploys exists on
     # disk: one ApplicationSet that discovers the namespace directories, and one
     # Application that deploys it. Only with --argocd-manifests.
+    if ARGOCD_MANIFESTS and args.name_suffix and args.auto_sync:
+        print(f"WARNING: --name-suffix with --auto-sync true: if the unsuffixed copy is deployed too, both "
+              f"sync the SAME objects (same namespaces and release names) and will keep overwriting "
+              f"each other. Leave the suffixed copy on manual sync.", file=sys.stderr)
     if ARGOCD_MANIFESTS:
         root_appset = build_root_applicationset(
-            args.root_set_name or f"{args.root_app_name}-set", args.chart_repo_url, args.appset_chart_path, args.chart_revision,
+            _suffixed(args.root_set_name or f"{args.root_app_name}-set", args.name_suffix), args.chart_repo_url, args.appset_chart_path, args.chart_revision,
             args.chart_path, args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
-            auto_sync=args.auto_sync)
+            auto_sync=args.auto_sync, name_suffix=args.name_suffix)
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"
@@ -6560,7 +6590,7 @@ def main() -> None:
         )
         (output_dir / ROOT_APPSET_FILE_NAME).write_text(appset_header + root_appset, encoding="utf-8")
 
-        root_app = build_root_application(args.root_app_name, args.values_repo_url, args.values_revision,
+        root_app = build_root_application(_suffixed(args.root_app_name, args.name_suffix), args.values_repo_url, args.values_revision,
                                            args.values_path, argocd_namespace=args.argocd_namespace,
                                            project=args.argocd_project)
         root_header = (

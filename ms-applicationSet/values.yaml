@@ -13,6 +13,14 @@ originPath: ""
 # variant folder ("prd/yellow", "prd/yellow/eu") deploys into `namespace` and
 # appends what follows the namespace to every generated name ("ms1-prd-yellow-eu").
 folder: ""
+# Appended to every generated name - the ApplicationSet and each Application
+# ("ms1-dev" -> "ms1-dev-pr-42") - and nothing else: namespace, helm release name
+# and therefore every rendered object stay the same. Lets a second copy (another
+# chartRevision / originBranch) live next to the original in Argo CD; keep that
+# copy on autoSync: false and its diff shows what it would change on the live
+# objects. Two auto-synced copies would fight over the same objects. Also set as
+# the label name-suffix, so the Argo CD UI can filter on it.
+nameSuffix: ""
 # Glob under <namespace>/values/. The default also finds files in sub-folders
 # with ArgoCD's legacy git-file globbing; use "**/*.yaml" with the new one.
 # base/ mirrors those sub-folders: values/group1/ms1.yaml reads base/group1/ms1.yaml.
