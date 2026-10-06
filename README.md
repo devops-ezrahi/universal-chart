@@ -839,6 +839,36 @@ self-heal. The generated ApplicationSets carry
 `ignoreDifferences` for the pod-security fields OpenShift admission mutates on
 the live object, so Applications do not flip OutOfSync every reconcile.
 
+#### Removing the Argo CD tree but keeping the workloads
+
+This takes git access, plus Argo CD UI or API access for the last step. It
+needs no kubectl access to the Argo CD cluster. Tested against Argo CD v3.1.8:
+
+1. In the values repo's `rootApplicationSet.yaml`, add a helm parameter
+   `preserveResourcesOnDeletion: 'true'` next to `autoSync`. Commit it and
+   wait until no microservice Application has a finalizer left. The
+   ApplicationSet controller removes it from existing Applications within one
+   reconcile (about 3 minutes). Check in the UI (Application → Details →
+   finalizers) or with
+   `argocd app get <app> -o json | jq .metadata.finalizers`.
+2. Then delete the tree with either option:
+   - **Git only:** delete every namespace folder (`dev/`, `prd/`, ...) and
+     commit. The root ApplicationSet deletes the per-namespace Applications.
+     Those still carry the finalizer, so their ApplicationSets are deleted
+     with them, and that removes the microservice Applications, which no
+     longer have one. `platform-root` and an empty root ApplicationSet are
+     left. Deleting them later is harmless.
+   - **Argo CD UI or CLI:** delete `platform-root` with cascade (UI: Delete →
+     Foreground; CLI: `argocd app delete platform-root --cascade`).
+     The whole tree is gone in seconds.
+
+Deployments, Services, Routes, ConfigMaps, Secrets, PVCs and namespaces stay
+as they are, with the same UIDs. Re-applying `rootApplication.yaml.txt` later
+adopts them again. **Do step 2 only after step 1 has synced:** without it, the
+same delete removes every workload. `cluster-shared-resources` (from
+`--cluster-scoped`) carries no finalizer, so deleting it removes only the
+Application object.
+
 Values repos in this shape are produced by
 [gitops-factory](gitops-factory/) (in this repo), which
 converts raw per-namespace manifest dumps into exactly this layout
