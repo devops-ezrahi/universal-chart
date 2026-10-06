@@ -43,6 +43,16 @@ metadata:
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
+  {{- $preserve := eq (toString .Values.preserveResourcesOnDeletion) "true" }}
+  {{- if or $preserve .Values.applicationsSync }}
+  syncPolicy:
+    {{- if $preserve }}
+    preserveResourcesOnDeletion: true
+    {{- end }}
+    {{- with .Values.applicationsSync }}
+    applicationsSync: {{ . | quote }}
+    {{- end }}
+  {{- end }}
   generators:
     - git:
         repoURL: {{ $repo | quote }}

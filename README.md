@@ -823,7 +823,19 @@ empty = the namespace folder itself), `valuesGlob` (default `*.yaml`; use
 `**/*.yaml` with Argo CD's new git-file globbing), `project`,
 `destinationServer`, `destinationName` (a registered cluster name, wins over
 `destinationServer`), `chartRepoURL`, `chartRevision` and `chartPath`
-have defaults in its `values.yaml`. The generated ApplicationSets carry
+have defaults in its `values.yaml`.
+
+Argo CD's ApplicationSet controller puts `resources-finalizer.argocd.argoproj.io`
+on every Application it generates and restores it if it is removed by hand, so
+deleting an Application or its ApplicationSet also deletes its workloads.
+`preserveResourcesOnDeletion: true` stops the controller adding the finalizer,
+so those deletes leave the workloads running. `applicationsSync` sets
+the ApplicationSet's `syncPolicy.applicationsSync`; `create-only` or
+`create-delete` stop the controller updating existing Applications, so a hand
+edit to one stays. This needs the controller's policy override enabled. Set
+either value in git, as a helm parameter in the values repo's
+`rootApplicationSet.yaml`: a hand edit to the ApplicationSet is reverted by
+self-heal. The generated ApplicationSets carry
 `ignoreDifferences` for the pod-security fields OpenShift admission mutates on
 the live object, so Applications do not flip OutOfSync every reconcile.
 
