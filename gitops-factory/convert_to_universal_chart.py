@@ -3737,8 +3737,8 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
                        owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
     ctx.values["chartLabels"] = False  # labels exactly as live — see CHART_OWNED_LABELS
-    # No nameOverride: ms-applicationSet sets `helm.releaseName` to the file
-    # name, so the chart's fullname is already the microservice's own name.
+    # No nameOverride: the Argo CD Application that deploys the release already
+    # names it, so the chart's fullname needs nothing from the values file.
     #
     # That release name derives every release-named resource — the workload,
     # its primary Service, its ServiceAccount — from the FILE name. When the

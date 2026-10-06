@@ -71,10 +71,6 @@ spec:
           targetRevision: {{ .Values.chartRevision | quote }}
           path: {{ .Values.chartPath | quote }}
           helm:
-            # The file name, not the Application name (which carries the
-            # namespace suffix) — so resources are named after the microservice
-            # without a nameOverride in every values file.
-            releaseName: '{{ printf "{{ .path.filename | trimSuffix \".yaml\" }}" }}'
             valueFiles:
               - '$Values/{{ $prefix }}base{{ printf "{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $folder }}'
               - '$Values/{{ $prefix }}{{ $folder }}/defaults.yaml'
