@@ -256,6 +256,52 @@ def test_ms_applicationset_autosync(flag, automated):
     assert ("automated" in doc["spec"]["template"]["spec"]["syncPolicy"]) is automated
 
 
+def test_name_suffix_renames_argo_objects_only():
+    appset = yaml.safe_load(conv.build_root_applicationset(
+        "root-pr-42", "https://c", "ms-applicationSet", "main", ".", "https://v", "main", name_suffix="-pr-42"))
+    tmpl = appset["spec"]["template"]
+    assert tmpl["metadata"]["name"] == '{{ .path.path | replace "/" "-" }}-pr-42'
+    params = {p["name"]: p["value"] for p in tmpl["spec"]["sources"][0]["helm"]["parameters"]}
+    assert params["nameSuffix"] == "pr-42"
+    assert params["namespace"] == "{{ index .path.segments 0 }}"
+    app = conv.build_cluster_shared_application("platform", "https://c", ".", "main", "https://v", "main",
+                                                name_suffix="pr-42")
+    assert app["metadata"]["name"] == "cluster-shared-resources-pr-42"
+    assert app["spec"]["destination"]["namespace"] == "platform"
+    # Argo CD names the Helm release after the Application: the copy pins the original's.
+    assert app["spec"]["sources"][0]["helm"]["releaseName"] == "cluster-shared-resources"
+    plain = yaml.safe_load(conv.build_root_applicationset(
+        "r", "https://c", "ms-applicationSet", "main", ".", "https://v", "main"))
+    assert not any(p["name"] == "nameSuffix" for p in plain["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"])
+    plain_app = conv.build_cluster_shared_application("platform", "https://c", ".", "main", "https://v", "main")
+    assert "releaseName" not in plain_app["spec"]["sources"][0]["helm"]
+
+
+@needs_helm
+@pytest.mark.parametrize("suffix", ["pr-42", "-pr-42"])
+def test_ms_applicationset_name_suffix(suffix):
+    r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"),
+                        "--set", "namespace=prd,folder=prd/yellow,originRepoURL=r,originBranch=m",
+                        "--set", f"nameSuffix={suffix}"],
+                       capture_output=True, text=True, check=True)
+    doc = yaml.safe_load(r.stdout)
+    tmpl = doc["spec"]["template"]
+    assert doc["metadata"]["name"] == "prd-yellow-pr-42"
+    assert tmpl["metadata"]["name"].endswith("}}-prd-yellow-pr-42")
+    assert tmpl["metadata"]["labels"]["name-suffix"] == "pr-42"
+    assert tmpl["spec"]["destination"]["namespace"] == "prd"
+    # The release keeps the unsuffixed Application name, so the copy renders the same objects.
+    assert tmpl["spec"]["sources"][0]["helm"]["releaseName"].endswith("}}-prd-yellow")
+
+
+@needs_helm
+def test_ms_applicationset_no_suffix_no_release_name():
+    r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"),
+                        "--set", "namespace=prd,originRepoURL=r,originBranch=m"],
+                       capture_output=True, text=True, check=True)
+    assert "releaseName" not in yaml.safe_load(r.stdout)["spec"]["template"]["spec"]["sources"][0]["helm"]
+
+
 # --- --include and exact `=name` patterns ------------------------------------
 
 def _deploy(name):
