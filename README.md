@@ -829,8 +829,19 @@ and to nothing else — same namespace, same Helm release name, so the same
 objects. That lets a second copy pointing at another `chartRevision` or
 `originBranch` sit next to the original in Argo CD: keep the copy on
 `autoSync: false` and its diff tree shows exactly what your change would do to
-the live objects (two auto-synced copies would fight over them). The generated
-ApplicationSets carry
+the live objects (two auto-synced copies would fight over them).
+
+Argo CD's ApplicationSet controller puts `resources-finalizer.argocd.argoproj.io`
+on every Application it generates and restores it if it is removed by hand, so
+deleting an Application or its ApplicationSet also deletes its workloads.
+`preserveResourcesOnDeletion: true` stops the controller adding the finalizer,
+so those deletes leave the workloads running. `applicationsSync` sets
+the ApplicationSet's `syncPolicy.applicationsSync`; `create-only` or
+`create-delete` stop the controller updating existing Applications, so a hand
+edit to one stays. This needs the controller's policy override enabled. Set
+either value in git, as a helm parameter in the values repo's
+`rootApplicationSet.yaml`: a hand edit to the ApplicationSet is reverted by
+self-heal. The generated ApplicationSets carry
 `ignoreDifferences` for the pod-security fields OpenShift admission mutates on
 the live object, so Applications do not flip OutOfSync every reconcile.
 
