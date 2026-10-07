@@ -104,7 +104,10 @@ def test_shared_that_differs_only_by_env_is_one_release(tmp_path, extra):
             assert own == {}
             assert data["ENV"] == "{{ .Values.environment }}"
             assert data["API_URL"] == "http://api.{{ .Release.Namespace }}.svc:8080"
-            assert load(out / ns / "defaults.yaml") == {"environment": env}
+            # api and web both carry part-of=shop, so it is said once per
+            # namespace (WORKLOAD_LABEL_KEYS), shared release or not.
+            part_of = {"app.kubernetes.io/part-of": "shop"}
+            assert load(out / ns / "defaults.yaml") == {"environment": env, "labels": part_of, "podLabels": part_of}
         else:  # only what differs, the rest in base/
             assert own == {"configMaps": {"shop-common": {"data": {
                 "ENV": env, "API_URL": f"http://api.{ns}.svc:8080"}}}}
