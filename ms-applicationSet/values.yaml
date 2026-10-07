@@ -30,7 +30,10 @@ autoSync: true
 # hand. With that finalizer, deleting an Application (or this ApplicationSet)
 # deletes every workload it deployed. true stops the controller adding it:
 # deleting the Application or the ApplicationSet leaves the workloads running.
-preserveResourcesOnDeletion: false
+# On by default: removing an Argo CD Application (or a whole namespace folder)
+# must never take the running workloads with it. Set false to have deletes
+# cascade to the workloads again.
+preserveResourcesOnDeletion: true
 
 # What the ApplicationSet controller may do to the Applications it generates
 # (spec.syncPolicy.applicationsSync). Empty = Argo CD's default ("sync": create,
