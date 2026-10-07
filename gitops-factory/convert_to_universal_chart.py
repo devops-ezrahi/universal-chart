@@ -1491,6 +1491,53 @@ def promote_shared_candidates(namespace: str, ms_docs: list[tuple[str, list[dict
     return out
 
 
+def align_shared_placement(loaded: dict, registries: dict[str, NamespaceRegistry]) -> None:
+    """Put an object in the shared release of every namespace once one has it there.
+
+    Where an object lands is decided per namespace: in shared.yaml (or promoted
+    there) where two microservices use it, inside the one microservice's file
+    where only one does. So common-config is shared in dev, where api and web
+    read it, and sits in prd's api.yaml, where web does not. The env copies
+    then never meet: base/shared.yaml keeps dev's concrete values and prd keeps
+    a separate copy in values/api.yaml, neither templated.
+
+    Every namespace whose microservice file declares an object (same kind, name
+    the same apart from env words) that another namespace's shared release
+    holds gets it moved into its own shared release too, the way a promotion
+    does: the shared release is built first, so the declarer drops its copy and
+    references the shared one. Copies that differ between two of this
+    namespace's microservices, and the kinds promotion never moves, stay where
+    they are. Updates `loaded` in place, notes included."""
+    shared_keys = {(d.get("kind"), _env_stem(str((d.get("metadata") or {}).get("name"))))
+                   for shared_docs, _, _ in loaded.values() for d in shared_docs or []}
+    for namespace, (shared_docs, ms_docs, ns_warnings) in loaded.items():
+        in_shared = {(d.get("kind"), (d.get("metadata") or {}).get("name")) for d in shared_docs or []}
+        declarers: dict[tuple[str, str], dict[str, dict]] = defaultdict(dict)
+        for ms_name, docs in ms_docs:
+            for d in docs:
+                kind, name = d.get("kind"), (d.get("metadata") or {}).get("name")
+                if kind not in NS_RAW_NAME_KINDS or kind in _NEVER_PROMOTE_KINDS or not name \
+                        or (kind, name) in in_shared or (kind == "Secret" and is_auto_sa_secret(d)):
+                    continue
+                if (kind, _env_stem(name)) in shared_keys:
+                    declarers[(kind, name)].setdefault(ms_name, d)
+        moved = []
+        for (kind, name), by_ms in sorted(declarers.items()):
+            if len({content_hash(d) for d in by_ms.values()}) != 1:
+                continue
+            moved.append(copy.deepcopy(next(iter(by_ms.values()))))
+            registries[namespace].promotions.append({
+                "namespace": namespace, "kind": kind, "from": name, "to": name,
+                "owner": "_shared", "promotion": True, "promoted_from": sorted(by_ms),
+            })
+            ns_warnings.append(
+                f"{kind}/{name}: another namespace's shared release holds it — moved out of "
+                f"{sorted(by_ms)} into this namespace's shared release too, so the env copies "
+                f"share base/shared.yaml; each declarer now references the shared copy")
+        if moved:
+            loaded[namespace] = ((shared_docs or []) + moved, ms_docs, ns_warnings)
+
+
 class ClusterRegistry:
     """Dedupes cluster-scoped kinds globally, across every namespace in the run."""
 
@@ -6206,19 +6253,28 @@ def main() -> None:
                       for docs in [shared_docs or []] + [docs for _, docs in ms_docs]
                       for d in docs if d.get("kind") == "PersistentVolume"}
 
-    for namespace, ns_dir in namespace_dirs:
+    # What each namespace's shared release holds is settled for EVERY namespace
+    # before anything is built: promotion first, then align_shared_placement,
+    # which needs all of them to see an object one namespace shares and another
+    # keeps inside a microservice.
+    registries: dict[str, NamespaceRegistry] = {}
+    for namespace, _ in namespace_dirs:
         shared_docs, ms_docs, ns_warnings = loaded[namespace]
-        ns_registry = NamespaceRegistry(namespace)
-
+        ns_registry = registries[namespace] = NamespaceRegistry(namespace)
         promoted = promote_shared_candidates(namespace, ms_docs, shared_docs or [], ns_registry)
         if ns_registry.promotions:
             # Re-scrub: a promoted copy is held to --exclude like anything in shared.yaml.
-            shared_docs = [d for d in promoted if not is_excluded(d)]
+            loaded[namespace] = ([d for d in promoted if not is_excluded(d)], ms_docs, ns_warnings)
             for p in ns_registry.promotions:
                 ns_warnings.append(
                     f"{p['kind']}/{p['from']}: byte-identical in {p['promoted_from']} — promoted to "
                     f"the namespace-shared release under its original name; each declarer now "
                     f"references the shared copy")
+    align_shared_placement(loaded, registries)
+
+    for namespace, ns_dir in namespace_dirs:
+        shared_docs, ms_docs, ns_warnings = loaded[namespace]
+        ns_registry = registries[namespace]
 
         if shared_docs is not None:
             shared_ctx = build_microservice(

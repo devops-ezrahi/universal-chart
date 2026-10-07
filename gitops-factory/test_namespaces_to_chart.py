@@ -109,3 +109,47 @@ def test_shared_that_differs_only_by_env_is_one_release(tmp_path, extra):
             assert own == {"configMaps": {"shop-common": {"data": {
                 "ENV": env, "API_URL": f"http://api.{ns}.svc:8080"}}}}
             assert data == {"ENV": env, "API_URL": f"http://api.{ns}.svc:8080", "LOG": "info"}
+
+
+def _split_placement(envs):
+    """common-config is read by api and web in dev, so it is shared there; in the
+    other namespaces web does not read it and it sits inside api's own file."""
+    docs = []
+    for env in envs:
+        ns = f"myapp-{env}"
+        for name, cms in (("api", ["common-config"]), ("web", ["common-config"] if env == "dev" else [])):
+            docs.append({
+                "apiVersion": "apps/v1", "kind": "Deployment",
+                "metadata": {"name": name, "namespace": ns, "labels": {"app": name}},
+                "spec": {"selector": {"matchLabels": {"app": name}}, "template": {
+                    "metadata": {"labels": {"app": name}},
+                    "spec": {"containers": [{"name": name, "image": f"registry.example.com/{name}:1.0",
+                                             "envFrom": [{"configMapRef": {"name": c}} for c in cms]}]}}}})
+        docs.append({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "common-config", "namespace": ns},
+                     "data": {"KAFKA": f"kafka.{ns}.svc:9092", "LOG": "info"}})
+    return yaml.safe_dump_all(docs)
+
+
+def test_object_shared_in_one_namespace_is_shared_in_all(tmp_path):
+    """An object one namespace shares and another keeps inside a microservice
+    file goes into the shared release everywhere, so its env copies become ONE
+    templated base/shared.yaml entry. It used to stay split: dev's concrete
+    values in base/shared.yaml, prd's own hard-coded copy in values/api.yaml."""
+    envs = ["dev", "tst", "prd"]
+    src = tmp_path / "in.yaml"
+    src.write_text(_split_placement(envs), encoding="utf-8")
+    out = tmp_path / "out"
+    r = subprocess.run([sys.executable, str(HERE / "namespaces_to_chart.py"), "--from-yaml", str(src),
+                        "-o", str(out), "--chart", str(HERE.parent), "--env-suffixes", ",".join(envs),
+                        "--verify-fidelity", "--fidelity-strict"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
+    load = lambda p: yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    assert load(out / "base" / "shared.yaml")["configMaps"] == {"common-config": {"data": {
+        "KAFKA": "kafka.{{ .Release.Namespace }}.svc:9092", "LOG": "info"}}}
+    for env in envs:
+        values = out / f"myapp-{env}" / "values"
+        assert sorted(p.name for p in values.iterdir()) == ["api.yaml", "shared.yaml", "web.yaml"]
+        assert load(values / "shared.yaml") == {}
+        assert "configMaps" not in load(values / "api.yaml")
+    assert "configMaps" not in load(out / "base" / "api.yaml")
