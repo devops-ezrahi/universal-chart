@@ -2820,6 +2820,87 @@ def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict
     return stay, notes
 
 
+def unify_shared_placement(loaded: dict) -> None:
+    """One object, one placement, in every namespace it appears in.
+
+    `shared` is decided per namespace — the importer files an object there when
+    two of that namespace's workloads use it, and promote_shared_candidates
+    lifts what two microservice files declare identically. So the same
+    ConfigMap is in `shared` in the namespace where a second workload happens
+    to mount it, and in its microservice's file in the next. The base/ merge
+    then sees two unrelated objects: nothing about it is common, and it is
+    written out per namespace.
+
+    The rule: an object (kind + name, env words aside — _env_stem) stays in
+    `shared` only where it is shared in EVERY namespace that has it. Mixed, it
+    goes to the microservice that owns it elsewhere (the most common owner) in
+    each namespace where it was shared:
+
+      * from shared.yaml, it moves into that microservice's file;
+      * as a would-be promotion (several files declaring it identically), the
+        owner keeps its copy and the others drop theirs and reference it by
+        name — what they would have done with the shared copy.
+
+    A namespace with no such microservice, or whose duplicates differ, keeps
+    the old placement and says why. Kinds are promotion's own (raw-named,
+    no Service/Route: a Service carries its release's selector). Mutates
+    `loaded` (namespace -> (shared_docs, ms_docs, warnings)) in place."""
+    kinds = set(NS_RAW_NAME_KINDS) - _NEVER_PROMOTE_KINDS
+    ident = lambda d: (d.get("kind"), _env_stem(str((d.get("metadata") or {}).get("name") or "")))
+    eligible = lambda d: (d.get("kind") in kinds and (d.get("metadata") or {}).get("name")
+                          and not (d.get("kind") == "Secret" and is_auto_sa_secret(d)))
+
+    # Where each object sits, per namespace: "shared", or the one microservice.
+    placement: dict[tuple, dict[str, str]] = defaultdict(dict)
+    for ns, (shared_docs, ms_docs, _) in loaded.items():
+        declarers: dict[tuple, set[str]] = defaultdict(set)
+        for ms, docs in ms_docs:
+            for d in docs:
+                if eligible(d):
+                    declarers[ident(d)].add(ms)
+        for k, who in declarers.items():
+            placement[k][ns] = "shared" if len(who) > 1 else next(iter(who))
+        for d in shared_docs or []:
+            if eligible(d):
+                placement[ident(d)][ns] = "shared"
+
+    for k, by_ns in sorted(placement.items()):
+        owners = Counter(v for v in by_ns.values() if v != "shared")
+        if not owners or "shared" not in by_ns.values():
+            continue  # one placement everywhere already
+        owner = sorted(owners.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+        label = f"{k[0]}/{k[1]}"
+        for ns, where in sorted(by_ns.items()):
+            if where != "shared":
+                continue
+            shared_docs, ms_docs, warns = loaded[ns]
+            target = next((docs for ms, docs in ms_docs if ms == owner), None)
+            if target is None:
+                warns.append(f"{label}: in '{owner}' in other namespaces, but there is no '{owner}' here — "
+                             f"left in the shared release")
+                continue
+            moving = [d for d in shared_docs or [] if eligible(d) and ident(d) == k]
+            if moving:
+                loaded[ns] = ([d for d in shared_docs if not any(d is m for m in moving)] or None, ms_docs, warns)
+                target.extend(m for m in moving if ident(m) not in {ident(x) for x in target if eligible(x)})
+                warns.append(f"{label}: in '{owner}' in other namespaces — moved out of the shared release "
+                             f"into '{owner}' here too, so base/ sees one object")
+                continue
+            copies = [(ms, d) for ms, docs in ms_docs for d in docs if eligible(d) and ident(d) == k]
+            if owner not in {ms for ms, _ in copies}:
+                warns.append(f"{label}: in '{owner}' in other namespaces, but '{owner}' does not declare it "
+                             f"here — left to the shared release")
+                continue
+            if len({content_hash(d) for _, d in copies}) != 1:
+                continue  # differing copies are two objects: the registry's rename path
+            for ms, docs in ms_docs:
+                if ms != owner:
+                    docs[:] = [d for d in docs if not (eligible(d) and ident(d) == k)]
+            warns.append(f"{label}: in '{owner}' in other namespaces — kept in '{owner}' here too "
+                         f"(not promoted to shared); {', '.join(sorted(ms for ms, _ in copies if ms != owner))} "
+                         f"reference it by name")
+
+
 def is_included(docs: list[dict]) -> bool:
     """--include: whether a microservice FILE is selected. Without the flag,
     every file is. shared.yaml is never filtered by it — what several
@@ -6174,6 +6255,10 @@ def main() -> None:
                 ms_docs[i] = (normalized[i], docs)
         ms_meta[namespace] = list(zip(stems, folders))
         loaded[namespace] = (shared_docs, ms_docs, ns_warnings)
+
+    # Same object, same place in every namespace: shared only where it is
+    # shared everywhere, otherwise in its microservice everywhere.
+    unify_shared_placement(loaded)
 
     known_pv_names = {(d.get("metadata") or {}).get("name")
                       for shared_docs, ms_docs, _ in loaded.values()
