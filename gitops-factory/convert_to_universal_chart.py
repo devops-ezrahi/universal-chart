@@ -1450,7 +1450,8 @@ _NEVER_PROMOTE_KINDS = frozenset({"Service", "Route"})
 
 
 def promote_shared_candidates(namespace: str, ms_docs: list[tuple[str, list[dict]]],
-                              shared_docs: list[dict], ns_registry: NamespaceRegistry) -> list[dict]:
+                              shared_docs: list[dict], ns_registry: NamespaceRegistry,
+                              owners: Optional[list[str]] = None) -> list[dict]:
     """Lift objects several microservices declare IDENTICALLY into the shared release.
 
     Sound because a namespace-scoped name is unique within a namespace: byte-
@@ -1470,14 +1471,16 @@ def promote_shared_candidates(namespace: str, ms_docs: list[tuple[str, list[dict
     """
     in_shared = {(d.get("kind"), (d.get("metadata") or {}).get("name")) for d in shared_docs}
     declarers: dict[tuple[str, str], dict[str, dict]] = defaultdict(dict)
-    for ms_name, docs in ms_docs:
+    # By owner, not release name: variant files ms1-black and ms1-yellow are both
+    # release 'ms1', and each copy must take part in the identical-content test.
+    for (ms_name, docs), owner in zip(ms_docs, owners or [n for n, _ in ms_docs]):
         for d in docs:
             kind, name = d.get("kind"), (d.get("metadata") or {}).get("name")
             if kind not in NS_RAW_NAME_KINDS or kind in _NEVER_PROMOTE_KINDS or not name:
                 continue
             if (kind, name) in in_shared or (kind == "Secret" and is_auto_sa_secret(d)):
                 continue
-            declarers[(kind, name)].setdefault(ms_name, d)
+            declarers[(kind, name)].setdefault(owner, d)
 
     out = list(shared_docs)
     for (kind, name), by_ms in sorted(declarers.items()):
@@ -1491,51 +1494,141 @@ def promote_shared_candidates(namespace: str, ms_docs: list[tuple[str, list[dict
     return out
 
 
-def align_shared_placement(loaded: dict, registries: dict[str, NamespaceRegistry]) -> None:
-    """Put an object in the shared release of every namespace once one has it there.
+# Kinds alignment leaves where they are, on top of _NEVER_PROMOTE_KINDS: a
+# moved ServiceAccount stops being its microservice's own (chart-managed) one
+# and becomes an extraDeploy copy in shared, which keeps the OpenShift
+# dockercfg references the primary path strips.
+_NEVER_ALIGN_KINDS = _NEVER_PROMOTE_KINDS | {"ServiceAccount"}
 
-    Where an object lands is decided per namespace: in shared.yaml (or promoted
-    there) where two microservices use it, inside the one microservice's file
-    where only one does. So common-config is shared in dev, where api and web
-    read it, and sits in prd's api.yaml, where web does not. The env copies
-    then never meet: base/shared.yaml keeps dev's concrete values and prd keeps
-    a separate copy in values/api.yaml, neither templated.
 
-    Every namespace whose microservice file declares an object (same kind, name
-    the same apart from env words) that another namespace's shared release
-    holds gets it moved into its own shared release too, the way a promotion
-    does: the shared release is built first, so the declarer drops its copy and
-    references the shared one. Copies that differ between two of this
-    namespace's microservices, and the kinds promotion never moves, stay where
-    they are. Updates `loaded` in place, notes included."""
-    shared_keys = {(d.get("kind"), _env_stem(str((d.get("metadata") or {}).get("name"))))
-                   for shared_docs, _, _ in loaded.values() for d in shared_docs or []}
-    for namespace, (shared_docs, ms_docs, ns_warnings) in loaded.items():
-        in_shared = {(d.get("kind"), (d.get("metadata") or {}).get("name")) for d in shared_docs or []}
-        declarers: dict[tuple[str, str], dict[str, dict]] = defaultdict(dict)
-        for ms_name, docs in ms_docs:
+def _pods_checksummed(docs: list[dict]) -> bool:
+    """Whether a pod template in docs carries checksum/* annotations. The chart
+    then hashes the release's OWN ConfigMaps/Secrets (checksums.enabled), so one
+    moved into another release would stop restarting these pods."""
+    for d in docs:
+        spec = d.get("spec") or {}
+        if d.get("kind") == "CronJob":
+            spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+        annotations = ((spec.get("template") or {}).get("metadata") or {}).get("annotations") or {}
+        if any(str(k).startswith("checksum/") for k in annotations):
+            return True
+    return False
+
+
+def _names_pointed_at(doc: dict) -> set[tuple[str, str]]:
+    """_object_refs plus a RoleBinding's ServiceAccount subjects."""
+    refs = set(_object_refs(doc))
+    if doc.get("kind") in ("RoleBinding", "ClusterRoleBinding"):
+        refs |= {("ServiceAccount", s["name"]) for s in doc.get("subjects") or []
+                 if s.get("kind") == "ServiceAccount" and s.get("name")}
+    return refs
+
+
+def align_shared_placement(loaded: dict, registries: dict[str, NamespaceRegistry],
+                           owners: dict[str, list[str]], homed: dict[str, list[dict]]) -> None:
+    """Put an object in the shared release of each of an app's namespaces once
+    one of them has it there.
+
+    Where an object lands is decided per namespace: in the shared release where
+    two microservices use it (shared.yaml, or promoted from their identical
+    copies), inside the one microservice's file where only one does. So
+    common-config is shared in myapp-dev, where api and web read it, and sits
+    in myapp-prd's api.yaml, where web does not. The env copies then never
+    meet: base/shared.yaml keeps dev's concrete values and prd keeps a separate
+    copy in values/api.yaml, neither templated.
+
+    Only namespaces that are env copies of each other count (env_copies), and a
+    name matches when it is equal apart from the words the two namespace names
+    differ by (common-config-dev / common-config-prd). The object moves the way
+    a promotion does: the shared release is built first, so each declarer
+    drops its copy and references the shared one. It stays where it is when it
+    is a ServiceAccount, Service or Route, when two of this namespace's files
+    hold different copies, when its declarer's pods hash their own ConfigMaps/
+    Secrets (checksum/ annotations), or when it points at something else in its
+    file that does not move with it (a renamed store, a subject). An object
+    --include took from this namespace's shared.yaml into its one user
+    (place_shared_by_use) simply stays shared. Updates `loaded` in place,
+    notes included; `owners` is each microservice's owner label, in ms_docs
+    order (the file stem for a variant file)."""
+    shared_names = {ns: {(d.get("kind"), (d.get("metadata") or {}).get("name"))
+                         for d in shared_docs or [] if (d.get("metadata") or {}).get("name")}
+                    for ns, (shared_docs, _, _) in loaded.items()}
+    for target, (shared_docs, ms_docs, ns_warnings) in list(loaded.items()):
+        sources = [s for s in loaded if shared_names[s] and env_copies(target, s)]
+        if not sources:
+            continue
+
+        def held_by(kind: str, name: str) -> Optional[str]:
+            for s in sources:
+                words = set(k8s_ns(target).split("-")) ^ set(k8s_ns(s).split("-"))
+                stem = (lambda n: strip_name_tokens(n, words) if words else n)
+                if any(k == kind and stem(n) == stem(name) for k, n in shared_names[s]):
+                    return s
+            return None
+
+        mine = set(shared_names[target])
+        restored = []
+        for h in homed.get(target, []):
+            kind, name = h["doc"].get("kind"), (h["doc"].get("metadata") or {}).get("name")
+            src = held_by(kind, name)
+            if src is None:
+                continue
+            del h["docs"][next(i for i, x in enumerate(h["docs"]) if x is h["doc"])]
+            restored.append(h["doc"])
+            mine.add((kind, name))
+            ns_warnings.remove(h["note"])
+            ns_warnings.append(f"shared {kind}/{name}: only '{h['stem']}' uses it here, but {src}'s "
+                               f"shared release holds it too — kept shared")
+
+        declarers: dict[tuple[str, str], dict[str, tuple]] = defaultdict(dict)
+        for (_, docs), owner in zip(ms_docs, owners[target]):
             for d in docs:
                 kind, name = d.get("kind"), (d.get("metadata") or {}).get("name")
-                if kind not in NS_RAW_NAME_KINDS or kind in _NEVER_PROMOTE_KINDS or not name \
-                        or (kind, name) in in_shared or (kind == "Secret" and is_auto_sa_secret(d)):
+                if kind not in NS_RAW_NAME_KINDS or kind in _NEVER_ALIGN_KINDS or not name \
+                        or (kind, name) in mine or (kind == "Secret" and is_auto_sa_secret(d)):
                     continue
-                if (kind, _env_stem(name)) in shared_keys:
-                    declarers[(kind, name)].setdefault(ms_name, d)
-        moved = []
-        for (kind, name), by_ms in sorted(declarers.items()):
-            if len({content_hash(d) for d in by_ms.values()}) != 1:
+                src = held_by(kind, name)
+                if src is not None:
+                    declarers[(kind, name)].setdefault(owner, (d, docs, src))
+        candidates = {}
+        for (kind, name), by_owner in declarers.items():
+            if len({content_hash(d) for d, _, _ in by_owner.values()}) != 1:
                 continue
-            moved.append(copy.deepcopy(next(iter(by_ms.values()))))
-            registries[namespace].promotions.append({
-                "namespace": namespace, "kind": kind, "from": name, "to": name,
-                "owner": "_shared", "promotion": True, "promoted_from": sorted(by_ms),
+            if kind in ("ConfigMap", "Secret") and any(_pods_checksummed(docs) for _, docs, _ in by_owner.values()):
+                ns_warnings.append(
+                    f"{kind}/{name}: kept in {sorted(by_owner)} although another namespace shares it — "
+                    f"its pods carry checksum/ annotations, and the chart only hashes a release's own "
+                    f"ConfigMaps/Secrets")
+                continue
+            candidates[(kind, name)] = by_owner
+        # The shared release resolves names without the declarer's collision
+        # renames, so a moved object must take along what it points at in its file.
+        changed = True
+        while changed:
+            changed = False
+            for (kind, name), by_owner in list(candidates.items()):
+                stuck = sorted(r for d, docs, _ in by_owner.values() for r in _names_pointed_at(d)
+                               if r not in candidates and r not in mine
+                               and r in {(x.get("kind"), (x.get("metadata") or {}).get("name")) for x in docs})
+                if stuck:
+                    del candidates[(kind, name)]
+                    changed = True
+                    ns_warnings.append(
+                        f"{kind}/{name}: kept in {sorted(by_owner)} although another namespace shares "
+                        f"it — it points at {stuck[0][0]}/{stuck[0][1]} in the same file, which stays there")
+        moved = []
+        for (kind, name), by_owner in sorted(candidates.items()):
+            d, _, src = next(iter(by_owner.values()))
+            moved.append(copy.deepcopy(d))
+            registries[target].promotions.append({
+                "namespace": target, "kind": kind, "from": name, "to": name, "owner": "_shared",
+                "promotion": True, "promoted_from": sorted(by_owner), "aligned_with": src,
             })
             ns_warnings.append(
-                f"{kind}/{name}: another namespace's shared release holds it — moved out of "
-                f"{sorted(by_ms)} into this namespace's shared release too, so the env copies "
-                f"share base/shared.yaml; each declarer now references the shared copy")
-        if moved:
-            loaded[namespace] = ((shared_docs or []) + moved, ms_docs, ns_warnings)
+                f"{kind}/{name}: {src}'s shared release holds it — moved out of {sorted(by_owner)} into "
+                f"this namespace's shared release too; each declarer now references the shared copy")
+        if restored or moved:
+            loaded[target] = ((shared_docs or []) + restored + moved, ms_docs, ns_warnings)
 
 
 class ClusterRegistry:
@@ -2768,7 +2861,9 @@ def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict
     claims/ServiceAccount; a Service selecting its pods; an Ingress or Route
     to that Service; a RoleBinding for its ServiceAccount, and the Role it
     binds; an HPA/PDB on it; an ExternalSecret writing a Secret it reads, and
-    that store's own SA/CA. Returns report lines."""
+    that store's own SA/CA. Returns (what stays shared, report lines, and for
+    each object moved into its one user {stem, doc, docs, note}, so
+    align_shared_placement can put it back when another namespace shares it)."""
     owners = [(stem, docs) for stem, docs in kept] + [(None, docs) for docs in skipped]
 
     def pod_specs(docs):
@@ -2845,7 +2940,7 @@ def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict
                 changed = True
 
     n_kept = len(kept)
-    stay, notes = [], []
+    stay, notes, homed = [], [], []
     for d in shared_docs:
         k = key(d)
         live = sorted(i for i in used[k] if i < n_kept)
@@ -2854,9 +2949,11 @@ def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict
             stay.append(d)
         elif len(live) == 1:
             stem, docs = kept[live[0]]
+            note = f"shared {label}: only '{stem}' still uses it — moved into that microservice"
             if k not in {key(x) for x in docs}:
                 docs.append(d)
-            notes.append(f"shared {label}: only '{stem}' still uses it — moved into that microservice")
+                homed.append({"stem": stem, "doc": d, "docs": docs, "note": note})
+            notes.append(note)
         elif used[k]:
             notes.append(f"shared {label}: used only by microservices left out of this run — dropped")
         elif (INCLUDE_PATTERNS and matches_patterns(d, INCLUDE_PATTERNS)) or \
@@ -2864,7 +2961,7 @@ def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict
             stay.append(d)
         else:
             notes.append(f"shared {label}: used by no microservice and not named by --include — dropped")
-    return stay, notes
+    return stay, notes, homed
 
 
 def is_included(docs: list[dict]) -> bool:
@@ -4094,6 +4191,22 @@ def _env_stem(name: str) -> str:
     return strip_name_tokens(name, tokens) if tokens else name
 
 
+def env_copies(a: str, b: str) -> bool:
+    """Whether two namespace folders are environments of one app: shop-dev and
+    shop-prd (equal once env words are stripped), shop-int and shop-prd (equal
+    but for the last '-' word, whatever it is), platform-ops and
+    platform-ops-prd (one more word), or dev and prd (env words alone). Two
+    folders of one Kubernetes namespace are never env copies of each other."""
+    a, b = k8s_ns(a), k8s_ns(b)
+    if a == b:
+        return False
+    tokens = KNOWN_ENV_SUFFIXES | NAME_TOKENS
+    if _env_stem(a) == _env_stem(b) or (a in tokens and b in tokens):
+        return True
+    (pa, _, _), (pb, _, _) = a.rpartition("-"), b.rpartition("-")
+    return bool(pa) and pa == pb or pa == b or pb == a
+
+
 def group_shared_releases(shared: dict[str, "MicroserviceContext"],
                           objects: dict[str, set[tuple[str, str]]]) -> list[list[str]]:
     """Which namespaces' `shared` releases are one release, in first-seen order.
@@ -4104,25 +4217,28 @@ def group_shared_releases(shared: dict[str, "MicroserviceContext"],
     one release — one base/shared.yaml, the differences in each
     values/shared.yaml — the way a microservice running in every namespace is.
 
-    A namespace joins the first group it has an object in common with (env
-    words aside), or whose content is identical — unless that group already
-    has a namespace ending in the same '-<token>', since the two would get one
-    Application name (shared-dev) for two deployments. Otherwise (another
-    app's namespaces in the same run) it starts a group of its own."""
-    groups: list[tuple[list[str], set, set[str]]] = []  # (members, object keys, app suffixes)
+    A namespace joins the first group that holds an env copy of it (env_copies)
+    with an object in common (env words aside), or whose content is identical
+    — unless that group already has a namespace ending in the same '-<token>',
+    since the two would get one Application name (shared-dev) for two
+    deployments. Otherwise (another app's namespaces in the same run, even one
+    with a same-named ConfigMap) it starts a group of its own."""
+    groups: list[tuple[list[str], set, set[str], set[str]]] = []  # members, object keys, content hashes, suffixes
     for ns, ctx in shared.items():
         keys = {(kind, _env_stem(str(name))) for kind, name in objects.get(ns, set())}
-        keys.add(("#content", content_hash(ctx.values)))
+        content = content_hash(ctx.values)
         suffix = app_name_suffix(ns)
-        for members, group_keys, suffixes in groups:
-            if keys & group_keys and suffix not in suffixes:
+        for members, group_keys, contents, suffixes in groups:
+            if suffix not in suffixes and (content in contents or keys & group_keys
+                                           and any(env_copies(ns, m) for m in members)):
                 members.append(ns)
                 group_keys |= keys
+                contents.add(content)
                 suffixes.add(suffix)
                 break
         else:
-            groups.append(([ns], keys, {suffix}))
-    return [members for members, _, _ in groups]
+            groups.append(([ns], keys, {content}, {suffix}))
+    return [members for members, _, _, _ in groups]
 
 
 def shared_group_slug(members: list[str], taken: set[str]) -> str:
@@ -5414,6 +5530,18 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
 
     base_dir = output_dir / BASE_DIR_NAME
 
+    # Objects the converter itself moved into a shared release (promotion and
+    # align_shared_placement, recorded in renames.json): a declarer's reference
+    # to one resolving to 'shared' is the intent, even where the chart renders
+    # the object a little differently from that declarer's raw copy.
+    promoted: set[tuple[str, str, str]] = set()
+    try:
+        for r in json.loads((output_dir / "report" / "renames.json").read_text(encoding="utf-8")):
+            if r.get("promotion"):
+                promoted.add((k8s_ns(r["namespace"]), r["kind"], r["from"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+
     # The single global cluster-shared release owns every cluster-scoped kind
     # in the whole run, so it is rendered once and matched against by every
     # namespace (see the dedupe note in this section's header comment).
@@ -5750,7 +5878,8 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
                 declarations = raw_index.get((ref_kind, ref_name), [])
                 own_raw = next(d for stem, d in declarations if stem == release)
                 if _identity_free_hash(own_raw) == _identity_free_hash(_strip_helm_labels(target[1])) \
-                        or any(stem == shared_raw_stem for stem, _ in declarations):
+                        or any(stem == shared_raw_stem for stem, _ in declarations) \
+                        or (namespace, ref_kind, ref_name) in promoted:
                     stats["relocated"] += 1
                     report.append(
                         f"  INFO   {kind}/{name} (release '{release}') references "
@@ -6166,6 +6295,7 @@ def main() -> None:
     # in a different file or a different namespace.
     loaded: dict[str, tuple[Optional[list[dict]], list[tuple[str, list[dict]]], list[str]]] = {}
     ms_meta: dict[str, list[tuple[str, str]]] = {}  # namespace -> [(file stem, variant folder)]
+    homed: dict[str, list[dict]] = {}  # namespace -> what place_shared_by_use moved into a microservice
 
     # Before any name is normalized: which file names a token must not touch,
     # because no other file would share the name it leaves (token_exempt_stems).
@@ -6226,7 +6356,7 @@ def main() -> None:
         # A selection decides what `shared` is for: what two or more of the
         # microservices being converted use. One user takes it home; none drops it.
         if (INCLUDE_PATTERNS or EXCLUDE_PATTERNS) and shared_docs:
-            shared_docs, notes = place_shared_by_use(shared_docs, ms_docs, skipped_docs)
+            shared_docs, notes, homed[namespace] = place_shared_by_use(shared_docs, ms_docs, skipped_docs)
             ns_warnings.extend(notes)
             shared_docs = shared_docs or None
         # The variant folder each file lands in: one level per folder group
@@ -6258,10 +6388,15 @@ def main() -> None:
     # which needs all of them to see an object one namespace shares and another
     # keeps inside a microservice.
     registries: dict[str, NamespaceRegistry] = {}
+    # The owner label each microservice is built with: ms1-yellow and ms1-black
+    # are both release 'ms1' but two owners.
+    owners = {ns: [stem if folder else ms_name for (ms_name, _), (stem, folder) in zip(loaded[ns][1], meta)]
+              for ns, meta in ms_meta.items()}
     for namespace, _ in namespace_dirs:
         shared_docs, ms_docs, ns_warnings = loaded[namespace]
         ns_registry = registries[namespace] = NamespaceRegistry(namespace)
-        promoted = promote_shared_candidates(namespace, ms_docs, shared_docs or [], ns_registry)
+        promoted = promote_shared_candidates(namespace, ms_docs, shared_docs or [], ns_registry,
+                                             owners[namespace])
         if ns_registry.promotions:
             # Re-scrub: a promoted copy is held to --exclude like anything in shared.yaml.
             loaded[namespace] = ([d for d in promoted if not is_excluded(d)], ms_docs, ns_warnings)
@@ -6270,7 +6405,7 @@ def main() -> None:
                     f"{p['kind']}/{p['from']}: byte-identical in {p['promoted_from']} — promoted to "
                     f"the namespace-shared release under its original name; each declarer now "
                     f"references the shared copy")
-    align_shared_placement(loaded, registries)
+    align_shared_placement(loaded, registries, owners, homed)
 
     for namespace, ns_dir in namespace_dirs:
         shared_docs, ms_docs, ns_warnings = loaded[namespace]
