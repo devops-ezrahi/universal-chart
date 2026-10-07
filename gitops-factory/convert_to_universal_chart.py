@@ -622,7 +622,9 @@ CLUSTER_SHARED_DIR_NAME = "cluster-shared"
 # build_cluster_shared_application for why it cannot take the uniform chain.
 #
 # <namespace>/defaults.yaml holds the folder's group values plus the labels
-# (DEFAULTS_KEYS) byte-identical across EVERY
+# byte-identical across the releases they render on: workload/pod labels
+# (WORKLOAD_LABEL_KEYS) across every microservice with a Deployment,
+# StatefulSet or DaemonSet; commonLabels (DEFAULTS_KEYS) across EVERY
 # release in that namespace, the shared release included — same "each layer
 # only has what's different" idea as examples/gitops/STRUCTURE.md's
 # _base/defaults.yaml, just computed automatically instead of hand-written.
@@ -639,7 +641,16 @@ BASE_DIR_NAME = "base"
 VALUES_DIR_NAME = "values"
 DEFAULTS_FILE_NAME = "defaults.yaml"
 # The only computed keys a defaults.yaml carries — see Pass 3 in main().
-DEFAULTS_KEYS = ("commonLabels", "podLabels")
+# commonLabels lands on every object of every release, so it is computed over
+# every release there, the shared one included.
+DEFAULTS_KEYS = ("commonLabels",)
+# The workload's own labels and its pods'. The chart renders these on a
+# Deployment/StatefulSet/DaemonSet only, so a release without one (`shared`, a
+# CronJob-only release) is not touched by them and does not get a say: a label
+# every microservice with a workload carries goes to defaults.yaml even when
+# the namespace's shared release has no labels at all.
+WORKLOAD_LABEL_KEYS = ("labels", "podLabels")
+LABELLED_WORKLOAD_TYPES = frozenset({"deployment", "statefulset", "daemonset"})
 # The two files at the tree root that are the ENTIRE ArgoCD wiring. Applying
 # ROOT_APP_FILE_NAME by hand once deploys ROOT_APPSET_FILE_NAME, which deploys
 # one ms-applicationSet release per namespace directory, which fans out over
@@ -1845,7 +1856,13 @@ def set_order(v: dict, key: str, order_key: str) -> None:
     only variables defined earlier in the list. The maps here are built in raw
     order (dicts keep insertion order), so their keys ARE the raw order.
     A single entry has no order to keep, so nothing is written for it.
+
+    The cosmetic ones (COSMETIC_ORDER_KEYS — only the restart cares) are
+    written under --exact-copy alone; envFrom/initContainer order is meaning
+    and always kept.
     """
+    if order_key in COSMETIC_ORDER_KEYS and not EXACT_COPY:
+        return
     m = v.get(key)
     if isinstance(m, dict) and len(m) > 1:
         v[order_key] = list(m)
@@ -1900,8 +1917,7 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
         # the literal values go to the minimal override: the chart merges
         # both files into one map, and `$(VAR)` only expands a variable
         # defined earlier in the list.
-        if len(full_env) > 1:
-            v["envOrder"] = list(full_env)
+        put_env_order(v, full_env)
     if c.get("envFrom"):
         v["envFrom"] = remap_envfrom(envfrom_list_to_map(c["envFrom"]), ctx)
         set_order(v, "envFrom", "envFromOrder")
@@ -1912,10 +1928,11 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
             v[probe] = c[probe]
     if c.get("lifecycle"):
         v["lifecycle"] = c["lifecycle"]
-    # `in`, not truthiness: an explicit empty `securityContext: {}` is stored by
-    # the API server as given, and dropping it changes the pod template, which
-    # restarts the pods on the first sync after migrating.
-    if isinstance(c.get("securityContext"), dict):
+    # Under --exact-copy, `in` rather than truthiness: an explicit empty
+    # `securityContext: {}` is stored by the API server as given, and dropping
+    # it changes the pod template, which restarts the pods on the first sync
+    # after migrating. Otherwise an empty one says nothing and is left out.
+    if c.get("securityContext") or (EXACT_COPY and isinstance(c.get("securityContext"), dict)):
         v["securityContext"] = c["securityContext"]
     if c.get("volumeMounts"):
         v["volumeMounts"] = named_list_to_map(c["volumeMounts"])
@@ -2609,6 +2626,35 @@ VALUES_REPO_PLACEHOLDER = "<values-repo-url>"
 # ones that differ reach values/. --env-in-values restores the old split, where
 # every literal env var was written into every namespace's values/ file.
 ENV_IN_VALUES = False
+# --exact-copy: render every migrated pod template byte-for-byte as it is live,
+# so the cutover sync restarts no pods. That costs readability — list-order
+# keys nobody wrote (portOrder, envOrder, volumeMountOrder, ...) and an empty
+# `securityContext: {}` kept only because the API server stored it — so it is
+# for workloads that cannot take a restart. Off, the values say what the app
+# needs and the first sync rolls the pods once. Orders that carry MEANING are
+# kept either way: initContainerOrder (run order), envFromOrder (the later ref
+# wins a shared key) and envOrder when a value reads another var via $(VAR).
+EXACT_COPY = False
+# Order keys whose only job is the byte-identical pod template above.
+COSMETIC_ORDER_KEYS = frozenset({"portOrder", "volumeMountOrder", "volumeOrder", "sidecarOrder"})
+_ENV_REF = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)")
+
+
+def env_order_matters(full_env: dict) -> bool:
+    """Whether a value reads another var of this list via $(VAR) — Kubernetes
+    expands only vars defined EARLIER, so then the order is meaning."""
+    names = set(full_env)
+    for entry in full_env.values():
+        val = entry.get("value") if isinstance(entry, dict) else None
+        if isinstance(val, str) and any(ref in names for ref in _ENV_REF.findall(val)):
+            return True
+    return False
+
+
+def put_env_order(holder: dict, full_env: dict) -> None:
+    """envOrder: always under --exact-copy, otherwise only when it is meaning."""
+    if len(full_env) > 1 and (EXACT_COPY or env_order_matters(full_env)):
+        holder["envOrder"] = list(full_env)
 
 
 def split_env(full_env: dict) -> dict:
@@ -2818,6 +2864,87 @@ def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict
         else:
             notes.append(f"shared {label}: used by no microservice and not named by --include — dropped")
     return stay, notes
+
+
+def unify_shared_placement(loaded: dict) -> None:
+    """One object, one placement, in every namespace it appears in.
+
+    `shared` is decided per namespace — the importer files an object there when
+    two of that namespace's workloads use it, and promote_shared_candidates
+    lifts what two microservice files declare identically. So the same
+    ConfigMap is in `shared` in the namespace where a second workload happens
+    to mount it, and in its microservice's file in the next. The base/ merge
+    then sees two unrelated objects: nothing about it is common, and it is
+    written out per namespace.
+
+    The rule: an object (kind + name, env words aside — _env_stem) stays in
+    `shared` only where it is shared in EVERY namespace that has it. Mixed, it
+    goes to the microservice that owns it elsewhere (the most common owner) in
+    each namespace where it was shared:
+
+      * from shared.yaml, it moves into that microservice's file;
+      * as a would-be promotion (several files declaring it identically), the
+        owner keeps its copy and the others drop theirs and reference it by
+        name — what they would have done with the shared copy.
+
+    A namespace with no such microservice, or whose duplicates differ, keeps
+    the old placement and says why. Kinds are promotion's own (raw-named,
+    no Service/Route: a Service carries its release's selector). Mutates
+    `loaded` (namespace -> (shared_docs, ms_docs, warnings)) in place."""
+    kinds = set(NS_RAW_NAME_KINDS) - _NEVER_PROMOTE_KINDS
+    ident = lambda d: (d.get("kind"), _env_stem(str((d.get("metadata") or {}).get("name") or "")))
+    eligible = lambda d: (d.get("kind") in kinds and (d.get("metadata") or {}).get("name")
+                          and not (d.get("kind") == "Secret" and is_auto_sa_secret(d)))
+
+    # Where each object sits, per namespace: "shared", or the one microservice.
+    placement: dict[tuple, dict[str, str]] = defaultdict(dict)
+    for ns, (shared_docs, ms_docs, _) in loaded.items():
+        declarers: dict[tuple, set[str]] = defaultdict(set)
+        for ms, docs in ms_docs:
+            for d in docs:
+                if eligible(d):
+                    declarers[ident(d)].add(ms)
+        for k, who in declarers.items():
+            placement[k][ns] = "shared" if len(who) > 1 else next(iter(who))
+        for d in shared_docs or []:
+            if eligible(d):
+                placement[ident(d)][ns] = "shared"
+
+    for k, by_ns in sorted(placement.items()):
+        owners = Counter(v for v in by_ns.values() if v != "shared")
+        if not owners or "shared" not in by_ns.values():
+            continue  # one placement everywhere already
+        owner = sorted(owners.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+        label = f"{k[0]}/{k[1]}"
+        for ns, where in sorted(by_ns.items()):
+            if where != "shared":
+                continue
+            shared_docs, ms_docs, warns = loaded[ns]
+            target = next((docs for ms, docs in ms_docs if ms == owner), None)
+            if target is None:
+                warns.append(f"{label}: in '{owner}' in other namespaces, but there is no '{owner}' here — "
+                             f"left in the shared release")
+                continue
+            moving = [d for d in shared_docs or [] if eligible(d) and ident(d) == k]
+            if moving:
+                loaded[ns] = ([d for d in shared_docs if not any(d is m for m in moving)] or None, ms_docs, warns)
+                target.extend(m for m in moving if ident(m) not in {ident(x) for x in target if eligible(x)})
+                warns.append(f"{label}: in '{owner}' in other namespaces — moved out of the shared release "
+                             f"into '{owner}' here too, so base/ sees one object")
+                continue
+            copies = [(ms, d) for ms, docs in ms_docs for d in docs if eligible(d) and ident(d) == k]
+            if owner not in {ms for ms, _ in copies}:
+                warns.append(f"{label}: in '{owner}' in other namespaces, but '{owner}' does not declare it "
+                             f"here — left to the shared release")
+                continue
+            if len({content_hash(d) for _, d in copies}) != 1:
+                continue  # differing copies are two objects: the registry's rename path
+            for ms, docs in ms_docs:
+                if ms != owner:
+                    docs[:] = [d for d in docs if not (eligible(d) and ident(d) == k)]
+            warns.append(f"{label}: in '{owner}' in other namespaces — kept in '{owner}' here too "
+                         f"(not promoted to shared); {', '.join(sorted(ms for ms, _ in copies if ms != owner))} "
+                         f"reference it by name")
 
 
 def is_included(docs: list[dict]) -> bool:
@@ -3386,7 +3513,8 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # not merely an override.
     if pod_tpl_spec.get("securityContext"):
         job_template["podSecurityContext"] = pod_tpl_spec["securityContext"]
-    if isinstance(main.get("securityContext"), dict):  # keeps an explicit {}
+    # An explicit {} only under --exact-copy — see handle_main_container.
+    if main.get("securityContext") or (EXACT_COPY and isinstance(main.get("securityContext"), dict)):
         job_template["securityContext"] = main["securityContext"]
     carry_job_pod_fields(pod_tpl_spec, main, job_template)
     # `parallelism` and `completions` join the list rather than being captured
@@ -3434,8 +3562,7 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             job_template["env"] = split_env(full_env)
         if ENV_IN_VALUES:
             ctx.sub_full_env[("cronjobs", sub_name)] = full_env
-        if len(full_env) > 1:
-            job_template["envOrder"] = list(full_env)
+        put_env_order(job_template, full_env)
     if main.get("envFrom"):
         job_template["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
         set_order(job_template, "envFrom", "envFromOrder")
@@ -3502,7 +3629,8 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # See the matching comment in handle_cronjob.
     if pod_spec.get("securityContext"):
         entry["podSecurityContext"] = pod_spec["securityContext"]
-    if isinstance(main.get("securityContext"), dict):  # keeps an explicit {}
+    # An explicit {} only under --exact-copy — see handle_main_container.
+    if main.get("securityContext") or (EXACT_COPY and isinstance(main.get("securityContext"), dict)):
         entry["securityContext"] = main["securityContext"]
     carry_job_pod_fields(pod_spec, main, entry)
     # Same list as handle_cronjob, and kept in step with it deliberately: a Job
@@ -3536,8 +3664,7 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             entry["env"] = split_env(full_env)
         if ENV_IN_VALUES:
             ctx.sub_full_env[("jobs", sub_name)] = full_env
-        if len(full_env) > 1:
-            entry["envOrder"] = list(full_env)
+        put_env_order(entry, full_env)
     if main.get("envFrom"):
         entry["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
         set_order(entry, "envFrom", "envFromOrder")
@@ -4295,8 +4422,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               values_path: str = "", argocd_namespace: str = "argocd",
                               project: str = "default",
                               destination_server: str = "https://kubernetes.default.svc",
-                              destination_name: str = "", auto_sync: bool = False,
-                              name_suffix: str = "") -> str:
+                              destination_name: str = "", auto_sync: bool = False) -> str:
     """One Application per namespace folder in this tree, as YAML text.
 
     Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
@@ -4314,7 +4440,6 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     its folder.
     """
     q = _yaml_scalar
-    name_suffix = name_suffix.lstrip("-")
     segments = [p for p in values_path.split("/") if p]
     rel = ".path.path" + (f' | trimPrefix "{"/".join(segments)}/"' if segments else "")
     params = [
@@ -4331,8 +4456,6 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         # The microservice Applications the chart renders: manual sync unless
         # --auto-sync true. Always written — the chart's own default is true.
         ("autoSync", q("true" if auto_sync else "false")),
-        # Only ever appended to Argo CD object names (see --name-suffix).
-        *([("nameSuffix", q(name_suffix))] if name_suffix else []),
     ]
     lines = [
         "apiVersion: argoproj.io/v1alpha1",
@@ -4359,7 +4482,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         "      labels:",
         "        app: *name",
         "        managed-by: universal-chart-converter",
-        "      name: " + q(_suffixed('{{ %s | replace "/" "-" }}' % rel, name_suffix)),
+        "      name: " + q('{{ %s | replace "/" "-" }}' % rel),
         "    spec:",
         f"      project: &project {q(project)}",
         "      sources:",
@@ -4382,12 +4505,6 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     return "\n".join(lines) + "\n"
 
 
-def _suffixed(name: str, suffix: str) -> str:
-    """name + '-suffix' (--name-suffix), a leading '-' on the suffix tolerated."""
-    suffix = suffix.lstrip("-")
-    return f"{name}-{suffix}" if suffix else name
-
-
 def _destination(server: str, name: str, namespace: str) -> dict:
     """ArgoCD destination: a registered cluster NAME (--argocd-cluster) wins over the URL."""
     return {"name": name, "namespace": namespace} if name else {"server": server, "namespace": namespace}
@@ -4397,8 +4514,7 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
                                      values_repo_url: str, values_revision: str, values_path: str = "",
                                      argocd_namespace: str = "argocd", project: str = "default",
                                      destination_server: str = "https://kubernetes.default.svc",
-                                     destination_name: str = "", auto_sync: bool = False,
-                                     name_suffix: str = "") -> dict:
+                                     destination_name: str = "", auto_sync: bool = False) -> dict:
     """The one release that is NOT part of the per-namespace fan-out.
 
     It gets its own Application, sitting at the tree root next to the root
@@ -4414,7 +4530,7 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
     return {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "Application",
-        "metadata": {"name": _suffixed("cluster-shared-resources", name_suffix), "namespace": argocd_namespace},
+        "metadata": {"name": "cluster-shared-resources", "namespace": argocd_namespace},
         "spec": {
             "project": project,
             "sources": [
@@ -4422,15 +4538,9 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
                     "repoURL": chart_repo_url,
                     "targetRevision": chart_revision,
                     "path": chart_path,
-                    "helm": {
-                        # Argo CD names the release after the Application; a
-                        # --name-suffix copy pins the unsuffixed name so it
-                        # renders the same objects.
-                        **({"releaseName": "cluster-shared-resources"} if name_suffix.lstrip("-") else {}),
-                        "valueFiles": [
-                            _values_ref(values_path, f"{CLUSTER_SHARED_DIR_NAME}/{VALUES_DIR_NAME}/cluster-shared-values.yaml"),
-                        ],
-                    },
+                    "helm": {"valueFiles": [
+                        _values_ref(values_path, f"{CLUSTER_SHARED_DIR_NAME}/{VALUES_DIR_NAME}/cluster-shared-values.yaml")
+                    ]},
                 },
                 {"repoURL": values_repo_url, "targetRevision": values_revision, "ref": "values"},
             ],
@@ -5942,15 +6052,6 @@ def main() -> None:
                           "deployed to the same cluster different names so they don't collide.")
     ap.add_argument("--root-set-name", default="",
                      help="name of the root ApplicationSet (default: '<--root-app-name>-set').")
-    ap.add_argument("--name-suffix", default="", metavar="SUFFIX",
-                     help="append '-SUFFIX' to every Argo CD object name this run produces — the root "
-                          "Application and ApplicationSet, each namespace's Application and "
-                          "ApplicationSet, every microservice Application (ms1-dev -> ms1-dev-SUFFIX) "
-                          "and cluster-shared-resources — and to nothing else: namespaces and helm "
-                          "release names, so every rendered object, stay the same. Deploys a second "
-                          "copy (another --values-revision / --chart-revision) next to the original; "
-                          "with --auto-sync false (the default) Argo CD's diff of the copy shows "
-                          "what it would change on the live objects.")
     # Kept so existing command lines still parse: the wiring it used to opt into
     # (rootApplication.yaml.txt, rootApplicationSet.yaml and, under
     # --cluster-scoped, cluster-shared/ + cluster-shared-application.yaml) is
@@ -6007,6 +6108,13 @@ def main() -> None:
                           "file, as before. Default false: a literal env var is treated like any "
                           "other value — in base/ when it is the same in every namespace, in "
                           "values/ only where it differs.")
+    ap.add_argument("--exact-copy", nargs="?", const=True, default=False, type=_bool_arg,
+                     help="render every migrated pod template byte-for-byte as it runs now, so the "
+                          "cutover sync restarts no pods: writes portOrder/envOrder/volumeMountOrder/"
+                          "volumeOrder/sidecarOrder and keeps an empty securityContext: {}. For apps "
+                          "that cannot take a restart. Default false: cleaner values, and the first "
+                          "sync rolls the pods once. Orders that change behaviour (init containers, "
+                          "envFrom, env read via $(VAR)) are kept either way.")
     ap.add_argument("--interactive", action="store_true",
                      help="with --env-group, ask before each combination (needs a terminal).")
     ap.add_argument("--no-interactive", action="store_false", dest="interactive",
@@ -6045,10 +6153,11 @@ def main() -> None:
 
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
         INCLUDE_PATTERNS
-    global ENV_IN_VALUES
+    global ENV_IN_VALUES, EXACT_COPY
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
     ENV_IN_VALUES = args.env_in_values
+    EXACT_COPY = args.exact_copy
     EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
         for opt in (args.exclude, args.keep, args.include))
@@ -6200,6 +6309,10 @@ def main() -> None:
                 ms_docs[i] = (normalized[i], docs)
         ms_meta[namespace] = list(zip(stems, folders))
         loaded[namespace] = (shared_docs, ms_docs, ns_warnings)
+
+    # Same object, same place in every namespace: shared only where it is
+    # shared everywhere, otherwise in its microservice everywhere.
+    unify_shared_placement(loaded)
 
     known_pv_names = {(d.get("metadata") or {}).get("name")
                       for shared_docs, ms_docs, _ in loaded.values()
@@ -6442,13 +6555,34 @@ def main() -> None:
         # defaults file editors read as "set once for the namespace" when it wasn't.
         common = common_subtree(defaults_pool)
         namespace_defaults = {k: common[k] for k in DEFAULTS_KEYS if k in common}
+        labelled = [ctx.values for _, ctx in ms_contexts
+                    if (ctx.values.get("workload") or {}).get("type") in LABELLED_WORKLOAD_TYPES]
+        if labelled:
+            same = common_subtree([{k: v[k] for k in WORKLOAD_LABEL_KEYS if isinstance(v.get(k), dict)}
+                                   for v in labelled])
+            namespace_defaults.update({k: same[k] for k in WORKLOAD_LABEL_KEYS if same.get(k)})
+            # Said once, here, rather than again in every values/ file: what a
+            # namespace file restates of these is dropped (defaults sit right
+            # under it, so the rendered labels are the same). base/ is left
+            # alone — it is shared with namespaces whose defaults may not say so.
+            for key, extra in minimal_extras.items():
+                if key[0] != namespace:
+                    continue
+                for k in WORKLOAD_LABEL_KEYS:
+                    own, dflt = extra.get(k), namespace_defaults.get(k)
+                    if isinstance(own, dict) and isinstance(dflt, dict):
+                        rest = {lk: lv for lk, lv in own.items() if dflt.get(lk) != lv}
+                        if rest:
+                            extra[k] = rest
+                        else:
+                            extra.pop(k)
         namespace_defaults.update(folder_values(namespace, env_groups))
 
         out_ns_dir.mkdir(parents=True, exist_ok=True)
         header_ns_defaults = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
-            f"# Namespace defaults for '{namespace}': labels identical across every\n"
-            "# release in THIS folder, the shared release included, plus the group\n"
+            f"# Namespace defaults for '{namespace}': the labels every microservice in\n"
+            "# THIS folder carries (on its workload and its pods), plus the group\n"
             "# values (--env-group / --env-suffixes) the folder stands for. Applied\n"
             "# over base/<release>.yaml, beneath this folder's values/<release>.yaml.\n"
             "# Re-run the converter to regenerate after the source manifests change.\n\n"
@@ -6528,7 +6662,7 @@ def main() -> None:
             args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
-            auto_sync=args.auto_sync, name_suffix=args.name_suffix)
+            auto_sync=args.auto_sync)
         # At the tree ROOT, next to the root ApplicationSet: that is where the
         # root Application looks for it by name, and cluster-shared/ itself is
         # excluded from the root ApplicationSet's directory generator because
@@ -6569,17 +6703,13 @@ def main() -> None:
     # The whole ArgoCD wiring, written once everything it deploys exists on
     # disk: one ApplicationSet that discovers the namespace directories, and one
     # Application that deploys it. Only with --argocd-manifests.
-    if ARGOCD_MANIFESTS and args.name_suffix and args.auto_sync:
-        print(f"WARNING: --name-suffix with --auto-sync true: if the unsuffixed copy is deployed too, both "
-              f"sync the SAME objects (same namespaces and release names) and will keep overwriting "
-              f"each other. Leave the suffixed copy on manual sync.", file=sys.stderr)
     if ARGOCD_MANIFESTS:
         root_appset = build_root_applicationset(
-            _suffixed(args.root_set_name or f"{args.root_app_name}-set", args.name_suffix), args.chart_repo_url, args.appset_chart_path, args.chart_revision,
+            args.root_set_name or f"{args.root_app_name}-set", args.chart_repo_url, args.appset_chart_path, args.chart_revision,
             args.chart_path, args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
-            auto_sync=args.auto_sync, name_suffix=args.name_suffix)
+            auto_sync=args.auto_sync)
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"
@@ -6590,7 +6720,7 @@ def main() -> None:
         )
         (output_dir / ROOT_APPSET_FILE_NAME).write_text(appset_header + root_appset, encoding="utf-8")
 
-        root_app = build_root_application(_suffixed(args.root_app_name, args.name_suffix), args.values_repo_url, args.values_revision,
+        root_app = build_root_application(args.root_app_name, args.values_repo_url, args.values_revision,
                                            args.values_path, argocd_namespace=args.argocd_namespace,
                                            project=args.argocd_project)
         root_header = (
