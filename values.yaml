@@ -119,7 +119,9 @@ ports: {}
 # by map key. Keys not listed follow in sorted order. Kubernetes stores these as
 # lists, so a different order is a pod-template change (= pods restart); for
 # env it is also semantic ($(VAR) expands only earlier vars). The converter
-# writes each one in the raw manifest's order.
+# writes them in the raw manifest's order under --exact-copy (no restart at
+# cutover); otherwise only initContainerOrder, envFromOrder, and envOrder when
+# a value reads another var.
 portOrder: []
 envOrder: []
 envFromOrder: []

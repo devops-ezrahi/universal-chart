@@ -1845,7 +1845,13 @@ def set_order(v: dict, key: str, order_key: str) -> None:
     only variables defined earlier in the list. The maps here are built in raw
     order (dicts keep insertion order), so their keys ARE the raw order.
     A single entry has no order to keep, so nothing is written for it.
+
+    The cosmetic ones (COSMETIC_ORDER_KEYS — only the restart cares) are
+    written under --exact-copy alone; envFrom/initContainer order is meaning
+    and always kept.
     """
+    if order_key in COSMETIC_ORDER_KEYS and not EXACT_COPY:
+        return
     m = v.get(key)
     if isinstance(m, dict) and len(m) > 1:
         v[order_key] = list(m)
@@ -1900,8 +1906,7 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
         # the literal values go to the minimal override: the chart merges
         # both files into one map, and `$(VAR)` only expands a variable
         # defined earlier in the list.
-        if len(full_env) > 1:
-            v["envOrder"] = list(full_env)
+        put_env_order(v, full_env)
     if c.get("envFrom"):
         v["envFrom"] = remap_envfrom(envfrom_list_to_map(c["envFrom"]), ctx)
         set_order(v, "envFrom", "envFromOrder")
@@ -1912,10 +1917,11 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
             v[probe] = c[probe]
     if c.get("lifecycle"):
         v["lifecycle"] = c["lifecycle"]
-    # `in`, not truthiness: an explicit empty `securityContext: {}` is stored by
-    # the API server as given, and dropping it changes the pod template, which
-    # restarts the pods on the first sync after migrating.
-    if isinstance(c.get("securityContext"), dict):
+    # Under --exact-copy, `in` rather than truthiness: an explicit empty
+    # `securityContext: {}` is stored by the API server as given, and dropping
+    # it changes the pod template, which restarts the pods on the first sync
+    # after migrating. Otherwise an empty one says nothing and is left out.
+    if c.get("securityContext") or (EXACT_COPY and isinstance(c.get("securityContext"), dict)):
         v["securityContext"] = c["securityContext"]
     if c.get("volumeMounts"):
         v["volumeMounts"] = named_list_to_map(c["volumeMounts"])
@@ -2609,6 +2615,35 @@ VALUES_REPO_PLACEHOLDER = "<values-repo-url>"
 # ones that differ reach values/. --env-in-values restores the old split, where
 # every literal env var was written into every namespace's values/ file.
 ENV_IN_VALUES = False
+# --exact-copy: render every migrated pod template byte-for-byte as it is live,
+# so the cutover sync restarts no pods. That costs readability — list-order
+# keys nobody wrote (portOrder, envOrder, volumeMountOrder, ...) and an empty
+# `securityContext: {}` kept only because the API server stored it — so it is
+# for workloads that cannot take a restart. Off, the values say what the app
+# needs and the first sync rolls the pods once. Orders that carry MEANING are
+# kept either way: initContainerOrder (run order), envFromOrder (the later ref
+# wins a shared key) and envOrder when a value reads another var via $(VAR).
+EXACT_COPY = False
+# Order keys whose only job is the byte-identical pod template above.
+COSMETIC_ORDER_KEYS = frozenset({"portOrder", "volumeMountOrder", "volumeOrder", "sidecarOrder"})
+_ENV_REF = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)")
+
+
+def env_order_matters(full_env: dict) -> bool:
+    """Whether a value reads another var of this list via $(VAR) — Kubernetes
+    expands only vars defined EARLIER, so then the order is meaning."""
+    names = set(full_env)
+    for entry in full_env.values():
+        val = entry.get("value") if isinstance(entry, dict) else None
+        if isinstance(val, str) and any(ref in names for ref in _ENV_REF.findall(val)):
+            return True
+    return False
+
+
+def put_env_order(holder: dict, full_env: dict) -> None:
+    """envOrder: always under --exact-copy, otherwise only when it is meaning."""
+    if len(full_env) > 1 and (EXACT_COPY or env_order_matters(full_env)):
+        holder["envOrder"] = list(full_env)
 
 
 def split_env(full_env: dict) -> dict:
@@ -3467,7 +3502,8 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # not merely an override.
     if pod_tpl_spec.get("securityContext"):
         job_template["podSecurityContext"] = pod_tpl_spec["securityContext"]
-    if isinstance(main.get("securityContext"), dict):  # keeps an explicit {}
+    # An explicit {} only under --exact-copy — see handle_main_container.
+    if main.get("securityContext") or (EXACT_COPY and isinstance(main.get("securityContext"), dict)):
         job_template["securityContext"] = main["securityContext"]
     carry_job_pod_fields(pod_tpl_spec, main, job_template)
     # `parallelism` and `completions` join the list rather than being captured
@@ -3515,8 +3551,7 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             job_template["env"] = split_env(full_env)
         if ENV_IN_VALUES:
             ctx.sub_full_env[("cronjobs", sub_name)] = full_env
-        if len(full_env) > 1:
-            job_template["envOrder"] = list(full_env)
+        put_env_order(job_template, full_env)
     if main.get("envFrom"):
         job_template["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
         set_order(job_template, "envFrom", "envFromOrder")
@@ -3583,7 +3618,8 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # See the matching comment in handle_cronjob.
     if pod_spec.get("securityContext"):
         entry["podSecurityContext"] = pod_spec["securityContext"]
-    if isinstance(main.get("securityContext"), dict):  # keeps an explicit {}
+    # An explicit {} only under --exact-copy — see handle_main_container.
+    if main.get("securityContext") or (EXACT_COPY and isinstance(main.get("securityContext"), dict)):
         entry["securityContext"] = main["securityContext"]
     carry_job_pod_fields(pod_spec, main, entry)
     # Same list as handle_cronjob, and kept in step with it deliberately: a Job
@@ -3617,8 +3653,7 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             entry["env"] = split_env(full_env)
         if ENV_IN_VALUES:
             ctx.sub_full_env[("jobs", sub_name)] = full_env
-        if len(full_env) > 1:
-            entry["envOrder"] = list(full_env)
+        put_env_order(entry, full_env)
     if main.get("envFrom"):
         entry["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
         set_order(entry, "envFrom", "envFromOrder")
@@ -6062,6 +6097,13 @@ def main() -> None:
                           "file, as before. Default false: a literal env var is treated like any "
                           "other value — in base/ when it is the same in every namespace, in "
                           "values/ only where it differs.")
+    ap.add_argument("--exact-copy", nargs="?", const=True, default=False, type=_bool_arg,
+                     help="render every migrated pod template byte-for-byte as it runs now, so the "
+                          "cutover sync restarts no pods: writes portOrder/envOrder/volumeMountOrder/"
+                          "volumeOrder/sidecarOrder and keeps an empty securityContext: {}. For apps "
+                          "that cannot take a restart. Default false: cleaner values, and the first "
+                          "sync rolls the pods once. Orders that change behaviour (init containers, "
+                          "envFrom, env read via $(VAR)) are kept either way.")
     ap.add_argument("--interactive", action="store_true",
                      help="with --env-group, ask before each combination (needs a terminal).")
     ap.add_argument("--no-interactive", action="store_false", dest="interactive",
@@ -6100,10 +6142,11 @@ def main() -> None:
 
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
         INCLUDE_PATTERNS
-    global ENV_IN_VALUES
+    global ENV_IN_VALUES, EXACT_COPY
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
     ENV_IN_VALUES = args.env_in_values
+    EXACT_COPY = args.exact_copy
     EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
         for opt in (args.exclude, args.keep, args.include))
