@@ -1,45 +1,33 @@
-# One-shot: v2.0.0 was cut by a `feat!:` that should have been a minor.
-# Deletes the v2.0.0 release and tag and re-cuts the same content as v1.2.0,
-# with its pack. Removed again right after it has run.
+# One-shot: tidy the v1.2.0 notes re-cut from v2.0.0. Removed right after.
 name: Retract v2.0.0 as v1.2.0
 
 on:
   workflow_dispatch:
 
 jobs:
-  retract:
+  notes:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/checkout@v4
-        with:
-          repository: devops-ezrahi/whitening-packer
-          path: .packer
-
-      - name: Delete v2.0.0, keeping its notes
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release view v2.0.0 --json body --jq .body > notes.md || : > notes.md
-          sed -i -e 's/2\.0\.0/1.2.0/g' -e 's/⚠ BREAKING CHANGES/Behaviour changes/' notes.md
-          gh release delete v2.0.0 --cleanup-tag --yes || git push origin :refs/tags/v2.0.0 || true
-
-      - id: pack
-        env:
-          WHITENING_DEPARTMENT: ultra
-          WHITENING_TEAM: MA
-          WHITENING_REPOSITORY: universal-chart
-        run: echo "pack=$(python3 .packer/pack.py . --no-images --no-deps)" >> "$GITHUB_OUTPUT"
-
-      - name: Release v1.2.0
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PACK: ${{ steps.pack.outputs.pack }}
-        run: |
-          grep -q '^version: 1.2.0$' Chart.yaml
-          gh release create v1.2.0 --target "$GITHUB_SHA" --title v1.2.0 --notes-file notes.md "$PACK"
+          gh release view v1.2.0 --json body --jq .body > notes.md
+          python3 - notes.md <<'PY'
+          import re, sys
+          p = sys.argv[1]
+          s = open(p, encoding="utf-8").read()
+          s = s.replace("* feat(converter)!: --exact-copy for restart-free cutover, clean by default",
+                        "* **converter:** --exact-copy for restart-free cutover, clean by default")
+          # The stray line sits above Bug Fixes; move it under Features.
+          m = re.search(r"\n\n(\* \*\*converter:\*\* --exact-copy[^\n]*)\n", s)
+          line = m.group(1)
+          s = s.replace(m.group(0), "\n", 1)
+          s = s.replace("### Features\n\n", "### Features\n\n" + line + "\n", 1)
+          s = re.sub(r"\n+### BREAKING CHANGES.*", "\n\n### Note\n\n* A new conversion restarts pods at cutover unless `--exact-copy` is passed. The chart's templates and values keys are unchanged.\n", s, flags=re.S)
+          open(p, "w", encoding="utf-8").write(s)
+          PY
+          cat notes.md
+          gh release edit v1.2.0 --notes-file notes.md
