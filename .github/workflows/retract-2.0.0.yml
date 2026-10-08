@@ -1,0 +1,45 @@
+# One-shot: v2.0.0 was cut by a `feat!:` that should have been a minor.
+# Deletes the v2.0.0 release and tag and re-cuts the same content as v1.2.0,
+# with its pack. Removed again right after it has run.
+name: Retract v2.0.0 as v1.2.0
+
+on:
+  workflow_dispatch:
+
+jobs:
+  retract:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v4
+        with:
+          repository: devops-ezrahi/whitening-packer
+          path: .packer
+
+      - name: Delete v2.0.0, keeping its notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v2.0.0 --json body --jq .body > notes.md || : > notes.md
+          sed -i -e 's/2\.0\.0/1.2.0/g' -e 's/⚠ BREAKING CHANGES/Behaviour changes/' notes.md
+          gh release delete v2.0.0 --cleanup-tag --yes || git push origin :refs/tags/v2.0.0 || true
+
+      - id: pack
+        env:
+          WHITENING_DEPARTMENT: ultra
+          WHITENING_TEAM: MA
+          WHITENING_REPOSITORY: universal-chart
+        run: echo "pack=$(python3 .packer/pack.py . --no-images --no-deps)" >> "$GITHUB_OUTPUT"
+
+      - name: Release v1.2.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACK: ${{ steps.pack.outputs.pack }}
+        run: |
+          grep -q '^version: 1.2.0$' Chart.yaml
+          gh release create v1.2.0 --target "$GITHUB_SHA" --title v1.2.0 --notes-file notes.md "$PACK"
