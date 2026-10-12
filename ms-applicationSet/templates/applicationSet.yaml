@@ -43,15 +43,21 @@ metadata:
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
-  {{- $preserve := eq (toString .Values.preserveResourcesOnDeletion) "true" }}
-  {{- if or $preserve .Values.applicationsSync }}
+  {{- /* Built as a dict and written only when it holds something: a bare
+         `syncPolicy:` key is null, and the ApplicationSet CRD rejects
+         spec.syncPolicy null outright ("must be of type object"), which fails
+         the whole sync. toString/lower: an Argo CD helm parameter arrives as
+         a string ("true", "True"). */}}
+  {{- $appsetSync := dict }}
+  {{- if eq (lower (toString .Values.preserveResourcesOnDeletion)) "true" }}
+  {{- $_ := set $appsetSync "preserveResourcesOnDeletion" true }}
+  {{- end }}
+  {{- with trim (toString (.Values.applicationsSync | default "")) }}
+  {{- $_ := set $appsetSync "applicationsSync" . }}
+  {{- end }}
+  {{- with $appsetSync }}
   syncPolicy:
-    {{- if $preserve }}
-    preserveResourcesOnDeletion: true
-    {{- end }}
-    {{- with .Values.applicationsSync }}
-    applicationsSync: {{ . | quote }}
-    {{- end }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   generators:
     - git:
