@@ -1490,9 +1490,9 @@ function fleetHTML(){
 /* ---------- output ---------- */
 function hl(l){
   if(/^\s*#/.test(l))return '<span class="c-cm">'+e(l)+'</span>';
-  const m=l.match(/^(\s*(?:- )?)([A-Za-z0-9_.\/-]+)(:)(.*)$/);
+  const m=l.match(/^(\s*(?:- )?)([A-Za-z0-9_.\/-]+)(:)(\s.*)?$/);
   if(!m)return e(l);
-  return e(m[1])+'<span class="c-k">'+e(m[2])+'</span>:'+hlv(m[4]);
+  return e(m[1])+'<span class="c-k">'+e(m[2])+'</span>:'+hlv(m[4]||'');
 }
 function hlv(s){
   if(!s.trim())return e(s);
