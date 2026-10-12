@@ -55,3 +55,34 @@ test('nothing set anywhere deploys nothing and blocks', () => {
   expect(Object.keys(files).sort()).toEqual(['deploy.sh', 'values.yaml']);
   expect(window.checks().some(c => c.l === 'bad' && /No namespace has anything set/.test(c.t))).toBe(true);
 });
+
+test('extra YAML with its own image block gets no second image key', () => {
+  const files = fleet({
+    tag: '1.0.0',
+    ns: [{ name: 'dev', extra: 'image:\n  tag: 3.0.0' }, { name: 'qa', extra: 'image:\n  pullPolicy: Always' }],
+    rows: [],
+  });
+  for (const f of ['values-dev.yaml', 'values-qa.yaml'])
+    expect(files[f].match(/^image:/gm)).toHaveLength(1);
+  expect(files['values-dev.yaml']).toMatch(/tag: 3\.0\.0/);
+  const warn = window.checks().find(c => /qa.*without a <code>tag<\/code>/.test(c.t));
+  expect(warn && warn.l).toBe('warn');
+  expect(window.checks().some(c => /dev.*without a <code>tag/.test(c.t))).toBe(false);
+});
+
+test('a key set by both a matrix row and the extra YAML blocks', () => {
+  fleet({
+    tag: '1.0.0',
+    ns: [{ name: 'dev', extra: 'resources:\n  limits:\n    cpu: 1' }],
+    rows: [{ path: 'resources.requests.cpu', vals: { dev: '100m' } }],
+  });
+  expect(window.checks().some(c => c.l === 'bad' && /values-dev\.yaml<\/code> would have <code>resources<\/code> twice/.test(c.t))).toBe(true);
+});
+
+test('a numeric-looking tag stays a string', () => {
+  const files = fleet({ tag: '8', ns: [{ name: 'a' }, { name: 'b' }],
+                        rows: [{ path: 'image.tag', vals: { a: '7' } }, { path: 'replicaCount', vals: { b: '2' } }] });
+  expect(files['values-a.yaml']).toMatch(/tag: ["']7["']/);
+  expect(files['values-b.yaml']).toMatch(/tag: ["']8["']/);
+  expect(files['values-b.yaml']).toMatch(/replicaCount: 2$/m);
+});

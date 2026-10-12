@@ -498,3 +498,56 @@ def test_label_patterns_need_the_exact_label():
     assert not conv.matches_patterns(doc, ["team=billing"])
     assert conv.matches_patterns(doc, ["team=billing-ops"])
     assert not conv.matches_patterns(doc, ["owner=billing-ops"])
+
+
+# --- NetworkPolicy ----------------------------------------------------------
+
+def _np(name, pod_selector, **spec):
+    return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+            "metadata": {"name": name}, "spec": {"podSelector": pod_selector, **spec}}
+
+
+def _dep(name):
+    labels = {"app": name}
+    return {"kind": "Deployment", "metadata": {"name": name},
+            "spec": {"selector": {"matchLabels": labels},
+                     "template": {"metadata": {"labels": labels}, "spec": {"containers": [{"name": name}]}}}}
+
+
+def test_networkpolicy_is_converted_not_dropped():
+    sm = {"kind": "ServiceMonitor", "metadata": {"name": "sm"}}
+    np = _np("np", {})
+    warnings = []
+    assert conv.filter_transient([sm, np], warnings) == [np]
+    assert len(warnings) == 1 and warnings[0].startswith("ServiceMonitor/sm: dropped")
+
+
+def test_networkpolicy_values_entry():
+    c = conv.MicroserviceContext(namespace="ns", name="app")
+    doc = _np("allow-web", {"matchLabels": {"app": "api"}}, policyTypes=["Ingress"],
+              ingress=[{"from": [{"podSelector": {}}]}])
+    doc["metadata"].update(labels={"team": "a"}, annotations={"note": "x"})
+    conv.handle_networkpolicy(doc, c, "allow-web")
+    assert c.values["networkPolicies"] == {"allow-web": {
+        "podSelector": {"matchLabels": {"app": "api"}}, "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{"podSelector": {}}]}], "labels": {"team": "a"}, "annotations": {"note": "x"}}}
+
+
+def test_networkpolicy_empty_pod_selector_is_left_out():
+    # The template renders {} for a missing one; written out, an empty map
+    # never reaches base/ and is copied into every namespace's values file.
+    c = conv.MicroserviceContext(namespace="ns", name="app")
+    conv.handle_networkpolicy(_np("deny-all", {}, policyTypes=["Ingress"]), c, "deny-all")
+    assert c.values["networkPolicies"] == {"deny-all": {"policyTypes": ["Ingress"]}}
+
+
+def test_include_keeps_a_namespace_wide_networkpolicy():
+    # Selecting every pod, it is used by every microservice: with only one
+    # converted it moves into that one instead of being dropped as unused.
+    shared = [_np("deny-all", {}), _np("only-web", {"matchLabels": {"app": "web"}}),
+              _np("expr", {"matchExpressions": [{"key": "app", "operator": "Exists"}]})]
+    kept = [("api", [_dep("api")])]
+    out, _ = conv.place_shared_by_use(shared, kept, [[_dep("web")]])
+    assert out == []
+    moved = [d["metadata"]["name"] for d in kept[0][1] if d["kind"] == "NetworkPolicy"]
+    assert sorted(moved) == ["deny-all", "expr"]
