@@ -142,7 +142,7 @@ def test_redis_and_emptydir_lint():
     assert not any("sized" in w for w in c.warnings)
 
 
-# H — PDB verbatim; ServiceMonitor / NetworkPolicy deliberately dropped
+# H — PDB verbatim; ServiceMonitor deliberately dropped; NetworkPolicy converted
 def test_pdb_goes_verbatim_to_extra_deploy():
     c = ctx()
     pdb = {"apiVersion": "policy/v1", "kind": "PodDisruptionBudget", "metadata": {"name": "app-pdb"},
@@ -152,15 +152,27 @@ def test_pdb_goes_verbatim_to_extra_deploy():
     assert [yaml.safe_load(e) for e in c.extra_deploy] == [pdb]
 
 
-def test_servicemonitor_and_networkpolicy_are_dropped_with_one_line_each():
+def test_servicemonitor_is_dropped_with_one_line_networkpolicy_is_kept():
     sm = {"apiVersion": "monitoring.coreos.com/v1", "kind": "ServiceMonitor", "metadata": {"name": "app-sm"}}
     np = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "app-np"}}
     cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "app-cm"}}
     warnings = []
-    assert conv.filter_transient([sm, np, cm], warnings) == [cm]
-    assert len(warnings) == 2
+    assert conv.filter_transient([sm, np, cm], warnings) == [np, cm]
+    assert len(warnings) == 1
     assert warnings[0].startswith("ServiceMonitor/app-sm: dropped")
-    assert warnings[1].startswith("NetworkPolicy/app-np: dropped")
+
+
+def test_networkpolicy_goes_to_network_policies():
+    c = ctx()
+    np = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+          "metadata": {"name": "app-np", "labels": {"team": "a"},
+                       "annotations": {"note": "x", "kubectl.kubernetes.io/last-applied-configuration": "{}"}},
+          "spec": {"podSelector": {"matchLabels": {"app": "x"}}, "policyTypes": ["Ingress"],
+                   "ingress": [{"from": [{"podSelector": {}}]}]}}
+    conv.handle_networkpolicy(np, c, "app-np")
+    assert c.values["networkPolicies"] == {"app-np": {
+        "podSelector": {"matchLabels": {"app": "x"}}, "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{"podSelector": {}}]}], "labels": {"team": "a"}, "annotations": {"note": "x"}}}
 
 
 # I — init container order
