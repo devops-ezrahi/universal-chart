@@ -1195,9 +1195,15 @@ function fleetOverrides(n){
     if(!nz(r.path))return;
     const val=(r.vals||{})[n.name];
     if(!nz(val))return;
-    setPath(o,r.path,coerce(String(val)));count++;});
+    // A tag is a string to the chart's schema even when it looks like a
+    // number ("7", "20241012"); coerced, the render fails validation.
+    setPath(o,r.path,/(^|\.)tag$/.test(r.path)?String(val):coerce(String(val)));count++;});
   return {o,count,extra:nz(n.extra)?String(n.extra).replace(/\s+$/,''):''};
 }
+/* Top-level keys of a namespace's extra YAML. It is appended as text, so a key
+   it shares with the matrix rows would appear twice in values-<ns>.yaml — and
+   Helm rejects a file with a repeated key. */
+function extraTopKeys(extra){return [...new Set((String(extra||'').match(/^[A-Za-z0-9_.\-]+(?=\s*:)/gm)||[]))];}
 function fleetDeployed(){return state.fleet.ns.filter(n=>nz(n.name)&&(()=>{const f=fleetOverrides(n);return f.count||f.extra;})());}
 function fleetSkipped(){return state.fleet.ns.filter(n=>nz(n.name)&&fleetDeployed().indexOf(n)<0);}
 function fleetFiles(){
@@ -1212,7 +1218,9 @@ function fleetFiles(){
   const deployed=fleetDeployed(),skipped=fleetSkipped();
   deployed.forEach(n=>{
     const {o,count,extra}=fleetOverrides(n);
-    if(nz(baseTag)&&!(o.image&&nz(o.image.tag)))setPath(o,'image.tag',baseTag);
+    // Not when the extra YAML has its own image: block — appending it after
+    // ours would repeat the key (Checks flags a tag missing from that block).
+    if(nz(baseTag)&&!(o.image&&nz(o.image.tag))&&extraTopKeys(extra).indexOf('image')<0)setPath(o,'image.tag',baseTag);
     let txt=Object.keys(o).length?toYaml(o):'';
     if(extra)txt=(txt?txt+'\n':'')+extra;
     const head='# '+n.name+' — overrides only. Everything else comes from values.yaml.';
@@ -1325,7 +1333,15 @@ function checks(){
     const sk=fleetSkipped();
     if(sk.length&&!fleetDeployed().length)
       out.push({l:'bad',t:'<b>No namespace has anything set</b>, so nothing is deployed. Give each namespace that should run this release at least its <code>image.tag</code>.'});
-    else if(sk.length)
+    fleetDeployed().forEach(n=>{
+      const {o,extra}=fleetOverrides(n),ek=extraTopKeys(extra);
+      const dup=Object.keys(o).filter(k=>ek.indexOf(k)>=0);
+      if(dup.length)
+        out.push({l:'bad',t:'<b><code>values-'+e(n.name)+'.yaml</code> would have '+dup.map(k=>'<code>'+e(k)+'</code>').join(', ')+' twice</b> — once from the matrix, once from its extra YAML. Helm rejects a repeated key; set it in one place.'});
+      if(ek.indexOf('image')>=0&&on('image')&&nz(fv('image').tag)&&!/^\s+tag\s*:/m.test(extra))
+        out.push({l:'warn',t:'<b>'+e(n.name)+'’s extra YAML has its own <code>image:</code> block without a <code>tag</code></b>, so the base tag is not added there and the chart falls back to <code>Chart.appVersion</code>. Add <code>tag:</code> to that block.'});
+    });
+    if(sk.length&&fleetDeployed().length)
       out.push({l:'warn',t:'<b>Not deployed to '+sk.map(n=>'<code>'+e(n.name)+'</code>').join(', ')+'</b> — nothing is set for '+(sk.length===1?'it':'them')+'. A blank namespace gets no values file and no release; set a value (its <code>image.tag</code>, say) to deploy there.'});
   }
   if(!on('image')&&on('workload')&&wt!=='none')

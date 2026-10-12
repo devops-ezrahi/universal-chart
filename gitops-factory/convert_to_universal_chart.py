@@ -2810,12 +2810,16 @@ def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict
                 out |= {i for i, (_, docs) in enumerate(owners)
                         for _, labels, _ in pod_specs(docs) if all(labels.get(k) == v for k, v in sel.items())}
         if kind == "NetworkPolicy":
-            # An empty podSelector selects every pod in the namespace: no one
-            # microservice owns it, so it is left to the shared rule.
-            sel = (spec.get("podSelector") or {}).get("matchLabels") or {}
-            if sel:
-                out |= {i for i, (_, docs) in enumerate(owners)
-                        for _, labels, _ in pod_specs(docs) if all(labels.get(k) == v for k, v in sel.items())}
+            # Used by every microservice whose pods it selects. An empty
+            # podSelector selects every pod in the namespace, so every one with
+            # pods uses it — dropped as unused, it would take a deny-all away
+            # from the releases being converted. matchExpressions are not
+            # evaluated: a selector that has them counts as selecting all.
+            sel = spec.get("podSelector") or {}
+            labels_sel = sel.get("matchLabels") or {}
+            out |= {i for i, (_, docs) in enumerate(owners)
+                    for _, labels, _ in pod_specs(docs)
+                    if sel.get("matchExpressions") or all(labels.get(k) == v for k, v in labels_sel.items())}
         if kind == "HorizontalPodAutoscaler":
             ref = spec.get("scaleTargetRef") or {}
             out |= users.get((ref.get("kind"), ref.get("name")), set())
@@ -3146,7 +3150,10 @@ def handle_networkpolicy(doc: dict, ctx: MicroserviceContext, name: str) -> None
     claimed through the NamespaceRegistry (NS_RAW_NAME_KINDS) and two files
     declaring the same policy end up with one copy."""
     spec = doc.get("spec") or {}
-    entry = {"podSelector": spec.get("podSelector") or {}}
+    # An empty podSelector (every pod) is left out: the template renders {}
+    # for a missing one, and an empty map never makes it into base/'s common
+    # subtree, so it would be copied into every namespace's values file.
+    entry = {"podSelector": spec["podSelector"]} if spec.get("podSelector") else {}
     for k in ("policyTypes", "ingress", "egress"):
         if spec.get(k) is not None:
             entry[k] = spec[k]

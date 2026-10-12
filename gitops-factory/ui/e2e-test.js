@@ -184,6 +184,13 @@ class NodeDirHandle {
   fs.writeFileSync(basePath, win.jsyaml.dump({ ...parsedBase, image: { repository: "nginx", tag: "7.7.7" } }));
   const prdValues = path.join(appDirPath, "prd/black/values/e2e-test-service.yaml");
   fs.writeFileSync(prdValues, win.jsyaml.dump({ replicaCount: 2 }));
+  // dev/black runs it too, but its defaults.yaml pins a tag: that folder never
+  // used the base's, so it must not get one written in.
+  await create("dev/black", "e2e-test-service");
+  const blackValues = path.join(appDirPath, "dev/black/values/e2e-test-service.yaml");
+  fs.writeFileSync(blackValues, win.jsyaml.dump({ replicaCount: 3 }));
+  const blackDefaults = path.join(appDirPath, "dev/black/defaults.yaml");
+  fs.writeFileSync(blackDefaults, win.jsyaml.dump({ ...win.jsyaml.load(fs.readFileSync(blackDefaults, "utf8")), image: { tag: "5.5.5" } }));
   win.__state.apps[0] = await win.readAppTree(new NodeDirHandle(appDirPath));
   win.__state.activeNamespace = "dev/yellow";
   win.__state.activeMicroservice = "e2e-test-service";
@@ -197,6 +204,8 @@ class NodeDirHandle {
   assert.strictEqual(baseAfter.image.repository, "nginx");
   assert.strictEqual(win.jsyaml.load(fs.readFileSync(prdValues, "utf8")).image.tag, "7.7.7");
   assert.strictEqual(win.jsyaml.load(fs.readFileSync(prdValues, "utf8")).replicaCount, 2);
+  assert.strictEqual(win.jsyaml.load(fs.readFileSync(blackValues, "utf8")).image, undefined,
+    "a folder whose defaults.yaml pins a tag keeps using it");
   console.log("image tag moved out of the shared base: OK");
 
   console.log("\nAll e2e checks passed.");

@@ -63,3 +63,10 @@ tests:
       - contains:
           path: spec.template.spec.syncPolicy.syncOptions
           content: CreateNamespace=true
+
+  - it: treats autoSync "False" from Argo CD's UI as false
+    set:
+      autoSync: "False"
+    asserts:
+      - notExists:
+          path: spec.template.spec.syncPolicy.automated
