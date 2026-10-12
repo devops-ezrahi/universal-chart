@@ -322,6 +322,42 @@ describe('Switching environments', () => {
   });
 });
 
+// ─── Lists declared at the top level ────────────────────
+// Environment snapshots read and restore lists through window[name]; a list
+// that was not on window (a top-level `let`) lost its overrides and leaked
+// the env's copy into base.
+describe('Environment overrides of every list', () => {
+  beforeEach(() => {
+    ev('saveCurrentAppState()');
+    window.prompt = () => 'dev';
+    ev('addEnvironment()');
+  });
+
+  test('every ARRAY_NAMES list is reachable through window', () => {
+    const names = ev("Object.keys(createDefaultAppState('x')).filter(k => Array.isArray(createDefaultAppState('x')[k]))");
+    const hidden = names.filter(n => !(n in window) && ev(`typeof ${n}`) !== 'undefined');
+    expect(hidden).toEqual([]);
+  });
+
+  test.each([
+    ['scc', 'addScc()', 'sccs', 'dev-scc'],
+    ['advanced', 'addHostAlias()', 'hostAliases', '10.0.0.9'],
+    ['extraDeploy', 'addExtraDeploy()', 'extraDeploy', 'dev-extra'],
+  ])('a %s override stays in its environment', (section, add, list, marker) => {
+    ev('switchEnvironment(0)');
+    ev(`addSectionOverride('${section}')`);
+    ev(add);
+    ev(`${list}[0].${list === 'hostAliases' ? 'ip' : list === 'extraDeploy' ? 'yaml' : 'name'} = '${marker}'`);
+    ev('saveEnvState()');
+
+    ev('switchEnvironment(-1)');
+    expect(JSON.stringify(ev(list))).not.toContain(marker);
+
+    ev('switchEnvironment(0)');
+    expect(JSON.stringify(ev(list))).toContain(marker);
+  });
+});
+
 // ─── Section overrides ──────────────────────────────────
 describe('Section overrides', () => {
   beforeEach(() => {

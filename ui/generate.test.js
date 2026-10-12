@@ -1527,3 +1527,33 @@ describe('OpenShift Route generation', () => {
     expect(yaml).toContain('    termination: passthrough');
   });
 });
+
+// ─── Hosts that YAML would misread ──────────
+describe('Wildcard hosts', () => {
+  test('a wildcard route host is quoted (a bare * is a YAML alias)', () => {
+    setChecked('routeEnabled', true);
+    setVal('routeHost', '*.apps.cluster.example.com');
+    const yaml = generate();
+    expect(yaml).toContain('  host: "*.apps.cluster.example.com"');
+  });
+
+  test('a wildcard ingress host is quoted', () => {
+    setChecked('ingressEnabled', true);
+    window.eval("ingressHosts[0].host = '*.example.com'");
+    const yaml = generate();
+    expect(yaml).toContain('    - host: "*.example.com"');
+  });
+});
+
+// ─── Preview matches what is copied/downloaded ──────────
+describe('YAML preview', () => {
+  test('shows exactly the generated YAML (a colon inside a value is not a key)', () => {
+    window.addScc();
+    window.sccs[0].name = 'my-scc';
+    window.sccs[0].users = 'system:serviceaccount:myns:mysa';
+    setChecked('routeEnabled', true);
+    setVal('routeHost', 'myapp.apps.cluster.example.com');
+    const shown = generate();
+    expect(shown).toBe(window.eval('rawYaml'));
+  });
+});
