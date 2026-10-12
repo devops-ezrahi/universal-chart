@@ -223,7 +223,7 @@ def test_file_unclaimed_gives_every_pasted_object_a_home(tmp_path):
             {"kind": "Pod", "metadata": {"name": "t", "annotations": {"helm.sh/hook": "test"}}}]
     ni.file_unclaimed(ns, docs)
     shared = [(d["kind"], d["metadata"]["name"]) for d in yaml.safe_load_all((ns / "shared.yaml").read_text())]
-    assert shared == [("ConfigMap", "argocd-cm"), ("Role", "r")]
+    assert shared == [("ConfigMap", "argocd-cm"), ("Role", "r"), ("NetworkPolicy", "np")]
     assert (ns / "orphan.yaml").exists()
 
 

@@ -6,7 +6,7 @@
 # solo alone reads from solo-store (kind omitted, CA in a Secret) -> solo.yaml,
 # and from ClusterSecretStore global-store, whose CA lives in another
 # namespace -> the store is pulled, its CA is not.
-# The NetworkPolicy and ServiceMonitor must never be asked for.
+# The ServiceMonitor must never be asked for; the NetworkPolicy is fetched.
 apiVersion: v1
 kind: List
 items:
