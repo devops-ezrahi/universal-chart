@@ -178,6 +178,27 @@ class NodeDirHandle {
   assert.ok(fs.existsSync(path.join(appDirPath, "prd/black/values/e2e-test-service.yaml")));
   console.log("second folder reuses the shared base: OK");
 
+  // A tag hand-written into the shared base/ moves out on the next save: into
+  // the saving folder's values/ file and into every other folder that was
+  // relying on it, so no deployment changes image.
+  fs.writeFileSync(basePath, win.jsyaml.dump({ ...parsedBase, image: { repository: "nginx", tag: "7.7.7" } }));
+  const prdValues = path.join(appDirPath, "prd/black/values/e2e-test-service.yaml");
+  fs.writeFileSync(prdValues, win.jsyaml.dump({ replicaCount: 2 }));
+  win.__state.apps[0] = await win.readAppTree(new NodeDirHandle(appDirPath));
+  win.__state.activeNamespace = "dev/yellow";
+  win.__state.activeMicroservice = "e2e-test-service";
+  win.__state.activeView = "form";
+  win.renderAll();
+  const save = Array.from(win.document.querySelectorAll("button")).find((b) => b.textContent === "Save");
+  assert.ok(save, "Save button should exist");
+  await save.onclick();
+  const baseAfter = win.jsyaml.load(fs.readFileSync(basePath, "utf8"));
+  assert.strictEqual(baseAfter.image.tag, undefined, "base/ must not keep an image tag");
+  assert.strictEqual(baseAfter.image.repository, "nginx");
+  assert.strictEqual(win.jsyaml.load(fs.readFileSync(prdValues, "utf8")).image.tag, "7.7.7");
+  assert.strictEqual(win.jsyaml.load(fs.readFileSync(prdValues, "utf8")).replicaCount, 2);
+  console.log("image tag moved out of the shared base: OK");
+
   console.log("\nAll e2e checks passed.");
 })().catch((e) => {
   console.error("E2E TEST FAILED:", e);
