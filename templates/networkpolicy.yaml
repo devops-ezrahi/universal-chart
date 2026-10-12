@@ -14,8 +14,10 @@ metadata:
 spec:
   podSelector:
     {{- toYaml ($spec.podSelector | default dict) | nindent 4 }}
+  {{- with $spec.policyTypes }}
   policyTypes:
-    {{- toYaml $spec.policyTypes | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- with $spec.ingress }}
   ingress:
     {{- toYaml . | nindent 4 }}
