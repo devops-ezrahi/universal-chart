@@ -1467,9 +1467,9 @@ describe('Umbrella chart', () => {
 describe('OpenShift SCC generation', () => {
   test('generates SCC with name and basic settings', () => {
     window.addScc();
-    window.sccs[0].name = 'restricted-custom';
-    window.sccs[0].allowPrivilegedContainer = false;
-    window.sccs[0].runAsUserType = 'MustRunAsRange';
+    window.eval('sccs')[0].name = 'restricted-custom';
+    window.eval('sccs')[0].allowPrivilegedContainer = false;
+    window.eval('sccs')[0].runAsUserType = 'MustRunAsRange';
     const yaml = generate();
     expect(yaml).toContain('scc:');
     expect(yaml).toContain('  restricted-custom:');
@@ -1480,9 +1480,9 @@ describe('OpenShift SCC generation', () => {
 
   test('sets host access flags', () => {
     window.addScc();
-    window.sccs[0].name = 'privileged-scc';
-    window.sccs[0].allowHostNetwork = true;
-    window.sccs[0].allowHostPID = true;
+    window.eval('sccs')[0].name = 'privileged-scc';
+    window.eval('sccs')[0].allowHostNetwork = true;
+    window.eval('sccs')[0].allowHostPID = true;
     const yaml = generate();
     expect(yaml).toContain('    allowHostNetwork: true');
     expect(yaml).toContain('    allowHostPID: true');
@@ -1490,9 +1490,9 @@ describe('OpenShift SCC generation', () => {
 
   test('adds users and groups', () => {
     window.addScc();
-    window.sccs[0].name = 'my-scc';
-    window.sccs[0].users = 'system:serviceaccount:myns:mysa';
-    window.sccs[0].groups = 'system:authenticated';
+    window.eval('sccs')[0].name = 'my-scc';
+    window.eval('sccs')[0].users = 'system:serviceaccount:myns:mysa';
+    window.eval('sccs')[0].groups = 'system:authenticated';
     const yaml = generate();
     expect(yaml).toContain('    users:');
     expect(yaml).toContain('      - system:serviceaccount:myns:mysa');
@@ -1515,8 +1515,8 @@ describe('OpenShift Route generation', () => {
     const yaml = generate();
     expect(yaml).toContain('route:');
     expect(yaml).toContain('  enabled: true');
-    expect(yaml).toContain('  host: "myapp.apps.cluster.example.com"');
-    expect(yaml).toContain('  path: "/"');
+    expect(yaml).toContain('  host: myapp.apps.cluster.example.com');
+    expect(yaml).toContain('  path: /');
   });
 
   test('route with TLS settings', () => {

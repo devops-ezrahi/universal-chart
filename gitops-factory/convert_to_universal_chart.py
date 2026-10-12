@@ -246,6 +246,32 @@ def token_exempt_stems(stems, tokens) -> set[str]:
             for stem in members if stem != norm}
 
 
+def sibling_env_suffixes(namespace_dirs) -> set[str]:
+    """The environment words a run's namespaces carry without being told.
+
+    Sibling namespaces like goldenbell-ui and goldenbell-next usually hold ONE
+    app, named after its namespace: goldenbell-ui.yaml there, goldenbell-next
+    .yaml here (web-ui / web-next likewise). 'ui' and 'next' are no known
+    environment word, so the copies stayed two unrelated releases — two base/
+    files, nothing shared. A namespace's last word (after its last '-') is
+    taken as an environment word when a file there carries it and a file in
+    another namespace, carrying THAT namespace's last word, comes down to the
+    same name — the evidence that the two are one app's copies. Returns those
+    words; main() treats them as --env-suffixes would, on top of the default
+    rule."""
+    families: dict[str, set[str]] = defaultdict(set)
+    for key, ns_dir in namespace_dirs:
+        ns = k8s_ns(key)
+        if "-" not in ns:
+            continue
+        suffix = ns.rsplit("-", 1)[1]
+        for f in ns_dir.glob("*.yaml"):
+            norm = strip_name_tokens(f.stem, {suffix})
+            if norm != f.stem:
+                families[norm].add(suffix)
+    return {s for suffixes in families.values() if len(suffixes) > 1 for s in suffixes}
+
+
 def _token_re(tokens) -> "re.Pattern":
     # A token counts only standing alone — delimited by a non-alphanumeric or
     # the string edge — so 'dev' is never found inside 'devtools' and 'tst'
@@ -2947,6 +2973,16 @@ def unify_shared_placement(loaded: dict) -> None:
                          f"reference it by name")
 
 
+# (source file stem, kind, name) per Kubernetes namespace: raw objects the run
+# was told to leave out (--include / --exclude), so the fidelity check does not
+# count them as lost. Filled by main()'s Pass 0.
+LEFT_OUT: dict[str, set[tuple[str, str, str]]] = {}
+
+
+def _kn(doc: dict) -> tuple[str, str]:
+    return doc.get("kind"), (doc.get("metadata") or {}).get("name")
+
+
 def is_included(docs: list[dict]) -> bool:
     """--include: whether a microservice FILE is selected. Without the flag,
     every file is. shared.yaml is never filtered by it — what several
@@ -5531,12 +5567,24 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
         for raw_dir in raw_folders[namespace]:
             for k, v in load_raw_index(raw_dir).items():
                 raw_index[k] += v
+        # What --include / --exclude left out was never asked to be converted.
+        left_out = LEFT_OUT.get(namespace, set())
+        n_left_out = 0
+        for k in list(raw_index):
+            kept = [(stem, d) for stem, d in raw_index[k] if (stem, *k) not in left_out]
+            n_left_out += len(raw_index[k]) - len(kept)
+            if kept:
+                raw_index[k] = kept
+            else:
+                del raw_index[k]
         raw_total = sum(len(v) for v in raw_index.values())
         # The raw file behind this namespace's shared release, env suffix and
         # all (shared-prd.yaml) — resolved the same way main() resolves it.
         shared_raw_stem = next((stem for entries in raw_index.values() for stem, _ in entries
                                 if env_normalized_ms_name(namespace, stem) == SHARED_DIR_NAME), None)
         report.append(f"\n=== {namespace} — {raw_total} raw objects vs {len(rendered_index)} rendered ===")
+        if n_left_out:
+            report.append(f"  INFO   {n_left_out} raw object(s) left out by --include / --exclude — not checked")
         _FIDELITY_NAMESPACE[0] = namespace
 
         # Releases whose rendered output includes an HPA. The chart omits
@@ -6093,6 +6141,13 @@ def main() -> None:
                           "rule, which strips only a trailing suffix equal to the namespace's. "
                           "Values differing by these words become {{ .Values.environment }}, "
                           "set per namespace in its defaults.yaml; they never make folders.")
+    ap.add_argument("--auto-env-suffixes", nargs="?", const=True, default=True, type=_bool_arg,
+                     metavar="true|false",
+                     help="without --env-suffixes, take a namespace's last word as an environment "
+                          "word when the same app is named after it in another namespace too "
+                          "(goldenbell-ui/goldenbell-ui.yaml + goldenbell-next/goldenbell-next.yaml "
+                          "-> one base/goldenbell.yaml, 'ui'/'next' templated as "
+                          "{{ .Values.environment }}). Default true.")
     ap.add_argument("--env-group", action="append", default=[], metavar="NAME=TOK[:VALUE],...",
                      help="a release whose file name carries one of these words moves into a "
                           "folder of that name inside its namespace (dev/ms1-yellow.yaml -> "
@@ -6206,6 +6261,26 @@ def main() -> None:
 
     namespace_dirs = namespace_dirs_of(input_dir, is_input_ns)
 
+    # goldenbell-ui/goldenbell-ui.yaml + goldenbell-next/goldenbell-next.yaml
+    # are one app: 'ui' and 'next' become environment words, as if given to
+    # --env-suffixes (the default trailing rule stays). An explicit
+    # --env-suffixes list is the whole list, so it turns this off.
+    if args.auto_env_suffixes and not suffixes:
+        auto = sibling_env_suffixes(namespace_dirs) - {t for g in env_groups for t in g.tokens}
+        if auto:
+            NAME_TOKENS.update(auto)
+            env_group = next((g for g in env_groups if g.name == ENVIRONMENT_GROUP), None)
+            if env_group is None:
+                env_groups.append(EnvGroup(ENVIRONMENT_GROUP, {t: t for t in sorted(auto)}, folder=False))
+            else:
+                env_group.tokens.update({t: t for t in sorted(auto)})
+            all_warnings.append(
+                f"environment words taken from the namespace names: {', '.join(sorted(auto))} — the "
+                f"same app is named after each of these namespaces, so its copies share one base/ "
+                f"file (pass --env-suffixes to set the list yourself, --auto-env-suffixes false "
+                f"to keep them apart)")
+            print(f"Environment words from the namespace names: {', '.join(sorted(auto))}")
+
     # Pass 1 — build every microservice's values (in memory, nothing written
     # yet). Needed up front because defaults.yaml is computed FROM the full
     # set of already-built values, both globally and per namespace.
@@ -6232,6 +6307,7 @@ def main() -> None:
     # Before any name is normalized: which file names a token must not touch,
     # because no other file would share the name it leaves (token_exempt_stems).
     TOKEN_EXEMPT_STEMS.clear()
+    LEFT_OUT.clear()
     TOKEN_EXEMPT_STEMS.update(token_exempt_stems(
         {f.stem for _, d in namespace_dirs for f in d.glob("*.yaml")}, NAME_TOKENS))
     for stem in sorted(TOKEN_EXEMPT_STEMS):
@@ -6241,6 +6317,7 @@ def main() -> None:
             f"in every namespace, not an environment's copy")
     for namespace, ns_dir in namespace_dirs:
         ns_warnings: list[str] = []
+        left_out = LEFT_OUT.setdefault(k8s_ns(namespace), set())
 
         # The shared file may carry the namespace's own environment suffix
         # (shared-prd.yaml inside a -prd namespace), exactly like every other
@@ -6261,6 +6338,7 @@ def main() -> None:
             raw_shared = filter_transient(
                 [sanitize_object(d, ns_warnings) for d in load_multidoc(shared_path)], ns_warnings)
             shared_docs = [d for d in raw_shared if not is_excluded(d)]
+            left_out.update((shared_path.stem, *_kn(d)) for d in raw_shared if is_excluded(d))
             if len(shared_docs) != len(raw_shared):
                 ns_warnings.append(f"{shared_path.name}: {len(raw_shared) - len(shared_docs)} "
                                    f"object(s) removed by --exclude")
@@ -6276,6 +6354,7 @@ def main() -> None:
                 ns_warnings.append(f"{ms_file.name}: not selected by --include — no base/, values/ "
                                    f"or release written")
                 skipped_docs.append(docs)
+                left_out.update((ms_file.stem, *_kn(d)) for d in docs)
                 continue
             hit = next((d for d in docs if is_excluded(d)), None)
             if hit is not None:
@@ -6283,13 +6362,18 @@ def main() -> None:
                     f"{ms_file.name}: excluded by --exclude (matched {hit.get('kind')}/"
                     f"{(hit.get('metadata') or {}).get('name')}) — no base/, values/ or release written")
                 skipped_docs.append(docs)
+                left_out.update((ms_file.stem, *_kn(d)) for d in docs)
                 continue
             ms_docs.append((ms_file.stem, docs))
         # A selection decides what `shared` is for: what two or more of the
         # microservices being converted use. One user takes it home; none drops it.
         if (INCLUDE_PATTERNS or EXCLUDE_PATTERNS) and shared_docs:
+            before = shared_docs
             shared_docs, notes = place_shared_by_use(shared_docs, ms_docs, skipped_docs)
             ns_warnings.extend(notes)
+            # Dropped, not moved into a microservice: left out like a skipped file.
+            kept_keys = {_kn(d) for d in shared_docs} | {_kn(d) for _, docs in ms_docs for d in docs}
+            left_out.update((shared_path.stem, *_kn(d)) for d in before if _kn(d) not in kept_keys)
             shared_docs = shared_docs or None
         # The variant folder each file lands in: one level per folder group
         # whose token its name carries (ms1-yellow -> yellow/).
@@ -6309,6 +6393,11 @@ def main() -> None:
                 ms_docs[i] = (normalized[i], docs)
         ms_meta[namespace] = list(zip(stems, folders))
         loaded[namespace] = (shared_docs, ms_docs, ns_warnings)
+
+    if INCLUDE_PATTERNS and not any(ms_docs or shared_docs for shared_docs, ms_docs, _ in loaded.values()):
+        sys.exit(f"--include {','.join(INCLUDE_PATTERNS)}: no object in {input_dir} matches — nothing "
+                 f"to convert, nothing was written. Patterns match object names and label/annotation "
+                 f"values (not namespace names); `=NAME` is an exact name, `key=value` one label.")
 
     # Same object, same place in every namespace: shared only where it is
     # shared everywhere, otherwise in its microservice everywhere.

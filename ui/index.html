@@ -1597,7 +1597,7 @@ function initYamlEditor(textarea){
 function highlightYamlInline(yaml){
   return yaml.split('\n').map(line=>{
     if(/^\s*#/.test(line))return`<span class="y-comment">${escHtml(line)}</span>`;
-    const m=line.match(/^(\s*)(- )?([\w.\-\/]+)(:)(.*)/);
+    const m=line.match(/^(\s*)(- )?([\w.\-\/]+)(:)(\s.*|$)/);
     if(m){
       const[,indent,dash,key,colon,rest]=m;
       let v=escHtml(rest.trim());
@@ -2146,8 +2146,8 @@ function generateEnvOnlyYaml(fullYaml, app, env) {
 
 function highlight(yaml){return yaml.split('\n').map(line=>{
   if(/^\s*#/.test(line))return`<span class="y-comment">${escHtml(line)}</span>`;
-  const m=line.match(/^(\s*)([\w.\-\/]+)(:)(.*)/);if(m){const[,i,k,c,r]=m;let v=escHtml(r.trim());if(v){if(/^".*"$/.test(v)||/^'.*'$/.test(v))v=`<span class="y-str">${v}</span>`;else if(/^(true|false)$/.test(v))v=`<span class="y-bool">${v}</span>`;else if(/^\d+[\w.]*$/.test(v))v=`<span class="y-num">${v}</span>`;else v=`<span class="y-str">${v}</span>`;return`${i}<span class="y-key">${escHtml(k)}</span>${c} ${v}`}return`${i}<span class="y-key">${escHtml(k)}</span>${c}`}
-  const lm=line.match(/^(\s*- )([\w.\-\/]+)(:)(.*)/);if(lm){const[,p,k,c,r]=lm;let v=escHtml(r.trim());if(v){if(/^".*"$/.test(v)||/^'.*'$/.test(v))v=`<span class="y-str">${v}</span>`;else if(/^(true|false)$/.test(v))v=`<span class="y-bool">${v}</span>`;else if(/^\d+[\w.]*$/.test(v))v=`<span class="y-num">${v}</span>`;else v=`<span class="y-str">${v}</span>`;return`${escHtml(p)}<span class="y-key">${escHtml(k)}</span>${c} ${v}`}return`${escHtml(p)}<span class="y-key">${escHtml(k)}</span>${c}`}
+  const m=line.match(/^(\s*)([\w.\-\/]+)(:)(\s.*|$)/);if(m){const[,i,k,c,r]=m;let v=escHtml(r.trim());if(v){if(/^".*"$/.test(v)||/^'.*'$/.test(v))v=`<span class="y-str">${v}</span>`;else if(/^(true|false)$/.test(v))v=`<span class="y-bool">${v}</span>`;else if(/^\d+[\w.]*$/.test(v))v=`<span class="y-num">${v}</span>`;else v=`<span class="y-str">${v}</span>`;return`${i}<span class="y-key">${escHtml(k)}</span>${c} ${v}`}return`${i}<span class="y-key">${escHtml(k)}</span>${c}`}
+  const lm=line.match(/^(\s*- )([\w.\-\/]+)(:)(\s.*|$)/);if(lm){const[,p,k,c,r]=lm;let v=escHtml(r.trim());if(v){if(/^".*"$/.test(v)||/^'.*'$/.test(v))v=`<span class="y-str">${v}</span>`;else if(/^(true|false)$/.test(v))v=`<span class="y-bool">${v}</span>`;else if(/^\d+[\w.]*$/.test(v))v=`<span class="y-num">${v}</span>`;else v=`<span class="y-str">${v}</span>`;return`${escHtml(p)}<span class="y-key">${escHtml(k)}</span>${c} ${v}`}return`${escHtml(p)}<span class="y-key">${escHtml(k)}</span>${c}`}
   return escHtml(line)}).map((l,i,arr)=>{
   // Calculate indent guides
   const raw=yaml.split('\n')[i]||'';const indent=raw.search(/\S/);
