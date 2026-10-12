@@ -234,16 +234,6 @@ function isMinimalPath(dottedPath) {
   return false;
 }
 
-/* Removes image.tag from a base/ values object in place; returns it. */
-function splitBaseTag(values) {
-  const img = values && values.image;
-  if (!img || typeof img !== "object" || !("tag" in img)) return undefined;
-  const tag = img.tag;
-  delete img.tag;
-  if (!Object.keys(img).length) delete values.image;
-  return tag;
-}
-
 function dumpYaml(obj) {
   if (!obj || Object.keys(obj).length === 0) return "{}\n";
   return jsyaml.dump(obj, { sortKeys: true, lineWidth: 100 });
@@ -721,27 +711,8 @@ function formEditorPanel(msName) {
         const covered = flattenKeys(values).filter((k) => !flattenKeys(subtractDefaults(values, layerBase())).includes(k));
         const ms = ns.microservices[name] || {};
         const newMinimal = deepMerge(ms.minimal || {}, minimal);
-        // The image tag is never shared: a base/ file that still carries one
-        // (hand-written, or from before the split) gives it up. Every folder
-        // running this release that was using it (no tag in its own values/
-        // file or defaults.yaml) gets it written into its values/ file, so no
-        // deployment changes image.
-        const baseTag = splitBaseTag(baseValues);
-        const usesBaseTag = (folder, own) => getPath(own, "image.tag") === undefined
-          && getPath(folder.defaults || {}, "image.tag") === undefined;
-        if (baseTag !== undefined && usesBaseTag(ns, newMinimal)) setPath(newMinimal, "image.tag", baseTag);
-        const tagMoves = [];
-        if (baseTag !== undefined) {
-          for (const [key, other] of Object.entries(app.namespaces)) {
-            const otherMs = other === ns ? null : other.microservices[name];
-            if (!otherMs || !usesBaseTag(other, otherMs.minimal)) continue;
-            setPath(otherMs.minimal, "image.tag", baseTag);
-            await writeFileText(otherMs.minimalDir, `${name}.yaml`, dumpYaml(otherMs.minimal));
-            tagMoves.push(key);
-          }
-        }
 
-        if (!reuseBase || baseTag !== undefined) await writeBaseFile(app, name, baseValues);
+        if (!reuseBase) await writeBaseFile(app, name, baseValues);
         const valuesDir = ms.minimalDir || await nsValuesDir(ns);
         await writeFileText(valuesDir, `${name}.yaml`, dumpYaml(newMinimal));
 
@@ -749,7 +720,6 @@ function formEditorPanel(msName) {
 
         let msg = isNew ? `Created ${name}.` : `Saved ${name}.`;
         if (reuseBase) msg += ` Reused the existing base/${name}.yaml (another folder runs it).`;
-        if (baseTag !== undefined) msg += ` Moved image.tag out of base/${name}.yaml${tagMoves.length ? ` (also into ${tagMoves.join(", ")})` : ""}.`;
         if (covered.length) msg += ` Already supplied by defaults.yaml (kept in the shared base): ${covered.join(", ")}`;
         showStatus(status, "success", msg);
 

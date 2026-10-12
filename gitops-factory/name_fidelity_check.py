@@ -33,7 +33,7 @@ TRANSIENT_KINDS = {"ReplicaSet", "Pod", "Endpoints", "EndpointSlice", "Event",
 # Kinds the converter drops on purpose (its DROPPED_KINDS, logged one line per
 # object in conflicts_and_warnings.txt) — absent from the render by design, so
 # not a naming change.
-DROPPED_KINDS = {"ServiceMonitor"}
+DROPPED_KINDS = {"NetworkPolicy", "ServiceMonitor"}
 # Kinds with no namespace. They are compared once, globally — see main().
 CLUSTER_SCOPED_KINDS = {"ClusterRole", "ClusterRoleBinding", "StorageClass",
                         "PersistentVolume", "SecurityContextConstraints",

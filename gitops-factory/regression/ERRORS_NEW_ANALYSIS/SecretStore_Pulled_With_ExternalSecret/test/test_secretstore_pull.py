@@ -94,7 +94,7 @@ def test_store_and_its_deps_placed_once_by_number_of_users(imported):
     assert sorted(docs) == ["kafka", "shared", "solo", "zookeeper"]
 
     # Two microservices read zookeeper-secret-store -> it, its CA and SA are shared.
-    assert _ids(docs["shared"]) == [("ConfigMap", "vault-ca"), ("NetworkPolicy", "deny-all"), ("SecretStore", "zookeeper-secret-store"),
+    assert _ids(docs["shared"]) == [("ConfigMap", "vault-ca"), ("SecretStore", "zookeeper-secret-store"),
                                     ("ServiceAccount", "vault")]
     # One microservice reads solo-store -> it and its deps sit in solo.yaml. The
     # ClusterSecretStore's CA/SA name another namespace and are not pulled.
@@ -117,11 +117,9 @@ def test_store_and_its_deps_placed_once_by_number_of_users(imported):
     assert store["spec"]["provider"]["vault"]["auth"]["kubernetes"] == {
         "mountPath": "dev", "role": "k8s-role-dev-interconn-opr-vault", "serviceAccountRef": {"name": "vault"}}
 
-    # ServiceMonitors are not fetched at all; NetworkPolicies are (the converter
-    # turns them into networkPolicies).
+    # NetworkPolicy / ServiceMonitor are no longer fetched at all.
     asked = {c[1].split(".", 1)[0] for c in oc.calls}
-    assert "servicemonitors" not in asked
-    assert "networkpolicies" in asked
+    assert not asked & {"networkpolicies", "servicemonitors"}
 
 
 def test_a_store_already_placed_is_not_duplicated():

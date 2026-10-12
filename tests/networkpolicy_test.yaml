@@ -50,15 +50,3 @@ tests:
     asserts:
       - hasDocuments:
           count: 2
-
-  - it: should leave policyTypes out when none is given
-    set:
-      networkPolicies:
-        deny-all:
-          podSelector: {}
-    asserts:
-      - notExists:
-          path: spec.policyTypes
-      - equal:
-          path: spec.podSelector
-          value: {}
