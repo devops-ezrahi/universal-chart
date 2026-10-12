@@ -1,0 +1,65 @@
+suite: ApplicationSet
+templates:
+  - templates/applicationSet.yaml
+set:
+  namespace: rakia-fac1
+  folder: rakia-fac1/black
+  originRepoURL: https://example.com/values.git
+  originBranch: main
+tests:
+  - it: names a variant folder's ApplicationSet after namespace and variant
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rakia-fac1-black
+
+  - it: preserves workloads on delete by default
+    asserts:
+      - equal:
+          path: spec.syncPolicy
+          value:
+            preserveResourcesOnDeletion: true
+
+  - it: accepts the string an Argo CD helm parameter passes
+    set:
+      preserveResourcesOnDeletion: "True"
+    asserts:
+      - equal:
+          path: spec.syncPolicy.preserveResourcesOnDeletion
+          value: true
+
+  - it: leaves syncPolicy out entirely when nothing is set, never null
+    set:
+      preserveResourcesOnDeletion: false
+      applicationsSync: ""
+    asserts:
+      - notExists:
+          path: spec.syncPolicy
+
+  - it: leaves syncPolicy out for a blank applicationsSync
+    set:
+      preserveResourcesOnDeletion: "false"
+      applicationsSync: " "
+    asserts:
+      - notExists:
+          path: spec.syncPolicy
+
+  - it: writes applicationsSync alone
+    set:
+      preserveResourcesOnDeletion: false
+      applicationsSync: create-only
+    asserts:
+      - equal:
+          path: spec.syncPolicy
+          value:
+            applicationsSync: create-only
+
+  - it: leaves each Application to sync by hand when autoSync is false
+    set:
+      autoSync: "false"
+    asserts:
+      - notExists:
+          path: spec.template.spec.syncPolicy.automated
+      - contains:
+          path: spec.template.spec.syncPolicy.syncOptions
+          content: CreateNamespace=true
