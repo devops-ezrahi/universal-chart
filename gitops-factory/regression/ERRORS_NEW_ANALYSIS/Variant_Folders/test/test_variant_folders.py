@@ -53,7 +53,7 @@ def test_variant_tree_shares_one_base(tmp_path):
     # The root ApplicationSet walks <namespace>/<variant>/ and deploys into the namespace.
     assert (out / "rootApplication.yaml.txt").is_file()
     appset = (out / "rootApplicationSet.yaml").read_text(encoding="utf-8")
-    assert "path: '**/defaults.yaml'" in appset and "value: '{{ index .path.segments 0 }}'" in appset
+    assert "path: '*/*'" in appset and "value: '{{ index .path.segments 0 }}'" in appset
 
 
 def test_values_subfolders_survive_a_rerun(tmp_path):

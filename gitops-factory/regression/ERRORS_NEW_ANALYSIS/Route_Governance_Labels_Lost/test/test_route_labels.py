@@ -211,7 +211,7 @@ def test_chart_identity_labels_are_not_clobbered_by_custom_ones(tmp_path):
     """objectLabels merges rather than replaces. A custom label set that wiped
     app.kubernetes.io/instance would break selectors elsewhere."""
     docs = _helm_template({
-        "workload": {"type": "deployment"},
+        "workload": {"type": "deployment"}, "chartLabels": True,
         "image": {"repository": "openpolicyagent/opa", "tag": "0.60"},
         "service": {"ports": {"http": {"port": 8181}}},
         "route": {"enabled": True, "name": "opa-route", "serviceName": "opa",

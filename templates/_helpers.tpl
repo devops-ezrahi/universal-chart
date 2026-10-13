@@ -119,7 +119,14 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
        object carries its own name/instance/version/helm.sh/chart, and
        re-deriving them from this release rewrites every one of them. */}}
 {{- if not .root.Values.chartLabels }}
-{{- toYaml (merge (dict) (.own | default dict) (.root.Values.commonLabels | default dict)) }}
+{{- /* workload: true (Deployment/StatefulSet/DaemonSet) starts from the
+       selector labels, so the workload carries the labels its pods and its
+       Service match on without a values file restating them. */}}
+{{- $base := dict }}
+{{- if and (eq (toString .workload) "true") (ne (toString .root.Values.selectorLabelsOnWorkload) "false") }}
+{{- $base = fromYaml (include "universal-chart.selectorLabels" .root) }}
+{{- end }}
+{{- toYaml (merge (dict) (.own | default dict) (.root.Values.commonLabels | default dict) $base) }}
 {{- else }}
 {{- $core := fromYaml (include "universal-chart.labels" .root) }}
 {{- toYaml (merge $core (.own | default dict)) }}
@@ -189,6 +196,38 @@ route.yaml + routes.yaml (spec.to.name) and ingress.yaml (backend.service.name).
 */}}
 {{- define "universal-chart.primaryServiceName" -}}
 {{- (.Values.service | default dict).name | default (include "universal-chart.fullname" .) }}
+{{- end }}
+
+{{/*
+The primary Service's ports, as JSON (read back with fromJson): service.ports
+when set, otherwise one port per container port (.Values.ports) — same name,
+port == containerPort, targetPort left to default to it, same protocol. That
+default is what connects the Deployment, its Service and its Route without any
+of them restating a port: the Route targets the first of these by name.
+Usage: {{- $ports := include "universal-chart.servicePorts" . | fromJson }}
+*/}}
+{{- define "universal-chart.servicePorts" -}}
+{{- $svc := .Values.service | default dict }}
+{{- if $svc.ports }}
+{{- toJson $svc.ports }}
+{{- else }}
+{{- $out := dict }}
+{{- range $key, $spec := (.Values.ports | default dict) }}
+{{- if and (kindIs "map" $spec) $spec.containerPort }}
+{{- $p := dict "port" $spec.containerPort }}
+{{- with $spec.protocol }}{{ $_ := set $p "protocol" . }}{{ end }}
+{{- $_ := set $out ($spec.name | default $key) $p }}
+{{- end }}
+{{- end }}
+{{- toJson $out }}
+{{- end }}
+{{- end }}
+
+{{/*
+Default target port for a Route/Ingress: the first primary Service port name.
+*/}}
+{{- define "universal-chart.defaultServicePort" -}}
+{{- include "universal-chart.firstKey" (include "universal-chart.servicePorts" . | fromJson) }}
 {{- end }}
 
 {{/*
@@ -492,18 +531,19 @@ empty string and silently drops traffic instead of erroring. */}}
 {{- if (and .Values.ingress .Values.ingress.enabled) }}
 {{- range $host := .Values.ingress.hosts }}
 {{- range $path := $host.paths }}
-{{- if and (not $path.portName) (not $path.portNumber) (not ($root.Values.service | default dict).ports) }}
-{{- fail (printf "ingress.hosts[%s].paths has no portName and service.ports is empty — the Ingress backend port would be blank" $host.host) }}
+{{- if and (not $path.portName) (not $path.portNumber) (not (include "universal-chart.servicePorts" $root | fromJson)) }}
+{{- fail (printf "ingress.hosts[%s].paths has no portName and neither service.ports nor ports is set — the Ingress backend port would be blank" $host.host) }}
 {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
-{{- if and (and .Values.route .Values.route.enabled) (not .Values.route.targetPort) (not .Values.service.ports) }}
-{{- fail "route.enabled is true but route.targetPort is unset and service.ports is empty — the Route target port would be blank" }}
+{{- $svcPorts := include "universal-chart.servicePorts" . | fromJson }}
+{{- if and (and .Values.route .Values.route.enabled) (not .Values.route.targetPort) (not $svcPorts) }}
+{{- fail "route.enabled is true but route.targetPort is unset and neither service.ports nor ports is set — the Route target port would be blank" }}
 {{- end }}
 {{- range $rname, $rspec := .Values.routes }}
-{{- if and $rspec.enabled (not $rspec.targetPort) (not ($root.Values.service | default dict).ports) }}
-{{- fail (printf "routes.%s is enabled but targetPort is unset and service.ports is empty — the Route target port would be blank" $rname) }}
+{{- if and $rspec.enabled (not $rspec.targetPort) (not $svcPorts) }}
+{{- fail (printf "routes.%s is enabled but targetPort is unset and neither service.ports nor ports is set — the Route target port would be blank" $rname) }}
 {{- end }}
 {{- end }}
 {{- end }}

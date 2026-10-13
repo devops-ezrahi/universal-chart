@@ -212,7 +212,7 @@ def _render(values, tmp_path):
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
-BASE = {"workload": {"type": "deployment"}, "image": {"repository": "busybox", "tag": "1.36"}}
+BASE = {"workload": {"type": "deployment"}, "chartLabels": True, "image": {"repository": "busybox", "tag": "1.36"}}
 
 
 def test_cronjob_template_renders_pod_labels_alongside_the_selector_labels(tmp_path):

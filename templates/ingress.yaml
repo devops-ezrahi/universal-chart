@@ -36,7 +36,7 @@ spec:
                   {{- if .portNumber }}
                   number: {{ .portNumber }}
                   {{- else }}
-                  name: {{ .portName | default (include "universal-chart.firstKey" $.Values.service.ports) }}
+                  name: {{ .portName | default (include "universal-chart.defaultServicePort" $) }}
                   {{- end }}
           {{- end }}
     {{- end }}

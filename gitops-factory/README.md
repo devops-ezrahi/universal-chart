@@ -33,7 +33,8 @@ The large mock dump `namespaces/` is not committed either — generate it with
 | Labels in `defaults.yaml` | A workload label or pod label every microservice in a namespace carries, with the same value, goes into that namespace's `defaults.yaml` and out of its `values/` files — so `environment: dev` is written once per namespace instead of once per microservice. Only releases with a Deployment/StatefulSet/DaemonSet count, since those labels render nowhere else: a `shared` release (or a CronJob-only one) with no labels no longer keeps them out. `base/` is not changed, as it is shared with other namespaces. |
 | `--exact-copy` | For apps that cannot take a restart: renders every migrated pod template byte-for-byte as it runs, so the cutover sync restarts no pods — `portOrder` / `envOrder` / `volumeMountOrder` / `volumeOrder` / `sidecarOrder` in the raw order, and an empty `securityContext: {}` kept because the API server stored it. **Off by default**: the values carry only what the app needs, and the first sync rolls the pods once (the chart renders those lists sorted by name). Orders that change behaviour are written either way: `initContainerOrder` (run order), `envFromOrder` (a later ref wins a shared key) and `envOrder` when a value reads another var through `$(VAR)`. Selector labels and `chartLabels: false` are not part of it: a selector is immutable, so those are needed to adopt a live workload at all. |
 | Literal env in base | A literal env var (`value: x`) is treated like any other value: in `base/` when it is the same in every namespace, in `values/` only where it differs. `--env-in-values` restores the old split, where every literal env var was written into every namespace's `values/` file. |
-| Root ApplicationSet | One git files generator on `**/defaults.yaml` finds every namespace and variant folder. The values repo, branch and project are YAML anchors (`&repoURL`, `&branch`, `&project`), said once and reused as helm parameters; a commented `exclude` shows how to switch a namespace off. Without `--values-repo-url` it carries the placeholder `<values-repo-url>` to replace by hand. |
+| Chart defaults left out | A value equal to the chart's own default (`values.yaml`: the OpenShift defaults such as `pullPolicy: Always`, `revisionHistoryLimit: 2`, `strategy` 25%/25%, `restartPolicy`, `dnsPolicy`, `schedulerName`, `serviceAccount.create: false`, `chartLabels: false`) is not written to `base/` or `values/`. Neither is what the chart derives itself: `service.name` / `route.name` / `serviceAccount.name` equal to `fullnameOverride`, a Route's `serviceName` / `targetPort` pointing at the primary Service and its first port, a Service `selector` equal to `selectorLabels`, `targetPort` equal to `port`, Service ports that are just the container ports, a StatefulSet `serviceName` equal to its Service, and workload `labels` restating `selectorLabels`. A live workload missing one of its selector labels gets `selectorLabelsOnWorkload: false` instead. |
+| Root ApplicationSet | One git directories generator finds every namespace folder and its group folders (`'*'`, `'*/*'`, ... one level deeper than the deepest folder written, excluding `base/`, `report/`, `cluster-shared/` and `values/`). Namespace first, then groups: the namespace is the first path segment, so a hand-made `<namespace>/<group>/values/` folder is deployed too, with or without a `defaults.yaml`. The values repo, branch and project are YAML anchors (`&repoURL`, `&branch`, `&project`), said once and reused as helm parameters; a commented `exclude` shows how to switch a namespace off. Without `--values-repo-url` it carries the placeholder `<values-repo-url>` to replace by hand. |
 | `--root-set-name`, `--argocd-destination-namespace`, `--argocd-cluster` | Name the root ApplicationSet; alias of `--argocd-namespace`; deploy to a registered cluster *name* instead of `--destination-server`'s URL. |
 | `{{` in source data | Escaped in every values file (`{{ "{{" }}`) so the chart's `tpl` pass leaves an Alertmanager/Go template in a ConfigMap literal. |
 | Shared promotion | ConfigMaps/Secrets/etc. declared byte-identically by several microservices move into the namespace `shared` release under their original name (Services/Routes excluded). Recorded in `report/renames.json`. |
@@ -203,7 +204,7 @@ chart that lives in the Universal Chart repo:
 
 ```
 kubectl apply -f output/rootApplication.yaml.txt     # once, by hand
-  └─ deploys rootApplicationSet.yaml                 # git files generator on '**/defaults.yaml'
+  └─ deploys rootApplicationSet.yaml                 # git directories generator: '*', '*/*', ...
        └─ one Application per <namespace>/ folder, each deploying ms-applicationSet
             └─ one ApplicationSet per folder          # git files generator over <folder>/values/<valuesGlob>
                  └─ one Application per release, rendering the Universal Chart
@@ -321,8 +322,10 @@ the following over from the source manifest:
   `openshift.openshift.io/restartedAt`. These are stamps from a manual
   `oc rollout restart`, not configuration.
 
-The chart also no longer defaults a Route's `insecureEdgeTerminationPolicy` to
-`Redirect`.
+The chart defaults a Route to edge TLS with `insecureEdgeTerminationPolicy:
+Redirect` (the OpenShift convention). The converter writes `tls: null` for a
+live Route without TLS and `insecureEdgeTerminationPolicy: ""` for one without
+a redirect policy, so neither picks up the default.
 
 Order of operations, per namespace:
 

@@ -55,4 +55,4 @@ def test_color_folders_and_environment_values(tmp_path):
 
     assert (out / "rootApplication.yaml.txt").is_file()
     appset = (out / "rootApplicationSet.yaml").read_text(encoding="utf-8")
-    assert "path: '**/defaults.yaml'" in appset and "goTemplate: true" in appset
+    assert "directories:" in appset and "path: '*/*'" in appset and "goTemplate: true" in appset

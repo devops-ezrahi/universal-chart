@@ -1,8 +1,8 @@
 Round-trip fidelity report — raw input vs `helm template` of the converted output.
 
 RUN IDENTITY — counts below describe THIS run and no other.
-  run id:         37c182c8073c-d6d5235e78f8
-  converter:      37c182c8073c  (convert_to_universal_chart.py)
+  run id:         f75caca4a611-d6d5235e78f8
+  converter:      f75caca4a611  (convert_to_universal_chart.py)
   input:          d6d5235e78f8  (../examples/converted/flat/input)
   output:         ../examples/converted/flat/output
   Compare two fidelity reports ONLY when their run ids match. A differing
@@ -27,7 +27,7 @@ objects matched:            8
   of those, relocated:      0
 fields LOST (raw -> render): 0
 fields CHANGED:             0
-fields ADDED (chart default, informational): 36
+fields ADDED (chart default, informational): 56
 objects in raw but rendered by nothing:      0
 objects rendered with no raw source:         0
 render failures:            0

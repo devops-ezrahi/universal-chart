@@ -117,3 +117,14 @@ tests:
           value:
             app.kubernetes.io/name: redis
             app.kubernetes.io/instance: redis-black-b2b-tst
+
+  - it: governing serviceName follows a renamed primary Service
+    set:
+      workload.type: statefulset
+      fullnameOverride: db
+      service:
+        name: db-headless
+    asserts:
+      - equal:
+          path: spec.serviceName
+          value: db-headless

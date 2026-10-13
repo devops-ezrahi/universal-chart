@@ -233,7 +233,7 @@ def test_both_templates_render_labels_owner_references_and_extra_spec_fields():
 def test_the_charts_own_identity_labels_still_win():
     """commonLabels/user labels may ADD, never override the chart's identity
     labels — the same rule universal-chart.labels enforces everywhere else."""
-    values = {"workload": {"type": "none"}, "service": {"enabled": False},
+    values = {"workload": {"type": "none"}, "service": {"enabled": False}, "chartLabels": True,
               "externalSecrets": {"es": {
                   "labels": {"app.kubernetes.io/name": "hijacked", "mine": "kept"},
                   "secretStoreRef": {"name": "s", "kind": "SecretStore"}}}}

@@ -53,7 +53,7 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   ports:
-    {{- range $name, $spec := .Values.service.ports }}
+    {{- range $name, $spec := (include "universal-chart.servicePorts" . | fromJson) }}
     - name: {{ $name }}
       port: {{ $spec.port }}
       {{- /* Mirrors Kubernetes' own Service default: an unset targetPort

@@ -192,7 +192,7 @@ def test_pod_template_labels_still_work():
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
 def test_identity_labels_win_over_declared_ones():
-    values = {"workload": {"type": "deployment"},
+    values = {"workload": {"type": "deployment"}, "chartLabels": True,
               "image": {"repository": "nginx", "tag": "1.27"},
               "labels": {"app.kubernetes.io/name": "hijacked", "team": "storefront"}}
     labels = next(d for d in _helm_template(values)

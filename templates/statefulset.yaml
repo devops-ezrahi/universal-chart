@@ -6,7 +6,7 @@ kind: StatefulSet
 metadata:
   name: {{ include "universal-chart.fullname" . }}
   labels:
-    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.labels) | nindent 4 }}
+    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.labels "workload" true) | nindent 4 }}
   {{- /* The object's OWN annotations merged over the release-wide ones.
          Rendering commonAnnotations alone dropped every annotation the raw
          manifest carried on this object - a lost argocd.argoproj.io/sync-wave
@@ -17,7 +17,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  serviceName: {{ .Values.serviceName | default (include "universal-chart.fullname" .) }}
+  serviceName: {{ .Values.serviceName | default (include "universal-chart.primaryServiceName" .) }}
   {{- if not (and .Values.hpa .Values.hpa.enabled) }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}

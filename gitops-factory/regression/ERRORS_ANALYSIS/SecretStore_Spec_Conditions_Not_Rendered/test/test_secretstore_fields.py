@@ -140,7 +140,7 @@ def test_the_template_renders_labels_and_unlisted_fields():
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
 def test_identity_labels_still_win_over_declared_ones():
-    values = {"workload": {"type": "none"}, "service": {"enabled": False},
+    values = {"workload": {"type": "none"}, "service": {"enabled": False}, "chartLabels": True,
               "secretStores": {"s": {"labels": {"app.kubernetes.io/name": "hijacked",
                                                 "mine": "kept"},
                                      "provider": {"vault": {}}}}}

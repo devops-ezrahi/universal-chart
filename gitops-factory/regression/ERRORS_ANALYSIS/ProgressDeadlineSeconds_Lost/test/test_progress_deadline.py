@@ -130,8 +130,15 @@ def test_the_deployment_template_renders_it():
 
 
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
-def test_nothing_is_rendered_when_nothing_is_set():
+def test_the_openshift_default_is_rendered_when_nothing_is_set():
     values = {"workload": {"type": "deployment"},
+              "image": {"repository": "nginx", "tag": "1.27"}}
+    assert _deployment(_helm_template(values))["spec"]["progressDeadlineSeconds"] == 600
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
+def test_nothing_is_rendered_when_set_empty():
+    values = {"workload": {"type": "deployment"}, "progressDeadlineSeconds": "",
               "image": {"repository": "nginx", "tag": "1.27"}}
     assert "progressDeadlineSeconds" not in _deployment(_helm_template(values))["spec"]
 

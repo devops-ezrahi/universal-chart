@@ -7,10 +7,18 @@ fullnameOverride: ""
 
 # -- Extra labels added to ALL resources
 commonLabels: {}
-# false = every object gets exactly its own `labels` (+ commonLabels), with no
-# chart identity labels (name/instance/version/helm.sh/chart/managed-by). The
-# converter sets it so a migrated object keeps its live labels one-to-one.
-chartLabels: true
+# false (the default) = every object gets exactly its own `labels` (+
+# commonLabels), with no chart identity labels (version/helm.sh/chart/
+# managed-by). The Deployment/StatefulSet/DaemonSet is the one exception: its
+# metadata.labels always start from selectorLabels, so the workload carries the
+# same `app` labels its pods and its Service select on without restating them.
+# true = the Helm convention: name/instance/version/helm.sh/chart/managed-by
+# on every object.
+chartLabels: false
+# With chartLabels false: put selectorLabels on the workload's own metadata.
+# The converter sets false for a live workload that lacks one of them, so the
+# render stays one-to-one with it.
+selectorLabelsOnWorkload: true
 # Overrides the computed selector (app.kubernetes.io/name + instance) used by
 # workload matchLabels, pod template labels and Service/PDB selectors. Selectors
 # are immutable, so a migrated workload must keep its live ones.
@@ -36,7 +44,7 @@ image:
   digest: ""         # pin by digest instead of tag, e.g. "sha256:abcdef..."
                       # (takes precedence over tag; also safe to instead put
                       # "repo@sha256:..." directly in repository)
-  pullPolicy: IfNotPresent
+  pullPolicy: Always   # OpenShift convention
 
 imagePullSecrets: []
 # - name: my-registry-secret
@@ -52,11 +60,11 @@ imagePullSecrets: []
 containerName: ""
 
 replicaCount: 1
-revisionHistoryLimit: 3
+revisionHistoryLimit: 2
 
 # Deployment only: seconds Kubernetes waits before marking a rollout failed.
-# Empty means the field is omitted and Kubernetes applies its own default (600).
-progressDeadlineSeconds: ""
+# 600 is what OpenShift/Kubernetes stores anyway; "" omits the field.
+progressDeadlineSeconds: 600
 
 # Deployment only: seconds a newly-Ready pod must stay Ready before the rollout
 # moves on. Empty means the field is omitted and Kubernetes applies its own
@@ -68,13 +76,19 @@ minReadySeconds: ""
 podManagementPolicy: OrderedReady   # StatefulSet only: OrderedReady | Parallel
 
 # StatefulSet only: the GOVERNING Service, which gives each pod its stable DNS
-# name <pod>.<serviceName>.<ns>.svc. Defaults to the release fullname. Set it
+# name <pod>.<serviceName>.<ns>.svc. Defaults to the primary Service's name
+# (service.name, else the release fullname). Set it
 # when the governing Service is a dedicated headless one (the usual pattern for
 # clustered data systems, e.g. `redis-cache-headless`) — only a headless
 # Service publishes per-pod A records, so pointing this at a regular ClusterIP
 # Service silently breaks peer discovery and cluster formation.
 serviceName: ""
 
+# Empty = a Deployment renders the OpenShift/Kubernetes default,
+#   type: RollingUpdate, rollingUpdate: {maxSurge: 25%, maxUnavailable: 25%};
+# StatefulSet/DaemonSet render no updateStrategy (Kubernetes' own default).
+# Not set here as a map: Helm deep-merges maps, so a default rollingUpdate
+# would be merged into a release's `type: Recreate` and the API rejects that.
 strategy: {}
 # Deployment:   type: RollingUpdate | Recreate
 # StatefulSet:  type: RollingUpdate | OnDelete
@@ -267,9 +281,10 @@ hostPID: false
 shareProcessNamespace: false
 priorityClassName: ""
 runtimeClassName: ""
-schedulerName: ""
-restartPolicy: ""
-dnsPolicy: ""
+# OpenShift/Kubernetes defaults, rendered explicitly. "" omits the field.
+schedulerName: default-scheduler
+restartPolicy: Always
+dnsPolicy: ClusterFirst
 dnsConfig: {}
 hostAliases: []
 readinessGates: []
@@ -282,12 +297,12 @@ terminationGracePeriodSeconds: 30
 service:
   enabled: true
   type: ClusterIP
-  # Map-keyed by port name — Helm merges maps key-by-key, so leaving a
-  # default port here would silently survive alongside (not get replaced by)
-  # any caller's own -f values.yaml that names its ports differently, and
-  # would target a "http"-named container port that may not exist. Declare
-  # ports explicitly per release instead (see COOKBOOK.md / README.md).
-  # selector: {}               # explicit pod selector; default is this release's own labels
+  # name: ""                  # default: the release fullname
+  # Empty = one Service port per container port (`ports` above): same name,
+  # port == targetPort == containerPort, same protocol. So a Deployment, its
+  # Service and its Route connect with nothing but `ports` declared. Set it
+  # only when the Service exposes something else.
+  # selector: {}               # explicit pod selector; default is this release's selectorLabels
   # trafficDistribution: PreferClose
   ports: {}
   # http:
@@ -337,15 +352,19 @@ ingress:
 # ---------------------------------------------------------------------------
 route:
   enabled: false
+  # name: ""          # default: the release fullname
   host: ""
   path: ""
+  # Default: the primary Service (service.name, else the fullname) and its first
+  # port, so the Route reaches the Deployment with nothing set here.
+  # serviceName: ""
   targetPort: ""
   annotations: {}
+  # The OpenShift convention: edge TLS, plain HTTP redirected. `tls: null`
+  # renders a Route without TLS; `insecureEdgeTerminationPolicy: ""` omits it.
   tls:
     termination: edge
-    # -- Rendered only when set (None / Allow / Redirect). Not defaulted: a
-    # Route that never had it must not silently start redirecting HTTP.
-    # insecureEdgeTerminationPolicy: Redirect
+    insecureEdgeTerminationPolicy: Redirect
 
 # ---------------------------------------------------------------------------
 # Extra OpenShift Routes — MAP-BASED (keyed by route name), beyond the
@@ -526,7 +545,10 @@ jobs: {}
 # Unset: the pod follows serviceAccount.automountServiceAccountToken.
 # automountServiceAccountToken: true
 serviceAccount:
-  create: true
+  # false: pods run as the namespace's `default` ServiceAccount (OpenShift's
+  # default) and no serviceAccountName is rendered. true creates one named
+  # `name` (default: the release fullname).
+  create: false
   name: ""
   annotations: {}
   # Unset = not rendered (Kubernetes default: mounted). Set true/false to pin it.

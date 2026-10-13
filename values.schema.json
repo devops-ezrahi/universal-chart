@@ -8,6 +8,7 @@
     "fullnameOverride": { "type": "string" },
     "commonLabels": { "type": "object" },
     "chartLabels": { "type": "boolean" },
+    "selectorLabelsOnWorkload": { "type": "boolean" },
     "selectorLabels": { "type": "object" },
     "commonAnnotations": { "type": "object" },
     "workload": {

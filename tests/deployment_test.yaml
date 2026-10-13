@@ -606,6 +606,8 @@ tests:
   - it: renders serviceAccountName when the release creates or names one
     release:
       name: web
+    set:
+      serviceAccount.create: true
     asserts:
       - equal:
           path: spec.template.spec.serviceAccountName
@@ -677,3 +679,79 @@ tests:
     asserts:
       - isKind:
           of: Deployment
+
+  # ─── OpenShift defaults ───────────────────────────────
+  - it: renders the OpenShift defaults with nothing set
+    asserts:
+      - equal:
+          path: spec.revisionHistoryLimit
+          value: 2
+      - equal:
+          path: spec.progressDeadlineSeconds
+          value: 600
+      - equal:
+          path: spec.strategy
+          value:
+            type: RollingUpdate
+            rollingUpdate:
+              maxSurge: 25%
+              maxUnavailable: 25%
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Always
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 30
+      - equal:
+          path: spec.template.spec.schedulerName
+          value: default-scheduler
+      - equal:
+          path: spec.template.spec.dnsPolicy
+          value: ClusterFirst
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: Always
+      - equal:
+          path: spec.template.spec.containers[0].terminationMessagePath
+          value: /dev/termination-log
+      - equal:
+          path: spec.template.spec.containers[0].terminationMessagePolicy
+          value: File
+      - notExists:
+          path: spec.template.spec.serviceAccountName
+
+  - it: a Recreate strategy gets no default rollingUpdate
+    set:
+      strategy:
+        type: Recreate
+    asserts:
+      - equal:
+          path: spec.strategy
+          value:
+            type: Recreate
+
+  - it: selectorLabelsOnWorkload false keeps metadata to its own labels
+    set:
+      selectorLabelsOnWorkload: false
+      selectorLabels:
+        app: web
+      labels:
+        team: a
+    asserts:
+      - equal:
+          path: metadata.labels
+          value:
+            team: a
+
+  - it: carries its selector labels on metadata without restating them
+    set:
+      selectorLabels:
+        app: web
+      labels:
+        team: a
+    asserts:
+      - equal:
+          path: metadata.labels
+          value:
+            app: web
+            team: a

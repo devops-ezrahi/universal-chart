@@ -32,7 +32,7 @@ spec:
     name: {{ $spec.serviceName | default (include "universal-chart.primaryServiceName" $) }}
     weight: 100
   port:
-    targetPort: {{ $spec.targetPort | default (include "universal-chart.firstKey" ($.Values.service | default dict).ports) }}
+    targetPort: {{ $spec.targetPort | default (include "universal-chart.defaultServicePort" $) }}
   {{- if $spec.tls }}
   tls:
     termination: {{ $spec.tls.termination | default "edge" }}

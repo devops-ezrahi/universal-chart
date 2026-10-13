@@ -116,7 +116,9 @@ def _run(out, extra_args=()):
 
 def _effective_values(out, namespace, release):
     """Layer exactly what the generated ApplicationSet layers, in order."""
-    chain = []
+    # The chart's own values.yaml is the bottom layer: a value equal to its
+    # default is left out of every generated file on purpose.
+    chain = [CHART_DIR / "values.yaml"]
     root_defaults = out / "defaults.yaml"
     if root_defaults.exists():
         chain.append(root_defaults)

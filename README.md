@@ -187,12 +187,8 @@ ports:
   http:
     containerPort: 8080
 
-service:
-  enabled: true
-  ports:
-    http:
-      port: 80
-      targetPort: http
+# No service.ports needed: the Service gets one port per container port
+# (http: 8080 -> 8080). Set service.ports only to expose something else.
 
 ingress:
   enabled: true
@@ -511,6 +507,41 @@ workload:
 
 ---
 
+## OpenShift defaults and what connects by default
+
+The chart's `values.yaml` carries what OpenShift stores on a Deployment
+anyway, so a values file never has to repeat it:
+
+| Value | Default |
+|---|---|
+| `image.pullPolicy` | `Always` |
+| `revisionHistoryLimit` | `2` |
+| `progressDeadlineSeconds` | `600` (`""` omits it) |
+| `strategy` (Deployment) | `RollingUpdate`, `maxSurge: 25%`, `maxUnavailable: 25%` when unset |
+| `restartPolicy` / `dnsPolicy` / `schedulerName` | `Always` / `ClusterFirst` / `default-scheduler` |
+| `terminationGracePeriodSeconds` | `30` |
+| `terminationMessagePath` / `terminationMessagePolicy` | `/dev/termination-log` / `File` |
+| `route.tls` | `termination: edge`, `insecureEdgeTerminationPolicy: Redirect` (`tls: null` = no TLS) |
+| `serviceAccount.create` | `false`: pods run as the namespace's `default` SA |
+| `chartLabels` | `false`: objects carry only their own `labels` (+ `commonLabels`) |
+
+Deployment, Service and Route connect with nothing but `ports` set:
+
+- **Service ports**: empty `service.ports` = one port per container port, same
+  name, `port == targetPort == containerPort`.
+- **Service selector**: `selectorLabels` (default `app.kubernetes.io/name` +
+  `instance`), the same labels the pods carry.
+- **Route**: `to` = the primary Service (`service.name`, else the release
+  fullname), `port.targetPort` = that Service's first port.
+- **StatefulSet `serviceName`**: the primary Service's name.
+
+**Labels.** Only `selectorLabels` are required: they are the workload's
+immutable `spec.selector`, its pod template's labels and the Service's
+selector. A Deployment/StatefulSet/DaemonSet also carries them on its own
+`metadata.labels` by default (`selectorLabelsOnWorkload: true`), so `labels`
+holds only the extra ones (team, environment, ...). Nothing selects a
+Deployment by its own labels; they are for people and tooling (`oc get -l`).
+
 ## Key Features Reference
 
 | Feature | Values Key | Notes |
@@ -780,16 +811,24 @@ repo shaped like this:
 ```
 <values repo>/
   base/<release>.yaml            # comprehensive, environment-agnostic, shared across namespaces
-  <namespace>/
-    defaults.yaml                # what every release in this namespace has in common
+  <namespace>/                   # namespace first, then groups
+    defaults.yaml                # optional: what every release in this folder has in common
     values/<release>.yaml        # image tag + whatever differs from base here
     values/<group>/<release>.yaml  # optional grouping sub-folder (release name unchanged)
-    <variant>/                   # optional variant folder, e.g. prd/yellow (nests: prd/yellow/eu):
-      defaults.yaml              #   deploys into <namespace>, shares base/, carries its group value
+    <group>/                     # optional group folder, e.g. prd/yellow (nests: prd/yellow/eu):
+      defaults.yaml              #   optional; deploys into <namespace>, shares base/, carries its group value
       values/<release>.yaml
   rootApplication.yaml.txt       # with --argocd-manifests true: applied by hand (kubectl apply -f rootApplication.yaml.txt)
-  rootApplicationSet.yaml        # with --argocd-manifests true: one Application per namespace / variant folder
+  rootApplicationSet.yaml        # with --argocd-manifests true: one Application per namespace / group folder
 ```
+
+The root ApplicationSet uses a git **directories** generator: `'*'` (namespace
+folders), `'*/*'` (their groups), one level deeper per nesting, with `base/`,
+`report/`, `cluster-shared/` and every `values/` folder excluded. Argo CD
+matches these with Go's `path.Match`, where `*` never crosses `/` (so
+`'**/*'` behaves like `'*/*'`). Each Application passes `folder:
+'{{ .path.path }}'`; the namespace is that folder's first segment. A hand-made
+group folder needs no `defaults.yaml`.
 
 The root Application ends in `.txt` so that nothing applying the directory —
 Argo CD included — ever deploys or manages it; `kubectl apply -f` reads a file
@@ -817,9 +856,9 @@ helm template appset ms-applicationSet \
   --set originBranch=main
 ```
 
-`namespace`, `originRepoURL` and `originBranch` are required; `originPath`,
-`folder` (a variant folder such as `prd/yellow`, deploying into `namespace`;
-empty = the namespace folder itself), `valuesGlob` (default `*.yaml`; use
+`originRepoURL`, `originBranch` and one of `namespace` / `folder` are
+required. `folder` is a namespace or group folder such as `prd/yellow`; the
+namespace defaults to its first segment (`prd`). `originPath`, `valuesGlob` (default `*.yaml`; use
 `**/*.yaml` with Argo CD's new git-file globbing), `project`,
 `destinationServer`, `destinationName` (a registered cluster name, wins over
 `destinationServer`), `chartRepoURL`, `chartRevision` and `chartPath`

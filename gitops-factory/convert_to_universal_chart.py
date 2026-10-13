@@ -1914,6 +1914,11 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
         image["digest"] = digest
     if c.get("imagePullPolicy"):
         image["pullPolicy"] = c["imagePullPolicy"]
+    else:
+        # What the API server would have stored: the chart's own default is
+        # Always (the OpenShift convention), Kubernetes' is IfNotPresent for a
+        # pinned tag or digest.
+        image["pullPolicy"] = "IfNotPresent" if (digest or (tag and tag != "latest")) else "Always"
     ctx.full_image = image
     # The comprehensive base/ file omits the repository, tag AND digest — all
     # three are the minimal override's job (see build_minimal_values), so a
@@ -2362,8 +2367,13 @@ def build_route_entry(doc: dict, ctx: MicroserviceContext) -> dict:
     tp = (spec.get("port") or {}).get("targetPort")
     if tp:
         entry["targetPort"] = tp
+    # The chart defaults a Route to edge TLS with HTTP redirected (the
+    # OpenShift convention), so what the raw Route did NOT have must be said:
+    # no TLS at all is `tls: null`, TLS without a redirect policy is "".
     if spec.get("tls"):
-        entry["tls"] = spec["tls"]
+        entry["tls"] = {"insecureEdgeTerminationPolicy": "", **spec["tls"]}
+    else:
+        entry["tls"] = None
     if spec.get("wildcardPolicy") and spec["wildcardPolicy"] != "None":
         entry["wildcardPolicy"] = spec["wildcardPolicy"]
     to_name = (spec.get("to") or {}).get("name")
@@ -4188,6 +4198,129 @@ def subtract_defaults(values: dict, defaults: dict) -> dict:
     return out
 
 
+# Top-level keys kept in base/ even when they equal the chart's default:
+# `workload.type` is what tells a reader (and the tools here) what the release is.
+CHART_DEFAULT_KEEP = frozenset({"workload"})
+
+
+def drop_chart_defaults(values: dict, chart_defaults: dict, lower: dict | None = None,
+                        top: bool = True) -> dict:
+    """`values` minus every leaf equal to the chart's own default (values.yaml)
+    at the same path — the OpenShift defaults (pullPolicy, revisionHistoryLimit,
+    strategy, restartPolicy, dnsPolicy, ...) the chart renders anyway.
+
+    `lower` is the layer underneath when that is not the chart itself (a values/
+    file sits on base/): a leaf whose path `lower` sets stays, since removing it
+    would let lower's different value through. Explicit empties that are not
+    the default (`securityContext: {}` against null, `tls: null`) stay too.
+    """
+    if not chart_defaults:
+        return values
+    out: dict = {}
+    for key, val in values.items():
+        if (top and key in CHART_DEFAULT_KEEP) or key not in chart_defaults:
+            out[key] = val
+            continue
+        dval = chart_defaults[key]
+        low = lower.get(key) if isinstance(lower, dict) else None
+        if isinstance(val, dict) and isinstance(dval, dict) and val:
+            sub = drop_chart_defaults(val, dval, low if isinstance(low, dict) else None, top=False)
+            if sub:
+                out[key] = sub
+        elif val != dval or (isinstance(lower, dict) and key in lower):
+            out[key] = val
+    return out
+
+
+def _derived_service_ports(v: dict) -> dict:
+    """The Service ports the chart derives from the container ports when
+    service.ports is empty (universal-chart.servicePorts); {} when any
+    container port is unnamed, since that one would get its map key as name."""
+    out = {}
+    for key, spec in (v.get("ports") or {}).items():
+        if not isinstance(spec, dict) or spec.get("unnamed") or not spec.get("containerPort"):
+            return {}
+        out[key] = {"port": spec["containerPort"], "protocol": spec.get("protocol", "TCP")}
+    return out
+
+
+DEPLOYMENT_STRATEGY = {"type": "RollingUpdate", "rollingUpdate": {"maxSurge": "25%", "maxUnavailable": "25%"}}
+
+
+def drop_derivable(v: dict) -> None:
+    """Remove, in place, what the chart derives from other values anyway:
+    the Service/Route/ServiceAccount named after the release, a Route pointing
+    at the primary Service and its first port, a Service selecting on
+    selectorLabels, targetPort == port, Service ports that are just the
+    container ports, a StatefulSet's governing serviceName == the Service, and
+    workload labels restating selectorLabels (the chart puts them there).
+    `fullnameOverride` is the release's name; nothing is assumed without it.
+    """
+    full = v.get("fullnameOverride")
+    # templates/deployment.yaml renders this when strategy is empty (it is not
+    # a values.yaml default: Helm would merge its rollingUpdate into Recreate).
+    if (v.get("workload") or {}).get("type") == "deployment" and v.get("strategy") == DEPLOYMENT_STRATEGY:
+        v.pop("strategy")
+    svc = v.get("service") if isinstance(v.get("service"), dict) else {}
+    primary = svc.get("name") or full
+    sel = v.get("selectorLabels") or {}
+
+    svc_ports = svc.get("ports") or {}
+    derived = _derived_service_ports(v)
+    effective_ports = svc_ports or derived
+    first_port = sorted(effective_ports)[0] if effective_ports else None
+
+    def trim_route(r: dict, primary_route: bool) -> None:
+        if primary_route and full and r.get("name") == full:
+            r.pop("name")
+        if primary and r.get("serviceName") == primary:
+            r.pop("serviceName")
+        if first_port is not None and r.get("serviceName") is None and r.get("targetPort") == first_port:
+            r.pop("targetPort")
+
+    if isinstance(v.get("route"), dict):
+        trim_route(v["route"], True)
+    for r in (v.get("routes") or {}).values():
+        if isinstance(r, dict):
+            trim_route(r, False)
+    if primary and v.get("serviceName") == primary:
+        v.pop("serviceName")
+
+    if svc:
+        if full and svc.get("name") == full:
+            svc.pop("name")
+        if sel and svc.get("selector") == sel:
+            svc.pop("selector")
+        for p in svc_ports.values():
+            if isinstance(p, dict):
+                if "targetPort" in p and p["targetPort"] == p.get("port"):
+                    p.pop("targetPort")
+                if p.get("protocol") == "TCP":
+                    p.pop("protocol")
+        if svc_ports and derived and set(svc_ports) == set(derived) and all(
+                set(p) <= {"port"} and p.get("port") == derived[k]["port"] and derived[k]["protocol"] == "TCP"
+                for k, p in svc_ports.items()):
+            svc.pop("ports")
+
+    sa = v.get("serviceAccount")
+    if isinstance(sa, dict) and sa.get("create") and full and sa.get("name") == full:
+        sa.pop("name")
+
+    # The chart starts a workload's metadata.labels from selectorLabels. Where
+    # the live workload carries all of them they are not restated; where it
+    # lacks one, the chart is told not to add it (the render stays one-to-one).
+    labels = v.get("labels") if isinstance(v.get("labels"), dict) else {}
+    if sel and (v.get("workload") or {}).get("type") in LABELLED_WORKLOAD_TYPES:
+        if all(labels.get(k) == val for k, val in sel.items()):
+            rest = {k: val for k, val in labels.items() if k not in sel}
+            if rest:
+                v["labels"] = rest
+            else:
+                v.pop("labels", None)
+        else:
+            v["selectorLabelsOnWorkload"] = False
+
+
 def deep_merge(base: dict, override: dict) -> dict:
     """Recursive dict merge — `override` wins on conflicting scalars/lists,
     nested dicts are merged key-by-key rather than one replacing the other
@@ -4448,6 +4581,23 @@ APPSET_CHART_DEFAULTS = {
 }
 
 
+def root_directory_patterns(depth: int) -> tuple[list[str], list[str]]:
+    """path.Match patterns for the root ApplicationSet's directories generator:
+    every folder 1..depth deep, minus the ones that are neither a namespace nor
+    a group — base/, report/, cluster-shared/ (and anything under them) and
+    every values/ folder with its sub-folders."""
+    include = ["/".join(["*"] * d) for d in range(1, depth + 1)]
+    exclude = []
+    # ERRORS_ANALYSIS (NON_NAMESPACE_OUTPUT_DIRS) is this repo's own triage tree,
+    # never part of a values repo.
+    for top in (BASE_DIR_NAME, CLUSTER_SHARED_DIR_NAME, "report"):
+        exclude += ["/".join([top] + ["*"] * (d - 1)) for d in range(1, depth + 1)]
+    for d in range(2, depth + 1):
+        for k in range(1, d):
+            exclude.append("/".join(VALUES_DIR_NAME if i == k else "*" for i in range(d)))
+    return include, exclude
+
+
 def _yaml_scalar(v: str) -> str:
     """One scalar as it would appear in a block mapping, quoted only if needed."""
     return yaml.safe_dump(v, default_style=None, width=1000).removesuffix("\n...\n").strip()
@@ -4458,12 +4608,18 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               values_path: str = "", argocd_namespace: str = "argocd",
                               project: str = "default",
                               destination_server: str = "https://kubernetes.default.svc",
-                              destination_name: str = "", auto_sync: bool = False) -> str:
+                              destination_name: str = "", auto_sync: bool = False,
+                              depth: int = 2) -> str:
     """One Application per namespace folder in this tree, as YAML text.
 
-    Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
-    a defaults.yaml, so one git files generator on '**/defaults.yaml' finds
-    them all at any depth, under both ArgoCD globbing modes. Each Application
+    Namespace first, then groups: <namespace>/, <namespace>/<group>/,
+    <namespace>/<group>/<sub-group>/ ... A git DIRECTORIES generator finds them
+    by existing, so a group folder made by hand needs no defaults.yaml (the
+    chart treats that file as optional). ArgoCD matches directory paths with
+    Go's path.Match, where '*' never crosses '/', so there is one pattern per
+    depth ('*', '*/*', ...) down to `depth`, and the folders that are not
+    namespaces or groups (base/, every values/ and what is under it, the
+    report/cluster-shared trees) are excluded the same way. Each Application
     deploys the ms-applicationSet chart, parameterised with its folder, which
     fans out over <folder>/values/*.yaml and layers base/<file> ->
     <folder>/defaults.yaml -> <folder>/values/<file>. Keeping that second level
@@ -4477,6 +4633,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     """
     q = _yaml_scalar
     segments = [p for p in values_path.split("/") if p]
+    include, exclude = root_directory_patterns(depth)
     rel = ".path.path" + (f' | trimPrefix "{"/".join(segments)}/"' if segments else "")
     params = [
         ("namespace", q("{{ index .path.segments %d }}" % len(segments))),
@@ -4503,10 +4660,13 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         "spec:",
         "  generators:",
         "  - git:",
-        "      files:",
-        f"      - path: {q(_values_repo_path(values_path, '**/' + DEFAULTS_FILE_NAME))}",
-        "      # Switch a namespace off without deleting its folder:",
-        f"      # - path: {q(_values_repo_path(values_path, '<namespace>/**'))}",
+        "      # <namespace>, then its groups: <namespace>/<group>/...",
+        "      directories:",
+        *[f"      - path: {q(_values_repo_path(values_path, pat))}" for pat in include],
+        *[line for pat in exclude for line in (f"      - path: {q(_values_repo_path(values_path, pat))}",
+                                                "        exclude: true")],
+        "      # Switch a namespace (or one group) off without deleting its folder:",
+        f"      # - path: {q(_values_repo_path(values_path, '<namespace>'))}",
         "      #   exclude: true",
         f"      repoURL: &repoURL {q(values_repo_url)}",
         f"      revision: &branch {q(values_revision)}",
@@ -6216,8 +6376,9 @@ def main() -> None:
     EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
         for opt in (args.exclude, args.keep, args.include))
-    chart_keys = set((yaml.safe_load((Path(args.chart) / "values.yaml").read_text(encoding="utf-8"))
-                      if (Path(args.chart) / "values.yaml").is_file() else None) or {})
+    chart_defaults = (yaml.safe_load((Path(args.chart) / "values.yaml").read_text(encoding="utf-8"))
+                      if (Path(args.chart) / "values.yaml").is_file() else None) or {}
+    chart_keys = set(chart_defaults)
     env_groups = [parse_env_group(spec, chart_keys) for spec in args.env_group]
     suffixes = [t.strip() for t in args.env_suffixes.split(",") if t.strip()]
     if suffixes:
@@ -6476,6 +6637,11 @@ def main() -> None:
             ["\nShorten them in the source manifests and re-run."]
         ))
 
+    # What the chart derives on its own (names, selectors, ports) leaves every
+    # release before base/ and values/ are split, so neither file restates it.
+    for ctx in [c for ms in per_namespace_ms.values() for _, c in ms] + list(per_namespace_shared.values()):
+        drop_derivable(ctx.values)
+
     # Pass 2 — there is no GLOBAL defaults layer.
     #
     # The ms-applicationSet chart layers exactly three files per release:
@@ -6554,7 +6720,7 @@ def main() -> None:
         for namespace, _ in entries:
             release_slugs[(namespace, release)] = slug
         if len(entries) == 1:
-            write_base_file(base_dir, slug, entries[0][1].values)
+            write_base_file(base_dir, slug, drop_chart_defaults(entries[0][1].values, chart_defaults))
             return
         key_injections: dict = {}
         if env_groups:
@@ -6570,9 +6736,10 @@ def main() -> None:
             all_warnings.extend(f"[{slug}] env-group: {a['path']} -> {a['template']!r}"
                                 + (f", injected {a['injection']}" if a["injection"] else "")
                                 for a in applied)
-        write_base_file(base_dir, slug, shared_base)
+        write_base_file(base_dir, slug, drop_chart_defaults(shared_base, chart_defaults))
         for namespace, ctx in entries:
-            remainder = subtract_defaults(ctx.values, shared_base)
+            remainder = drop_chart_defaults(subtract_defaults(ctx.values, shared_base), chart_defaults,
+                                            lower=shared_base)
             # The group values this release's templates read come from its
             # folder's defaults.yaml (folder_values); only a value that
             # disagrees with the folder rides in the release's own values/.
@@ -6798,7 +6965,10 @@ def main() -> None:
             args.chart_path, args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
-            auto_sync=args.auto_sync)
+            auto_sync=args.auto_sync,
+            # One level below the deepest folder this run wrote, at least
+            # <namespace>/<group>, so a group added by hand later is found too.
+            depth=max(2, 1 + max((k.count("/") + 1 for k in out_keys), default=1)))
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"

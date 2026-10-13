@@ -174,7 +174,8 @@ def test_converter_renders_the_pulled_store_ca_and_sa(imported, tmp_path):
     assert "solo-vault-ca" in solo["secrets"]
     # solo's pod runs as `default`; the Vault SA beside it must not become the
     # chart's serviceAccount (that would move the pod onto it).
-    assert solo["serviceAccount"]["create"] is False
+    # create: false is the chart's default, so it is left out of the file.
+    assert (solo.get("serviceAccount") or {}).get("create", False) is False
     assert any("name: solo-vault" in e for e in solo["extraDeploy"])
     assert "global-store" in (out / "cluster-shared" / "values" / "cluster-shared-values.yaml").read_text(
         encoding="utf-8")

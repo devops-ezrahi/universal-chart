@@ -14,10 +14,26 @@ metadata:
 spec:
   generators:
   - git:
-      files:
-      - path: '**/defaults.yaml'
-      # Switch a namespace off without deleting its folder:
-      # - path: <namespace>/**
+      # <namespace>, then its groups: <namespace>/<group>/...
+      directories:
+      - path: '*'
+      - path: '*/*'
+      - path: base
+        exclude: true
+      - path: base/*
+        exclude: true
+      - path: cluster-shared
+        exclude: true
+      - path: cluster-shared/*
+        exclude: true
+      - path: report
+        exclude: true
+      - path: report/*
+        exclude: true
+      - path: '*/values'
+        exclude: true
+      # Switch a namespace (or one group) off without deleting its folder:
+      # - path: <namespace>
       #   exclude: true
       repoURL: &repoURL https://github.com/devops-ezrahi/universal-chart-example-flat.git
       revision: &branch main

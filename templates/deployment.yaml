@@ -6,7 +6,7 @@ kind: Deployment
 metadata:
   name: {{ include "universal-chart.fullname" . }}
   labels:
-    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.labels) | nindent 4 }}
+    {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.labels "workload" true) | nindent 4 }}
   {{- /* The object's OWN annotations merged over the release-wide ones.
          Rendering commonAnnotations alone dropped every annotation the raw
          manifest carried on this object - a lost argocd.argoproj.io/sync-wave
@@ -39,10 +39,16 @@ spec:
   selector:
     matchLabels:
       {{- include "universal-chart.selectorLabels" . | nindent 6 }}
-  {{- with .Values.strategy }}
   strategy:
+    {{- /* Unset = what OpenShift/Kubernetes stores for a Deployment anyway. */}}
+    {{- with .Values.strategy }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- else }}
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+    {{- end }}
   template:
     metadata:
       labels:

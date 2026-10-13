@@ -1,4 +1,8 @@
-{{- $ns := required "namespace is required" .Values.namespace -}}
+{{- /* namespace first, then groups: the namespace is the folder's first segment
+       unless given ("prd/yellow" -> prd), so a root ApplicationSet over plain
+       directories only has to pass `folder`. */ -}}
+{{- $ns := .Values.namespace | default (splitList "/" (.Values.folder | default "") | first) -}}
+{{- $ns = required "namespace (or folder) is required" $ns -}}
 {{- $repo := required "originRepoURL is required" .Values.originRepoURL -}}
 {{- $branch := required "originBranch is required" .Values.originBranch -}}
 {{- $prefix := "" -}}
@@ -81,6 +85,9 @@ spec:
           targetRevision: {{ .Values.chartRevision | quote }}
           path: {{ .Values.chartPath | quote }}
           helm:
+            # A folder needs no defaults.yaml (a hand-made group folder often
+            # has none); base/ and values/ files always exist.
+            ignoreMissingValueFiles: true
             valueFiles:
               - '$Values/{{ $prefix }}base{{ printf "{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $folder }}'
               - '$Values/{{ $prefix }}{{ $folder }}/defaults.yaml'

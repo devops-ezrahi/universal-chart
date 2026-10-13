@@ -7,6 +7,9 @@
 workload:
   type: deployment
 
+image:
+  pullPolicy: IfNotPresent
+
 containerName: app
 
 env:
@@ -15,25 +18,13 @@ env:
   ENVIRONMENT:
     value: '{{ .Values.environment }}'
 
-envOrder:
-- ENVIRONMENT
-- DB_URL
-
 service:
-  enabled: true
   name: ms2
   ports:
     http:
       port: 8080
-      targetPort: 8080
-  selector:
-    app: ms2
-  type: ClusterIP
-
-serviceAccount:
-  create: false
-
-chartLabels: false
 
 selectorLabels:
   app: ms2
+
+selectorLabelsOnWorkload: false

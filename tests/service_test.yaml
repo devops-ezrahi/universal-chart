@@ -181,3 +181,53 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  - it: derives one port per container port when service.ports is empty
+    set:
+      ports:
+        http:
+          containerPort: 8080
+        metrics:
+          containerPort: 9090
+          protocol: TCP
+    asserts:
+      - equal:
+          path: spec.ports
+          value:
+            - name: http
+              port: 8080
+              targetPort: 8080
+              protocol: TCP
+            - name: metrics
+              port: 9090
+              targetPort: 9090
+              protocol: TCP
+
+  - it: explicit service.ports win over the container ports
+    set:
+      ports:
+        http:
+          containerPort: 8080
+      service:
+        ports:
+          web:
+            port: 80
+            targetPort: 8080
+    asserts:
+      - equal:
+          path: spec.ports
+          value:
+            - name: web
+              port: 80
+              targetPort: 8080
+              protocol: TCP
+
+  - it: selects the pods by selectorLabels by default
+    set:
+      selectorLabels:
+        app: web
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app: web

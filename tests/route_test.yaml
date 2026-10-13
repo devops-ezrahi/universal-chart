@@ -142,19 +142,77 @@ tests:
           path: metadata.annotations["argocd.argoproj.io/sync-options"]
           value: Replace=true
 
-  - it: does not default insecureEdgeTerminationPolicy
+  - it: defaults to edge TLS with HTTP redirected (OpenShift convention)
+    set:
+      route:
+        enabled: true
+        targetPort: http
+    asserts:
+      - equal:
+          path: spec.tls.termination
+          value: edge
+      - equal:
+          path: spec.tls.insecureEdgeTerminationPolicy
+          value: Redirect
+
+  - it: omits insecureEdgeTerminationPolicy when set to ""
     set:
       route:
         enabled: true
         targetPort: http
         tls:
-          termination: edge
+          insecureEdgeTerminationPolicy: ""
     asserts:
       - equal:
           path: spec.tls.termination
           value: edge
       - notExists:
           path: spec.tls.insecureEdgeTerminationPolicy
+
+  - it: renders no TLS with tls null
+    set:
+      route:
+        enabled: true
+        targetPort: http
+        tls: null
+    asserts:
+      - notExists:
+          path: spec.tls
+
+  - it: connects to the primary Service and its first port by default
+    set:
+      fullnameOverride: web
+      ports:
+        http:
+          containerPort: 8080
+      route:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.to.name
+          value: web
+      - equal:
+          path: spec.port.targetPort
+          value: http
+
+  - it: follows a renamed primary Service
+    set:
+      fullnameOverride: web
+      service:
+        name: web-svc
+        ports:
+          api:
+            port: 80
+            targetPort: 8080
+      route:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.to.name
+          value: web-svc
+      - equal:
+          path: spec.port.targetPort
+          value: api
 
   - it: renders insecureEdgeTerminationPolicy when set
     set:

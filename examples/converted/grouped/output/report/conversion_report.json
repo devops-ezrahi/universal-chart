@@ -27,7 +27,7 @@
   },
   "totals": {
     "microservices": 6,
-    "warnings": 16
+    "warnings": 14
   },
   "env_group_combinations": [
     {
@@ -111,32 +111,6 @@
     {
       "release": "ms1",
       "path": "selectorLabels.app",
-      "template": "ms1-{{ .Values.color }}",
-      "injection": {
-        "color": {
-          "dev/black": "black",
-          "dev/yellow": "yellow",
-          "prd/black": "black",
-          "prd/yellow": "yellow"
-        }
-      }
-    },
-    {
-      "release": "ms1",
-      "path": "service.name",
-      "template": "ms1-{{ .Values.color }}",
-      "injection": {
-        "color": {
-          "dev/black": "black",
-          "dev/yellow": "yellow",
-          "prd/black": "black",
-          "prd/yellow": "yellow"
-        }
-      }
-    },
-    {
-      "release": "ms1",
-      "path": "service.selector.app",
       "template": "ms1-{{ .Values.color }}",
       "injection": {
         "color": {
