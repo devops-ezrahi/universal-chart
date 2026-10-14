@@ -4211,7 +4211,8 @@ def _env_stem(name: str) -> str:
 
 
 def group_shared_releases(shared: dict[str, "MicroserviceContext"],
-                          objects: dict[str, set[tuple[str, str]]]) -> list[list[str]]:
+                          objects: dict[str, set[tuple[str, str]]],
+                          releases: dict[str, set[str]] | None = None) -> list[list[str]]:
     """Which namespaces' `shared` releases are one release, in first-seen order.
 
     A namespace's shared.yaml holds what several of its microservices use, so
@@ -4222,21 +4223,33 @@ def group_shared_releases(shared: dict[str, "MicroserviceContext"],
 
     A namespace joins the first group it has an object in common with (env
     words aside), whose content is identical, or whose namespace is the same
-    app's in another environment (goldenbell-ui / goldenbell-next once 'ui'
-    and 'next' are env words — their shared files need not name one object
-    alike) — unless that group already has a namespace ending in the same
-    '-<token>', since the two would get one Application name (shared-dev) for
-    two deployments. Otherwise (another app's namespaces in the same run) it
-    starts a group of its own."""
+    app's in another environment — unless that group already has a namespace
+    ending in the same '-<token>', since the two would get one Application
+    name (shared-dev) for two deployments. Otherwise (another app's namespaces
+    in the same run) it starts a group of its own.
+
+    The same app's namespaces need not name one shared object alike
+    (goldenbell-ui's ui-settings, goldenbell-next's flags-next). They are
+    known by name instead: equal once env words are stripped (goldenbell-ui /
+    goldenbell-next with 'ui' and 'next' env words), or equal but for the last
+    '-<word>' AND running a release of the same name (`releases`: web and
+    worker in both). platform-data and platform-ops run nothing alike and
+    stay two apps."""
+    releases = releases or {}
+    sibling_keys: dict[str, set] = defaultdict(set)
+    for a in shared:
+        for b in shared:
+            pa, pb = k8s_ns(a).rpartition("-")[0], k8s_ns(b).rpartition("-")[0]
+            if a != b and pa and pa == pb and releases.get(a, set()) & releases.get(b, set()):
+                sibling_keys[a].add(("#namespace", pa))
     groups: list[tuple[list[str], set, set[str]]] = []  # (members, object keys, app suffixes)
     for ns, ctx in shared.items():
         keys = {(kind, _env_stem(str(name))) for kind, name in objects.get(ns, set())}
         keys.add(("#content", content_hash(ctx.values)))
-        # Only a namespace that loses an env word has siblings: platform-data
-        # and platform-ops stay two apps.
         ns_stem = _env_stem(k8s_ns(ns))
         if ns_stem != k8s_ns(ns):
             keys.add(("#namespace", ns_stem))
+        keys |= sibling_keys.get(ns, set())
         suffix = app_name_suffix(ns)
         for members, group_keys, suffixes in groups:
             if keys & group_keys and suffix not in suffixes:
@@ -6603,7 +6616,8 @@ def main() -> None:
     # (each environment's copy) are ONE release, published exactly like a
     # microservice above. Another app's namespaces in the same run form a
     # group of their own, under a name of their own (shared_group_slug).
-    shared_groups = group_shared_releases(per_namespace_shared, per_namespace_shared_objects)
+    shared_groups = group_shared_releases(per_namespace_shared, per_namespace_shared_objects,
+                                          {ns: {name for name, _ in ms} for ns, ms in out_ms.items()})
     taken = set(groups)
     for i, members in enumerate(shared_groups):
         slug = SHARED_DIR_NAME if i == 0 else shared_group_slug(members, taken)
