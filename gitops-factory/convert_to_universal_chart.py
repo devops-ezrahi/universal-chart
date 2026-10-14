@@ -4221,14 +4221,22 @@ def group_shared_releases(shared: dict[str, "MicroserviceContext"],
     values/shared.yaml — the way a microservice running in every namespace is.
 
     A namespace joins the first group it has an object in common with (env
-    words aside), or whose content is identical — unless that group already
-    has a namespace ending in the same '-<token>', since the two would get one
-    Application name (shared-dev) for two deployments. Otherwise (another
-    app's namespaces in the same run) it starts a group of its own."""
+    words aside), whose content is identical, or whose namespace is the same
+    app's in another environment (goldenbell-ui / goldenbell-next once 'ui'
+    and 'next' are env words — their shared files need not name one object
+    alike) — unless that group already has a namespace ending in the same
+    '-<token>', since the two would get one Application name (shared-dev) for
+    two deployments. Otherwise (another app's namespaces in the same run) it
+    starts a group of its own."""
     groups: list[tuple[list[str], set, set[str]]] = []  # (members, object keys, app suffixes)
     for ns, ctx in shared.items():
         keys = {(kind, _env_stem(str(name))) for kind, name in objects.get(ns, set())}
         keys.add(("#content", content_hash(ctx.values)))
+        # Only a namespace that loses an env word has siblings: platform-data
+        # and platform-ops stay two apps.
+        ns_stem = _env_stem(k8s_ns(ns))
+        if ns_stem != k8s_ns(ns):
+            keys.add(("#namespace", ns_stem))
         suffix = app_name_suffix(ns)
         for members, group_keys, suffixes in groups:
             if keys & group_keys and suffix not in suffixes:

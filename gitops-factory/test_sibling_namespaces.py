@@ -83,6 +83,25 @@ def test_app_named_after_its_namespace_is_one_base(tmp_path):
     assert "environment words taken from the namespace names: next, ui" in report
 
 
+def test_sibling_shared_files_are_one_release(tmp_path):
+    """goldenbell-ui and goldenbell-next each have a shared.yaml naming no
+    object alike: still one app's, so one base/shared.yaml and values/
+    shared.yaml in both — not a second base/goldenbell-ui-shared.yaml plus an
+    empty values/ file for it."""
+    src = _named_after_namespace(tmp_path / "in")
+    for ns, name in {"goldenbell-ui": "ui-settings", "goldenbell-next": "next-flags"}.items():
+        (src / ns / "shared.yaml").write_text(yaml.safe_dump(
+            {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": name}, "data": {"K": ns}}),
+            encoding="utf-8")
+    out = tmp_path / "out"
+    _convert(src, out, "--skip-verify")
+    assert sorted(p.name for p in (out / "base").iterdir()) == ["goldenbell.yaml", "other.yaml", "shared.yaml"]
+    for ns in NAMESPACES:
+        assert sorted(p.name for p in (out / ns / "values").iterdir()) == [
+            "goldenbell.yaml", "other.yaml", "shared.yaml"]
+        assert _load(out / ns / "values" / "shared.yaml")["configMaps"]
+
+
 def test_suffixed_file_names_fold_too(tmp_path):
     """web-ui / web-next: same app, the namespace's word in the name."""
     src = _write(tmp_path / "in", {"goldenbell-ui": {"web-ui": "web-ui"},
