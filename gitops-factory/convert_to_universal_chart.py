@@ -2661,6 +2661,10 @@ ENV_IN_VALUES = False
 # kept either way: initContainerOrder (run order), envFromOrder (the later ref
 # wins a shared key) and envOrder when a value reads another var via $(VAR).
 EXACT_COPY = False
+# The --exact-copy flag as given: True / False for every release, None (the
+# default) for the stateful ones only (is_stateful). build_microservice sets
+# EXACT_COPY from it per release.
+EXACT_COPY_FLAG: bool | None = None
 # Order keys whose only job is the byte-identical pod template above.
 COSMETIC_ORDER_KEYS = frozenset({"portOrder", "volumeMountOrder", "volumeOrder", "sidecarOrder"})
 _ENV_REF = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)")
@@ -3902,9 +3906,44 @@ def handle_cluster_scoped(doc: dict, kind: str, cluster_registry: ClusterRegistr
 # Microservice orchestration
 # ---------------------------------------------------------------------------
 
+def is_stateful(docs: list[dict]) -> str | None:
+    """Why a release is stateful, or None: a StatefulSet, or a workload whose
+    pods mount a PersistentVolumeClaim. Those are the ones a cutover restart
+    hurts — a database's pods come back one by one, an RWO volume has to
+    detach and re-attach — so by default they are converted with
+    --exact-copy and the first sync restarts nothing."""
+    for d in docs:
+        kind = d.get("kind")
+        if kind == "StatefulSet":
+            return f"StatefulSet/{(d.get('metadata') or {}).get('name')}"
+        if kind in WORKLOAD_KINDS:
+            pod = (((d.get("spec") or {}).get("template") or {}).get("spec") or {})
+            if any(isinstance(v, dict) and "persistentVolumeClaim" in v for v in pod.get("volumes") or []):
+                return f"{kind}/{(d.get('metadata') or {}).get('name')} mounts a PersistentVolumeClaim"
+    return None
+
+
 def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_registry: NamespaceRegistry,
                        cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                        owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
+    """_build_microservice with EXACT_COPY set for this release: as the flag
+    says, or — no flag — on for a stateful one (is_stateful)."""
+    global EXACT_COPY
+    reason = is_stateful(docs)
+    EXACT_COPY = EXACT_COPY_FLAG if EXACT_COPY_FLAG is not None else reason is not None
+    if EXACT_COPY_FLAG is None and reason:
+        warnings.append(f"{ms_name}: stateful ({reason}) — converted as --exact-copy, so the "
+                        f"cutover sync restarts none of its pods (--exact-copy false to turn off)")
+    try:
+        return _build_microservice(namespace, ms_name, docs, ns_registry, cluster_registry, cluster_values,
+                                   warnings, owner_label, known_pv_names)
+    finally:
+        EXACT_COPY = bool(EXACT_COPY_FLAG)
+
+
+def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_registry: NamespaceRegistry,
+                        cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
+                        owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
     ctx.values["chartLabels"] = False  # labels exactly as live — see CHART_OWNED_LABELS
     # No nameOverride: the Argo CD Application that deploys the release already
@@ -3943,12 +3982,17 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
     if not fullname_source:
         fullname_source = [n for n in ((d.get("metadata") or {}).get("name") for d in docs
                                         if d.get("kind") == "Service") if n]
-    if fullname_source and fullname_source[0] != ms_name:
+    # Pinned even when the raw name IS the file name: Argo CD renders the
+    # release under its Application's name (postgres-dev for postgres.yaml in
+    # shop-dev — argo_release_name), so without the pin the fullname falls back
+    # to that and the cutover creates a NEW StatefulSet postgres-dev, with new,
+    # empty PVCs, next to the live one.
+    if fullname_source:
         raw_name = fullname_source[0]
         ctx.values["fullnameOverride"] = raw_name
         # 'ms1-black' in ms1.yaml is the --env-group stripping the token on
         # purpose, not a misnamed file — the pin is expected, nothing to warn.
-        if not (NAME_TOKENS and strip_name_tokens(raw_name, NAME_TOKENS) == ms_name):
+        if raw_name != ms_name and not (NAME_TOKENS and strip_name_tokens(raw_name, NAME_TOKENS) == ms_name):
             ctx.warnings.append(
                 f"its main resource is named '{raw_name}' in the raw manifest but the file is "
                 f"'{ms_name}.yaml' — pinned fullnameOverride to '{raw_name}' so the rendered "
@@ -4211,7 +4255,8 @@ def _env_stem(name: str) -> str:
 
 
 def group_shared_releases(shared: dict[str, "MicroserviceContext"],
-                          objects: dict[str, set[tuple[str, str]]]) -> list[list[str]]:
+                          objects: dict[str, set[tuple[str, str]]],
+                          releases: dict[str, set[str]] | None = None) -> list[list[str]]:
     """Which namespaces' `shared` releases are one release, in first-seen order.
 
     A namespace's shared.yaml holds what several of its microservices use, so
@@ -4221,14 +4266,34 @@ def group_shared_releases(shared: dict[str, "MicroserviceContext"],
     values/shared.yaml — the way a microservice running in every namespace is.
 
     A namespace joins the first group it has an object in common with (env
-    words aside), or whose content is identical — unless that group already
-    has a namespace ending in the same '-<token>', since the two would get one
-    Application name (shared-dev) for two deployments. Otherwise (another
-    app's namespaces in the same run) it starts a group of its own."""
+    words aside), whose content is identical, or whose namespace is the same
+    app's in another environment — unless that group already has a namespace
+    ending in the same '-<token>', since the two would get one Application
+    name (shared-dev) for two deployments. Otherwise (another app's namespaces
+    in the same run) it starts a group of its own.
+
+    The same app's namespaces need not name one shared object alike
+    (goldenbell-ui's ui-settings, goldenbell-next's flags-next). They are
+    known by name instead: equal once env words are stripped (goldenbell-ui /
+    goldenbell-next with 'ui' and 'next' env words), or equal but for the last
+    '-<word>' AND running a release of the same name (`releases`: web and
+    worker in both). platform-data and platform-ops run nothing alike and
+    stay two apps."""
+    releases = releases or {}
+    sibling_keys: dict[str, set] = defaultdict(set)
+    for a in shared:
+        for b in shared:
+            pa, pb = k8s_ns(a).rpartition("-")[0], k8s_ns(b).rpartition("-")[0]
+            if a != b and pa and pa == pb and releases.get(a, set()) & releases.get(b, set()):
+                sibling_keys[a].add(("#namespace", pa))
     groups: list[tuple[list[str], set, set[str]]] = []  # (members, object keys, app suffixes)
     for ns, ctx in shared.items():
         keys = {(kind, _env_stem(str(name))) for kind, name in objects.get(ns, set())}
         keys.add(("#content", content_hash(ctx.values)))
+        ns_stem = _env_stem(k8s_ns(ns))
+        if ns_stem != k8s_ns(ns):
+            keys.add(("#namespace", ns_stem))
+        keys |= sibling_keys.get(ns, set())
         suffix = app_name_suffix(ns)
         for members, group_keys, suffixes in groups:
             if keys & group_keys and suffix not in suffixes:
@@ -4599,6 +4664,16 @@ def build_cluster_shared_application(namespace: str, chart_repo_url: str, chart_
 # (kind, namespace, name) — and, for cluster-scoped kinds, no two releases in
 # the WHOLE run claim the same (kind, name) regardless of namespace.
 
+def argo_release_name(namespace: str, release: str) -> str:
+    """The Helm release name Argo CD renders a release under: its Application's
+    name (ms-applicationSet names it <file>-<namespace's last word>[-<folder>]
+    and sets no helm.releaseName). Verification renders under THIS name, not the
+    file's: anything the chart derives from .Release.Name — the fullname of a
+    workload whose fullnameOverride is missing — then comes out as Argo CD would
+    apply it, a renamed StatefulSet included."""
+    return f"{release}-{app_name_suffix(namespace)}"
+
+
 def helm_template(chart: Path, release: str, namespace: str, value_files: list[Path]) -> list[dict]:
     cmd = ["helm", "template", release, str(chart), "--namespace", k8s_ns(namespace)]
     for vf in value_files:
@@ -4679,7 +4754,7 @@ def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozens
                     + ". ArgoCD fails the entire sync on a valueFiles entry that does "
                       "not exist — every release needs all three layers on disk.")
                 continue
-            docs = helm_template(chart, release, namespace, chain)
+            docs = helm_template(chart, argo_release_name(namespace, release), namespace, chain)
             rendered += 1
             for doc in docs:
                 kind = doc.get("kind")
@@ -4723,7 +4798,7 @@ def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozens
     cluster_shared_dir = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME
     if cluster_shared_dir.exists() and cluster_shared_dir / "cluster-shared-values.yaml" not in skip:
         vf = cluster_shared_dir / "cluster-shared-values.yaml"
-        docs = helm_template(chart, CLUSTER_SHARED_DIR_NAME, "platform-shared", [vf])
+        docs = helm_template(chart, "cluster-shared-resources", "platform-shared", [vf])
         rendered += 1
         for doc in docs:
             kind, name = doc.get("kind"), (doc.get("metadata") or {}).get("name")
@@ -5227,6 +5302,16 @@ def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list
         # which is the asymmetric suppression this function already warns about
         # a few lines down ("worse than none: it makes the rule look
         # unreliable").
+        # A restart stamp (RESTART_STAMP_ANNOTATIONS) is left out on purpose:
+        # Argo CD syncs with ServerSideApply, so the live stamp — owned by
+        # `kubectl rollout restart`'s field manager, not by Argo — stays on the
+        # pod template and nothing restarts. Not a loss; an annotations map that
+        # held nothing else is not one either.
+        if path[-1:] == ("annotations",):
+            skip = skip | (set(raw) & RESTART_STAMP_ANNOTATIONS)
+        if path[-1:] == ("metadata",) and "annotations" not in rendered and \
+                isinstance(raw.get("annotations"), dict) and set(raw["annotations"]) <= RESTART_STAMP_ANNOTATIONS:
+            skip = skip | {"annotations"}
         if path[-1:] == ("annotations",) and isinstance(rendered, dict) and \
                 any(k.startswith("checksum/") for k in rendered):
             skip = skip | {k for k in raw if k.startswith("checksum/")} \
@@ -5520,7 +5605,7 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
     cluster_shared_vf = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME / "cluster-shared-values.yaml"
     if cluster_shared_vf.exists() and cluster_shared_vf not in skip:
         try:
-            for doc in helm_template(chart, CLUSTER_SHARED_DIR_NAME, "platform-shared", [cluster_shared_vf]):
+            for doc in helm_template(chart, "cluster-shared-resources", "platform-shared", [cluster_shared_vf]):
                 kind, name = doc.get("kind"), (doc.get("metadata") or {}).get("name")
                 if kind and name:
                     cluster_index[(kind, name)] = doc
@@ -5553,7 +5638,7 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
                 base_vf = base_file_for(base_dir, values_dir, vf)
                 value_files = [f for f in (base_vf, ns_defaults_vf, vf) if f.exists()]
                 try:
-                    docs = helm_template(chart, release, namespace, value_files)
+                    docs = helm_template(chart, argo_release_name(namespace, release), namespace, value_files)
                 except RuntimeError as exc:
                     stats["render_failures"] += 1
                     report.append(f"RENDER FAILURE {namespace}/{release}: {exc}")
@@ -6163,13 +6248,15 @@ def main() -> None:
                           "file, as before. Default false: a literal env var is treated like any "
                           "other value — in base/ when it is the same in every namespace, in "
                           "values/ only where it differs.")
-    ap.add_argument("--exact-copy", nargs="?", const=True, default=False, type=_bool_arg,
-                     help="render every migrated pod template byte-for-byte as it runs now, so the "
+    ap.add_argument("--exact-copy", nargs="?", const=True, default=None, type=_bool_arg,
+                     metavar="true|false",
+                     help="render migrated pod templates byte-for-byte as they run now, so the "
                           "cutover sync restarts no pods: writes portOrder/envOrder/volumeMountOrder/"
-                          "volumeOrder/sidecarOrder and keeps an empty securityContext: {}. For apps "
-                          "that cannot take a restart. Default false: cleaner values, and the first "
-                          "sync rolls the pods once. Orders that change behaviour (init containers, "
-                          "envFrom, env read via $(VAR)) are kept either way.")
+                          "volumeOrder/sidecarOrder and keeps an empty securityContext: {}. Default: "
+                          "on for stateful releases only (a StatefulSet, or a workload mounting a "
+                          "PersistentVolumeClaim), the rest get cleaner values and roll once on the "
+                          "first sync. true: every release. false: none. Orders that change "
+                          "behaviour (init containers, envFrom, env read via $(VAR)) are kept either way.")
     ap.add_argument("--interactive", action="store_true",
                      help="with --env-group, ask before each combination (needs a terminal).")
     ap.add_argument("--no-interactive", action="store_false", dest="interactive",
@@ -6208,11 +6295,12 @@ def main() -> None:
 
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
         INCLUDE_PATTERNS
-    global ENV_IN_VALUES, EXACT_COPY
+    global ENV_IN_VALUES, EXACT_COPY, EXACT_COPY_FLAG
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
     ENV_IN_VALUES = args.env_in_values
-    EXACT_COPY = args.exact_copy
+    EXACT_COPY_FLAG = args.exact_copy
+    EXACT_COPY = bool(EXACT_COPY_FLAG)
     EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
         for opt in (args.exclude, args.keep, args.include))
@@ -6595,7 +6683,8 @@ def main() -> None:
     # (each environment's copy) are ONE release, published exactly like a
     # microservice above. Another app's namespaces in the same run form a
     # group of their own, under a name of their own (shared_group_slug).
-    shared_groups = group_shared_releases(per_namespace_shared, per_namespace_shared_objects)
+    shared_groups = group_shared_releases(per_namespace_shared, per_namespace_shared_objects,
+                                          {ns: {name for name, _ in ms} for ns, ms in out_ms.items()})
     taken = set(groups)
     for i, members in enumerate(shared_groups):
         slug = SHARED_DIR_NAME if i == 0 else shared_group_slug(members, taken)
