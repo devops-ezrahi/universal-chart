@@ -84,6 +84,7 @@ def test_render_matches_live_labels_selector_and_pod_spec(tmp_path):
     for kind in ("StatefulSet", "Service"):
         want = dict(live[kind]["metadata"]["labels"])
         want.pop("argocd.argoproj.io/instance", None)  # ArgoCD stamps it at sync
+        want.pop("helm.sh/chart", None)  # the old chart's stamp is dropped on purpose
         assert got[kind]["metadata"]["labels"] == want, kind
     assert got["Service"]["spec"]["selector"] == live["Service"]["spec"]["selector"]
     sts, live_sts = got["StatefulSet"]["spec"], live["StatefulSet"]["spec"]

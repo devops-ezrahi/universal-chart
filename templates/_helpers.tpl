@@ -116,7 +116,7 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- define "universal-chart.objectLabels" -}}
 {{- /* chartLabels: false = render the object's own labels verbatim (plus
        commonLabels), no chart identity labels. The converter sets it: a live
-       object carries its own name/instance/version/helm.sh/chart, and
+       object carries its own name/instance/version, and
        re-deriving them from this release rewrites every one of them. */}}
 {{- if not .root.Values.chartLabels }}
 {{- toYaml (merge (dict) (.own | default dict) (.root.Values.commonLabels | default dict)) }}
@@ -127,10 +127,7 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- end }}
 
 {{- define "universal-chart.labels" -}}
-{{- $core := dict "app.kubernetes.io/name" (include "universal-chart.name" .) "app.kubernetes.io/instance" .Release.Name "helm.sh/chart" (printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-") "app.kubernetes.io/managed-by" .Release.Service }}
-{{- if .Chart.AppVersion }}
-{{- $core = merge $core (dict "app.kubernetes.io/version" (.Chart.AppVersion | toString)) }}
-{{- end }}
+{{- $core := dict "app.kubernetes.io/name" (include "universal-chart.name" .) "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/managed-by" .Release.Service }}
 {{- /* An explicit selectorLabels override is what the workload's pods and
        selector are actually identified by (an existing release's labels,
        carried over when migrating it onto this chart), so it outranks the

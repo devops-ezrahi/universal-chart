@@ -2237,7 +2237,7 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
 # here and re-derived by the chart from Release.Name, which rewrote a migrated
 # pod's labels (and, via the selector, broke an immutable field). They are now
 # carried; handle_workload moves the selector keys to selectorLabels.
-POD_TEMPLATE_CHART_LABELS = frozenset({"pod-template-hash"})
+POD_TEMPLATE_CHART_LABELS = frozenset({"pod-template-hash", "helm.sh/chart"})
 
 
 def pod_template_labels(pod_meta: dict) -> dict:
@@ -2333,13 +2333,17 @@ def raw_labels(doc: dict) -> dict:
     return {k: v for k, v in labels.items() if k not in CHART_OWNED_LABELS}
 
 
-# name/instance/version/managed-by/helm.sh/chart/app are CARRIED now: the
-# converter sets chartLabels: false, so the chart renders an object's labels
-# exactly as the live object had them instead of re-deriving identity labels
-# from this release (a different instance, a new version, a missing name label
-# and helm.sh/chart of this chart all showed up as ArgoCD diffs).
+# name/instance/version/managed-by/app are CARRIED now: the converter sets
+# chartLabels: false, so the chart renders an object's labels exactly as the
+# live object had them instead of re-deriving identity labels from this release
+# (a different instance, a new version and a missing name label all showed up
+# as ArgoCD diffs).
 CHART_OWNED_LABELS = frozenset({
     "pod-template-hash",
+    # The chart that USED to deploy the object (e.g. super-universal-chart-1.0.0).
+    # Carried verbatim it stamped that chart+version onto every object of every
+    # microservice forever, frozen at whatever version was live at conversion.
+    "helm.sh/chart",
     # ArgoCD stamps this on every object it syncs, naming the Application that
     # owns it. It is present in a dump scraped from a live cluster and must NOT
     # come back out of a chart: the chart cannot know which Application will
@@ -4942,6 +4946,8 @@ def find_stale_output(output_dir: Path, expected_values: dict[str, set], expecte
 FIDELITY_HELM_LABELS = {
     # The Helm identity labels are no longer here: the converter carries them
     # (chartLabels: false), so a changed one is a real diff ArgoCD will show.
+    # Except helm.sh/chart: the converter drops it on purpose (CHART_OWNED_LABELS).
+    "helm.sh/chart",
     # Not a Helm label but the same argument: ArgoCD writes it at sync time, so
     # a chart that does not render it has lost nothing. Deliberately the ONLY
     # label added here for the Route defect — the report authorises exactly this
