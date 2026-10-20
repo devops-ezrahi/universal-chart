@@ -8,7 +8,7 @@ fullnameOverride: ""
 # -- Extra labels added to ALL resources
 commonLabels: {}
 # false = every object gets exactly its own `labels` (+ commonLabels), with no
-# chart identity labels (name/instance/version/helm.sh/chart/managed-by). The
+# chart identity labels (name/instance/managed-by). The
 # converter sets it so a migrated object keeps its live labels one-to-one.
 chartLabels: true
 # Overrides the computed selector (app.kubernetes.io/name + instance) used by
