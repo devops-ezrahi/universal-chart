@@ -45,7 +45,7 @@ diff.
 
 | File | Change |
 |---|---|
-| `convert_to_universal_chart.py` `env_list_to_map` | an empty body or `value: {}` becomes `{"value": ""}` |
+| `convert_to_universal_chart.py` `env_list` | an empty body or `value: {}` becomes `{"value": ""}` |
 | `_helpers.tpl` `universal-chart.mapToList` | an entry with an empty body renders `value: ""` instead of a bare `{}` |
 
 `mapToList` is shared with ports and volumeMounts, so the guard had to be

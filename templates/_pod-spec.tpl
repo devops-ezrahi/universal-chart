@@ -247,7 +247,7 @@ MAIN CONTAINER — all possible container spec fields
 
   {{- with .Values.env }}
   env:
-    {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.Values.envOrder "stringValues" true) | nindent 4 }}
+    {{- include "universal-chart.listOrMap" (dict "items" . "stringValues" true) | nindent 4 }}
   {{- end }}
 
   {{- with .Values.envFrom }}
@@ -296,7 +296,7 @@ MAIN CONTAINER — all possible container spec fields
 
   {{- with .Values.volumeMounts }}
   volumeMounts:
-    {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.Values.volumeMountOrder) | nindent 4 }}
+    {{- include "universal-chart.listOrMap" (dict "items" .) | nindent 4 }}
   {{- end }}
 
   {{- with .Values.volumeDevices }}
@@ -428,7 +428,7 @@ containers:
     {{- end }}
     {{- with .job.env }}
     env:
-      {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.job.envOrder "stringValues" true) | nindent 6 }}
+      {{- include "universal-chart.listOrMap" (dict "items" . "stringValues" true) | nindent 6 }}
     {{- end }}
     {{- with .job.envFrom }}
     {{- $envFrom := . }}
@@ -441,7 +441,7 @@ containers:
     {{- end }}
     {{- with .job.volumeMounts }}
     volumeMounts:
-      {{- include "universal-chart.orderedMapToList" (dict "map" . "order" $.job.volumeMountOrder) | nindent 6 }}
+      {{- include "universal-chart.listOrMap" (dict "items" .) | nindent 6 }}
     {{- end }}
   {{- $sidecars := .job.sidecars | default dict }}
   {{- range $name := (include "universal-chart.orderedKeys" (dict "map" $sidecars "order" $.job.sidecarOrder) | fromJsonArray) }}

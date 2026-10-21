@@ -518,6 +518,10 @@ workload:
 | Workload type | `workload.type` | deployment / statefulset / daemonset / none (no compute workload) |
 | Replica count | `replicaCount` | Omitted automatically when HPA is enabled |
 | Update strategy | `strategy` | RollingUpdate / Recreate / OnDelete |
+| Environment variables | `env` | A list, rendered in the order written (`$(VAR)` sees earlier vars); a later values file replaces the whole list. The older name-keyed map still works, rendered sorted |
+| Volume mounts | `volumeMounts` | A list, rendered in the order written; same rules as `env` |
+| Service | `service.enabled: true` | Off by default; set `false` in a later values file to turn it back off |
+| ServiceAccount | `serviceAccount.create: true` | Off by default (pods run as `serviceAccount.name`, else `default`); `false` turns it back off |
 | Sidecar containers | `sidecars` | Map-keyed by container name |
 | Init containers | `initContainers` | Map-keyed by container name |
 | Multiple ConfigMaps | `configMaps` | Map-keyed by ConfigMap name |
@@ -600,12 +604,12 @@ ports:
     containerPort: 5432
 
 env:
-  POSTGRES_USER:
+  - name: POSTGRES_USER
     valueFrom:
       secretKeyRef:
         name: postgres-secret
         key: username
-  POSTGRES_PASSWORD:
+  - name: POSTGRES_PASSWORD
     valueFrom:
       secretKeyRef:
         name: postgres-secret
@@ -626,7 +630,7 @@ volumeClaimTemplates:
     storageClassName: fast-ssd
 
 volumeMounts:
-  data:
+  - name: data
     mountPath: /var/lib/postgresql/data
     subPath: pgdata
 
@@ -651,7 +655,7 @@ tolerations:
   - operator: Exists
 
 volumeMounts:
-  varlog:
+  - name: varlog
     mountPath: /var/log
     readOnly: true
 

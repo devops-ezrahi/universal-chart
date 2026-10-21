@@ -59,7 +59,7 @@ mechanically instead.
 | 2 | `serviceName` wrong | `if spec.get("serviceName")`, captured unconditionally | Fixed |
 | 3 | `serviceAccount` lost | `serviceAccountName or serviceAccount` fallback | Fixed; **count corrected, see §5** |
 | 4 | `image` changed | `split_image` routes the digest separately | Fixed |
-| 5 | `configMap.name` broken | `remap_volumes` / `remap_env` follow `ctx.name_map` | Fixed |
+| 5 | `configMap.name` broken | `remap_volumes` / `env_list` follow `ctx.name_map` | Fixed |
 | 6 | `data.grafana.ini` changed | blob survives the YAML round trip byte-exactly | Whitespace half fixed; quoting half is folder 25 |
 | 7 | Route `spec.to.name` | `build_route_entry` remaps through `ctx.name_map["Service"]` | Fixed |
 | 8 | sidecar containers lost | `v["sidecars"][name]`, keyed by the container's own name | Fixed |

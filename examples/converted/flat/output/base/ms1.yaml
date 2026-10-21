@@ -10,14 +10,10 @@ workload:
 containerName: app
 
 env:
-  DB_URL:
-    value: http://db.{{ .Values.environment }}.svc:5432
-  ENVIRONMENT:
-    value: '{{ .Values.environment }}'
-
-envOrder:
-- ENVIRONMENT
-- DB_URL
+- name: ENVIRONMENT
+  value: '{{ .Values.environment }}'
+- name: DB_URL
+  value: http://db.{{ .Values.environment }}.svc:5432
 
 service:
   enabled: true
@@ -30,8 +26,7 @@ service:
     app: ms1
   type: ClusterIP
 
-serviceAccount:
-  create: false
+fullnameOverride: ms1
 
 chartLabels: false
 

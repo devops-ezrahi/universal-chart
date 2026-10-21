@@ -47,7 +47,8 @@ def test_color_folders_and_environment_values(tmp_path):
 
     base = _load(out / "base/ms1.yaml")
     assert base["fullnameOverride"] == "ms1-{{ .Values.color }}"
-    assert base["env"]["DB_URL"]["value"] == "http://db.{{ .Values.environment }}.svc:5432"
+    db_url = next(e for e in base["env"] if e["name"] == "DB_URL")
+    assert db_url["value"] == "http://db.{{ .Values.environment }}.svc:5432"
     assert _load(out / "dev/yellow/defaults.yaml") == {"color": "yellow", "environment": "dev"}
     assert _load(out / "prd/defaults.yaml")["environment"] == "prd"
     # The folder carries the group values; the release file does not repeat them.

@@ -115,36 +115,37 @@ ports: {}
 #   protocol: TCP
 # grpc:
 #   containerPort: 9090
-# -- Render order of ports / env / envFrom / volumeMounts / volumes / sidecars,
-# by map key. Keys not listed follow in sorted order. Kubernetes stores these as
-# lists, so a different order is a pod-template change (= pods restart); for
-# env it is also semantic ($(VAR) expands only earlier vars). The converter
+# -- Render order of ports / envFrom / volumes / sidecars, by map key. Keys not
+# listed follow in sorted order. Kubernetes stores these as lists, so a
+# different order is a pod-template change (= pods restart). The converter
 # writes them in the raw manifest's order under --exact-copy (no restart at
-# cutover); otherwise only initContainerOrder, envFromOrder, and envOrder when
-# a value reads another var.
+# cutover); otherwise only initContainerOrder and envFromOrder.
+# env and volumeMounts have no order key: write them as lists and they render
+# exactly in the order written.
 portOrder: []
-envOrder: []
 envFromOrder: []
-volumeMountOrder: []
 volumeOrder: []
 sidecarOrder: []
 
 # ---------------------------------------------------------------------------
-# Environment variables — MAP-BASED (keyed by env var name)
+# Environment variables — a LIST, rendered in the order written (the
+# deployment's own order; `$(VAR)` expands only vars defined earlier).
+# A later values file replaces the whole list. The older map form (keyed by
+# env var name, `MY_VAR: {value: hello}`) still works but renders sorted by name.
 # ---------------------------------------------------------------------------
-env: {}
-# MY_VAR:
+env: ~
+# - name: MY_VAR
 #   value: "hello"
-# POD_NAME:
+# - name: POD_NAME
 #   valueFrom:
 #     fieldRef:
 #       fieldPath: metadata.name
-# DB_HOST:
+# - name: DB_HOST
 #   valueFrom:
 #     configMapKeyRef:
 #       name: my-config
 #       key: db-host
-# DB_PASS:
+# - name: DB_PASS
 #   valueFrom:
 #     secretKeyRef:
 #       name: my-secret
@@ -197,13 +198,15 @@ containerRestartPolicy: ""
 lifecycle: {}
 
 # ---------------------------------------------------------------------------
-# Volume Mounts — MAP-BASED (keyed by mount name)
+# Volume Mounts — a LIST, rendered in the order written. A later values file
+# replaces the whole list. The older map form (keyed by mount name) still
+# works but renders sorted by name.
 # ---------------------------------------------------------------------------
-volumeMounts: {}
-# config:
+volumeMounts: ~
+# - name: config
 #   mountPath: /etc/config
 #   readOnly: true
-# data:
+# - name: data
 #   mountPath: /data
 #   subPath: myapp-data
 
@@ -279,8 +282,10 @@ terminationGracePeriodSeconds: 30
 # ---------------------------------------------------------------------------
 # Service — ports are MAP-BASED (keyed by port name)
 # ---------------------------------------------------------------------------
+# Off by default: set `enabled: true` to render the Service (and `false` to
+# turn it back off in a later values file).
 service:
-  enabled: true
+  enabled: false
   type: ClusterIP
   # Map-keyed by port name — Helm merges maps key-by-key, so leaving a
   # default port here would silently survive alongside (not get replaced by)
@@ -525,8 +530,11 @@ jobs: {}
 # Pod-level token mount, separate from the ServiceAccount's own setting below.
 # Unset: the pod follows serviceAccount.automountServiceAccountToken.
 # automountServiceAccountToken: true
+# Off by default: the pods run as `name` when set, otherwise the namespace's
+# `default` ServiceAccount. `create: true` renders one (named `name`, or after
+# the release); `create: false` turns it back off.
 serviceAccount:
-  create: true
+  create: false
   name: ""
   annotations: {}
   # Unset = not rendered (Kubernetes default: mounted). Set true/false to pin it.

@@ -9,31 +9,14 @@ workload:
 
 containerName: app
 
-env:
-  COLOR:
-    value: '{{ .Values.color }}'
-  DB_URL:
-    value: http://db.{{ .Values.environment }}.svc:5432
-  ENVIRONMENT:
-    value: '{{ .Values.environment }}'
-  LOG_LEVEL:
-    value: info
-
-envOrder:
-- ENVIRONMENT
-- DB_URL
-- COLOR
-- LOG_LEVEL
-- FEATURE_FLAG
-
 volumes:
   settings-{{ .Values.color }}:
     configMap:
       name: ms1-settings-{{ .Values.color }}
 
 volumeMounts:
-  settings-{{ .Values.color }}:
-    mountPath: /etc/ms1
+- name: settings-{{ .Values.color }}
+  mountPath: /etc/ms1
 
 service:
   enabled: true
@@ -62,9 +45,6 @@ cronjobs:
       containerName: report
       restartPolicy: OnFailure
     schedule: 0 2 * * *
-
-serviceAccount:
-  create: false
 
 fullnameOverride: ms1-{{ .Values.color }}
 

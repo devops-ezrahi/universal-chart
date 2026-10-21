@@ -265,8 +265,9 @@ def test_shared_release_keeps_what_it_declared_in_both_modes(tmp_path, mode):
     assert _dig(values, ("workload", "type")) == "none", (
         f"[{mode}] the shared release lost workload.type; it will render the "
         f"chart's default workload instead. effective values: {sorted(values)}")
-    assert _dig(values, ("service", "enabled")) is False, (
-        f"[{mode}] the shared release lost service.enabled; it will render a "
+    # The chart renders no Service unless service.enabled is true.
+    assert _dig(values, ("service", "enabled")) in (None, False), (
+        f"[{mode}] the shared release turned service.enabled on; it will render a "
         f"Service it never declared. effective values: {sorted(values)}")
     assert _dig(values, ("configMaps", "platform-ops-shared-config", "data", "LOG_LEVEL")) == "info"
 
