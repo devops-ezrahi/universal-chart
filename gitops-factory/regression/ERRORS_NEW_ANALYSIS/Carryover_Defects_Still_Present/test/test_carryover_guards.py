@@ -243,11 +243,10 @@ def test_carryover_5_volume_references_follow_a_configmap_rename():
 def test_carryover_5_env_valueFrom_references_follow_a_rename():
     ctx = _ctx()
     ctx.name_map["Secret"]["db-creds"] = "postgres-db-creds"
-    env = conv.env_list_to_map([
+    out = conv.env_list([
         {"name": "PW", "valueFrom": {"secretKeyRef": {"name": "db-creds", "key": "password"}}},
-    ])
-    out = conv.remap_env(env, ctx)
-    assert out["PW"]["valueFrom"]["secretKeyRef"]["name"] == "postgres-db-creds"
+    ], ctx)
+    assert out[0]["valueFrom"]["secretKeyRef"]["name"] == "postgres-db-creds"
 
 
 def test_carryover_5_an_unrenamed_reference_is_left_alone():

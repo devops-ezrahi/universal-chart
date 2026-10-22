@@ -11,8 +11,16 @@ image:
 replicaCount: 1
 
 env:
-  FEATURE_FLAG:
-    value: 'off'
+- name: ENVIRONMENT
+  value: prd
+- name: DB_URL
+  value: http://db.prd.svc:5432
+- name: COLOR
+  value: yellow
+- name: LOG_LEVEL
+  value: info
+- name: FEATURE_FLAG
+  value: 'off'
 
 cronjobs:
   ms1-report-{{ .Values.color }}:

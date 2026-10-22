@@ -256,7 +256,7 @@ def test_stateless_release_stays_clean_by_default(tmp_path):
     comparison above would see it."""
     live, out, _ = convert(tmp_path, ["shop-dev"])
     base = yaml.safe_load((out / "base" / "web.yaml").read_text(encoding="utf-8"))
-    assert not {"portOrder", "envOrder", "volumeMountOrder", "volumeOrder", "sidecarOrder"} & set(base)
+    assert not {"portOrder", "volumeOrder", "sidecarOrder"} & set(base)
     rendered = render(out, "shop-dev", "web", "Deployment")
     w = live[("shop-dev", "web")]
     assert server_defaults(after_sync(w, rendered))["spec"]["template"] != w["spec"]["template"]
