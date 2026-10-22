@@ -283,6 +283,30 @@ def test_reimport_drops_the_charts_own_links():
     assert conv.clean_annotations(own) == own
 
 
+@needs_helm
+def test_exact_copy_renders_no_link_annotations(tmp_path):
+    db = {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "db"},
+          "spec": {"serviceName": "db", "selector": {"matchLabels": {"app": "db"}},
+                   "template": {"metadata": {"labels": {"app": "db"}},
+                                "spec": {"containers": [{"name": "db", "image": "reg/db:1"}]}}}}
+    r, out = _convert(tmp_path, {"db": [db], "web": [_deploy("web")]})
+    assert r.returncode == 0, r.stderr[-2000:]
+    # Stateful = exact copy by default: it opts out; the plain Deployment does not.
+    assert yaml.safe_load((out / "base" / "db.yaml").read_text())["links"] == {"objects": False}
+    assert "links" not in yaml.safe_load((out / "base" / "web.yaml").read_text())
+    # Whatever ms-applicationSet passes, the exact copy renders no annotation.
+    files = [out / "base" / "db.yaml", out / "app" / "defaults.yaml", out / "app" / "values" / "db.yaml"]
+    args = ["helm", "template", "db", str(CHART_DIR), "-n", "app",
+            "--set-string", "links.application=argocd/db-app,links.argocd=https://argo/x,links.console=https://c"]
+    for f in files:
+        if f.exists():
+            args += ["-f", str(f)]
+    docs = [d for d in yaml.safe_load_all(subprocess.run(args, capture_output=True, text=True, check=True).stdout) if d]
+    sts = next(d for d in docs if d["kind"] == "StatefulSet")
+    assert not any(k.startswith(("universal-chart/", "link.argocd", "app.openshift.io/edit-url"))
+                   for k in (sts["metadata"].get("annotations") or {}))
+
+
 def _appset(*sets):
     r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"), "-n", "openshift-gitops",
                         "--set", "namespace=shop-dev,originBranch=main",
@@ -292,13 +316,21 @@ def _appset(*sets):
 
 
 @needs_helm
-def test_ms_applicationset_links_values_files_without_touching_releases():
+def test_ms_applicationset_links_by_default():
     [appset] = _appset()
     meta = appset["spec"]["template"]["metadata"]["annotations"]
     browse = "https://git.example.com/projects/OPS/repos/values/browse/"
     assert meta["link.argocd.argoproj.io/external-link"] == browse + "{{ .path.path }}/{{ .path.filename }}?at=main"
     assert meta["universal-chart/defaults-file"] == browse + "shop-dev/defaults.yaml?at=main"
-    # A derived repo link alone never changes what a release renders.
+    # No URLs configured: every object still names its Application and file.
+    params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert params == {"links.application": 'openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}-dev',
+                      "links.values": browse + "{{ .path.path }}/{{ .path.filename }}?at=main"}
+
+
+@needs_helm
+def test_ms_applicationset_object_links_can_be_turned_off():
+    [appset] = _appset("--set", "links.objects=false")
     assert "parameters" not in appset["spec"]["template"]["spec"]["sources"][0]["helm"]
 
 

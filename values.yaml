@@ -22,6 +22,14 @@ commonAnnotations: {}
 # them in for each Application it generates (its `links` values); empty, the
 # default, renders nothing. Leave them out of values files.
 links:
+  # false = none of the annotations below, whatever ms-applicationSet passes.
+  # The converter writes it for an --exact-copy release, which must render
+  # exactly as it runs now.
+  objects: true
+  # <namespace>/<name> of the Argo CD Application deploying this release:
+  # universal-chart/application. Set even without an Argo CD URL, so
+  # `oc get -o yaml` always says where an object comes from.
+  application: ""
   # The Argo CD Application deploying this release:
   # universal-chart/argocd-application on every object, and app.openshift.io/edit-url
   # on the workload - the OpenShift topology view's corner link.

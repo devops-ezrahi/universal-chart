@@ -46,10 +46,14 @@ applicationsSync: ""
 
 # Links between Argo CD, the values repo and the OpenShift console. Set them
 # once, as helm parameters on the root ApplicationSet (the converter's
-# --argocd-url / --console-url). Setting argocdUrl or consoleUrl annotates
-# every object every microservice deploys - metadata only, no pod restarts,
-# but under manual sync each Application reads OutOfSync until it is synced.
+# --argocd-url / --console-url). Every object every microservice deploys is
+# annotated with its Application (and its values file, when the repo's web UI
+# is known) - metadata only, no pod restarts, but the first time under manual
+# sync each Application reads OutOfSync until it is synced.
 links:
+  # false = annotate nothing the microservices deploy (the Application keeps
+  # its own values-file links).
+  objects: true
   # Argo CD's web UI, e.g. https://openshift-gitops-server-openshift-gitops.apps.example.com
   # Every object a microservice deploys is annotated with its Application's page
   # (and its workload gets the OpenShift topology view's corner link to it).

@@ -123,12 +123,15 @@ spec:
               - '$Values/{{ $baseFile }}'
               - '$Values/{{ $defaultsFile }}'
               - '$Values/{{ $valuesFile }}'
-            {{- /* Only once argocdUrl/consoleUrl is set: a parameter changes what
-                   every object renders, so a values-repo link alone (derived,
-                   on by default) stays on the Application and syncs nothing. */}}
-            {{- if or $argocd $links.consoleUrl }}
+            {{- /* On by default: every object names the Application deploying
+                   it, and links its values file when the repo's web UI is
+                   known. links.objects: false turns all of it off. */}}
+            {{- if ne (toString $links.objects) "false" }}
             # The chart's `links`: annotations on every object it renders.
             parameters:
+              - name: links.application
+                value: '{{ $argocdNs }}/{{ $appName }}'
+                forceString: true
               {{- with $argocd }}
               - name: links.argocd
                 value: '{{ . }}/applications/{{ $argocdNs }}/{{ $appName }}'

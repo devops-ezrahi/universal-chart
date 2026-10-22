@@ -830,7 +830,7 @@ TOP_LEVEL_KEY_ORDER = [
     "nodeSelector", "tolerations", "topologySpreadConstraints", "priorityClassName", "runtimeClassName",
     "schedulerName", "hostNetwork", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
     "hostAliases", "automountServiceAccountToken", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
-    "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations", "chartLabels",
+    "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations", "chartLabels", "links",
     "selectorLabels", "podAnnotations", "podLabels", "labels", "annotations", "sidecars", "sidecarOrder", "initContainers", "initContainerOrder",
 ]
 
@@ -989,7 +989,7 @@ CHART_LINK_ANNOTATIONS = ("app.openshift.io/edit-url", "link.argocd.argoproj.io/
 def clean_annotations(ann: Optional[dict]) -> dict:
     if not ann:
         return {}
-    linked = "universal-chart/argocd-application" in ann
+    linked = "universal-chart/argocd-application" in ann or "universal-chart/application" in ann
     return {k: v for k, v in ann.items()
             if not k.startswith(VOLATILE_ANNOTATION_PREFIXES) and not k.startswith("universal-chart/")
             and not (linked and k in CHART_LINK_ANNOTATIONS)}
@@ -3961,6 +3961,10 @@ def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regis
                         owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
     ctx.values["chartLabels"] = False  # labels exactly as live — see CHART_OWNED_LABELS
+    # An exact copy renders every object as it runs now: none of the navigation
+    # annotations ms-applicationSet would otherwise hand the chart (links.*).
+    if EXACT_COPY:
+        ctx.values["links"] = {"objects": False}
     # No nameOverride: the Argo CD Application that deploys the release already
     # names it, so the chart's fullname needs nothing from the values file.
     #

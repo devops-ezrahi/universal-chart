@@ -36,6 +36,30 @@ tests:
       - notExists:
           path: metadata.annotations["app.openshift.io/edit-url"]
 
+  - it: names the Application even without an Argo CD URL
+    template: templates/deployment.yaml
+    set:
+      links:
+        application: openshift-gitops/web-dev
+    asserts:
+      - equal:
+          path: metadata.annotations["universal-chart/application"]
+          value: openshift-gitops/web-dev
+      - notExists:
+          path: metadata.annotations["app.openshift.io/edit-url"]
+
+  - it: renders none of them for an exact copy
+    template: templates/deployment.yaml
+    set:
+      links:
+        objects: false
+        application: openshift-gitops/web-dev
+        argocd: https://argo.example.com/applications/argocd/web-dev
+        console: https://console.example.com
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
   - it: gives the workload the topology link and its console page
     template: templates/deployment.yaml
     set:

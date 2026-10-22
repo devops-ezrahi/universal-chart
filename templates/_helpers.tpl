@@ -135,6 +135,7 @@ leaked one object's annotations onto every object rendered after it.
 
 Then the navigation links (.Values.links), which only fill keys nothing above
 set — a values file's own link.argocd.argoproj.io/external-link stays:
+  universal-chart/application         <namespace>/<name> of that Application
   universal-chart/argocd-application  the Argo CD Application deploying this release
   universal-chart/values-file         the values file in git that sets it
   app.openshift.io/edit-url           the same Argo CD link, on the workload only:
@@ -155,12 +156,16 @@ Usage: {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec
 {{- $out := merge (dict) (.root.Values.commonAnnotations | default dict) (.own | default dict) (.extra | default dict) }}
 {{- $links := .root.Values.links | default dict }}
 {{- $nav := dict }}
+{{- /* links.objects: false (the converter's exact copy) renders none of them. */}}
+{{- if ne (toString $links.objects) "false" }}
+{{- with $links.application }}{{- $_ := set $nav "universal-chart/application" . }}{{- end }}
 {{- with $links.argocd }}{{- $_ := set $nav "universal-chart/argocd-application" . }}{{- end }}
 {{- with $links.values }}{{- $_ := set $nav "universal-chart/values-file" . }}{{- end }}
 {{- if .consoleRef }}
 {{- with $links.argocd }}{{- $_ := set $nav "app.openshift.io/edit-url" . }}{{- end }}
 {{- with $links.console }}
 {{- $_ := set $nav "link.argocd.argoproj.io/external-link" (printf "%s/k8s/ns/%s/%s" (trimSuffix "/" .) $.root.Release.Namespace $.consoleRef) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- toYaml (merge $out $nav) }}
