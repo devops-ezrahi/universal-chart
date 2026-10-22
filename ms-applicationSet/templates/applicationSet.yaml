@@ -5,6 +5,34 @@
 {{- if .Values.originPath }}{{- $prefix = printf "%s/" .Values.originPath -}}{{- end -}}
 {{- $folder := .Values.folder | default $ns -}}
 {{- $suffix := ternary "" (printf "-%s" (trimPrefix (printf "%s/" $ns) $folder | replace "/" "-")) (eq $folder $ns) -}}
+{{- /* The Application's name, as a goTemplate expression for the ApplicationSet. */ -}}
+{{- $appName := printf "{{ .path.filename | trimSuffix \".yaml\" }}-%s%s" ($ns | splitList "-" | last) $suffix -}}
+{{- /* Links (see values.yaml `links`). $fileUrl holds PATH where a repo path
+       goes (a replace, not printf: a web URL may carry %-escapes): Bitbucket Server browses at /browse/<path>?at=<branch>,
+       GitHub at /blob/<branch>/<path>, GitLab at /-/blob/<branch>/<path>. */ -}}
+{{- $links := .Values.links | default dict -}}
+{{- $argocd := trimSuffix "/" ($links.argocdUrl | default "") -}}
+{{- $argocdNs := $links.argocdNamespace | default .Release.Namespace -}}
+{{- $web := trimSuffix "/" ($links.repoWebUrl | default "") -}}
+{{- $bare := trimSuffix ".git" $repo -}}
+{{- if and (not $web) (regexMatch "^https?://[^@]+/scm/[^/]+/[^/]+$" $bare) -}}
+{{- $web = regexReplaceAll "^(https?://.+)/scm/([^/]+)/([^/]+)$" $bare "${1}/projects/${2}/repos/${3}" -}}
+{{- else if and (not $web) (regexMatch "^https://(github\\.com|gitlab\\.com)/" $bare) -}}
+{{- $web = $bare -}}
+{{- end -}}
+{{- $fileUrl := "" -}}
+{{- if $web -}}
+{{- if regexMatch "/projects/[^/]+/repos/[^/]+$" $web -}}
+{{- $fileUrl = printf "%s/browse/PATH?at=%s" $web $branch -}}
+{{- else if contains "gitlab" $web -}}
+{{- $fileUrl = printf "%s/-/blob/%s/PATH" $web $branch -}}
+{{- else -}}
+{{- $fileUrl = printf "%s/blob/%s/PATH" $web $branch -}}
+{{- end -}}
+{{- end -}}
+{{- $baseFile := printf "%sbase{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $prefix $folder -}}
+{{- $defaultsFile := printf "%s%s/defaults.yaml" $prefix $folder -}}
+{{- $valuesFile := "{{ .path.path }}/{{ .path.filename }}" -}}
 {{/*
   One ApplicationSet for ONE namespace. Its git "files" generator enumerates
   <namespace>/values/*.yaml in the values repo - that flat directory IS the list
@@ -61,12 +89,22 @@ spec:
           - path: '{{ $prefix }}{{ $folder }}/values/{{ .Values.valuesGlob | default "*.yaml" }}'
   template:
     metadata:
-      name: '{{ printf "{{ .path.filename | trimSuffix \".yaml\" }}" }}-{{ $ns | splitList "-" | last }}{{ $suffix }}'
+      name: '{{ $appName }}'
       labels:
         namespace: {{ $ns | quote }}
+        {{- /* What the ConsoleLink filters Argo CD's list on; a label value
+               cannot hold the slash a variant folder has. */}}
+        folder: {{ $folder | replace "/" "-" | trunc 63 | trimSuffix "-" | quote }}
         managed-by: ms-applicationSet
       annotations:
         argocd.argoproj.io/sync-wave: "0"
+        {{- with $fileUrl }}
+        # Argo CD shows this one on the Application's tile and summary.
+        link.argocd.argoproj.io/external-link: '{{ replace "PATH" $valuesFile . }}'
+        universal-chart/values-file: '{{ replace "PATH" $valuesFile . }}'
+        universal-chart/defaults-file: '{{ replace "PATH" $defaultsFile . }}'
+        universal-chart/base-file: '{{ replace "PATH" $baseFile . }}'
+        {{- end }}
     spec:
       project: {{ .Values.project | quote }}
       destination:
@@ -82,9 +120,34 @@ spec:
           path: {{ .Values.chartPath | quote }}
           helm:
             valueFiles:
-              - '$Values/{{ $prefix }}base{{ printf "{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $folder }}'
-              - '$Values/{{ $prefix }}{{ $folder }}/defaults.yaml'
-              - '$Values/{{ printf "{{ .path.path }}/{{ .path.filename }}" }}'
+              - '$Values/{{ $baseFile }}'
+              - '$Values/{{ $defaultsFile }}'
+              - '$Values/{{ $valuesFile }}'
+            {{- /* On by default: every object names the Application deploying
+                   it, and links its values file when the repo's web UI is
+                   known. links.objects: false turns all of it off. */}}
+            {{- if ne (toString $links.objects) "false" }}
+            # The chart's `links`: annotations on every object it renders.
+            parameters:
+              - name: links.application
+                value: '{{ $argocdNs }}/{{ $appName }}'
+                forceString: true
+              {{- with $argocd }}
+              - name: links.argocd
+                value: '{{ . }}/applications/{{ $argocdNs }}/{{ $appName }}'
+                forceString: true
+              {{- end }}
+              {{- with $fileUrl }}
+              - name: links.values
+                value: '{{ replace "PATH" $valuesFile . }}'
+                forceString: true
+              {{- end }}
+              {{- with $links.consoleUrl }}
+              - name: links.console
+                value: {{ trimSuffix "/" . | quote }}
+                forceString: true
+              {{- end }}
+            {{- end }}
         - repoURL: {{ $repo | quote }}
           targetRevision: {{ $branch | quote }}
           ref: Values

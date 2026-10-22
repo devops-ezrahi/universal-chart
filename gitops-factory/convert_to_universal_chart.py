@@ -830,7 +830,7 @@ TOP_LEVEL_KEY_ORDER = [
     "nodeSelector", "tolerations", "topologySpreadConstraints", "priorityClassName", "runtimeClassName",
     "schedulerName", "hostNetwork", "affinity", "podSecurityContext", "securityContext", "scc", "dnsPolicy", "dnsConfig",
     "hostAliases", "automountServiceAccountToken", "serviceAccount", "rbac", "serviceMonitor", "extraDeploy",
-    "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations", "chartLabels",
+    "nameOverride", "fullnameOverride", "commonLabels", "commonAnnotations", "chartLabels", "links",
     "selectorLabels", "podAnnotations", "podLabels", "labels", "annotations", "sidecars", "sidecarOrder", "initContainers", "initContainerOrder",
 ]
 
@@ -978,10 +978,21 @@ def dump_yaml(data: Any, spaced: bool = False) -> str:
 # Sanitization
 # ---------------------------------------------------------------------------
 
+# The chart's navigation links (values.yaml `links`), stamped from what
+# ms-applicationSet passes in, never from a values file. An object that carries
+# universal-chart/argocd-application had its edit-url / external-link written by
+# the same helper; carried into values, they would pin this deployment's URLs
+# and outrank the links of the Application that deploys it next.
+CHART_LINK_ANNOTATIONS = ("app.openshift.io/edit-url", "link.argocd.argoproj.io/external-link")
+
+
 def clean_annotations(ann: Optional[dict]) -> dict:
     if not ann:
         return {}
-    return {k: v for k, v in ann.items() if not k.startswith(VOLATILE_ANNOTATION_PREFIXES)}
+    linked = "universal-chart/argocd-application" in ann or "universal-chart/application" in ann
+    return {k: v for k, v in ann.items()
+            if not k.startswith(VOLATILE_ANNOTATION_PREFIXES) and not k.startswith("universal-chart/")
+            and not (linked and k in CHART_LINK_ANNOTATIONS)}
 
 
 def filter_transient(docs: list[dict], warnings: Optional[list[str]] = None) -> list[dict]:
@@ -3950,6 +3961,10 @@ def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regis
                         owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
     ctx.values["chartLabels"] = False  # labels exactly as live — see CHART_OWNED_LABELS
+    # An exact copy renders every object as it runs now: none of the navigation
+    # annotations ms-applicationSet would otherwise hand the chart (links.*).
+    if EXACT_COPY:
+        ctx.values["links"] = {"objects": False}
     # No nameOverride: the Argo CD Application that deploys the release already
     # names it, so the chart's fullname needs nothing from the values file.
     #
@@ -4527,7 +4542,8 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               values_path: str = "", argocd_namespace: str = "argocd",
                               project: str = "default",
                               destination_server: str = "https://kubernetes.default.svc",
-                              destination_name: str = "", auto_sync: bool = False) -> str:
+                              destination_name: str = "", auto_sync: bool = False,
+                              argocd_url: str = "", console_url: str = "") -> str:
     """One Application per namespace folder in this tree, as YAML text.
 
     Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
@@ -4561,6 +4577,11 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         # The microservice Applications the chart renders: manual sync unless
         # --auto-sync true. Always written — the chart's own default is true.
         ("autoSync", q("true" if auto_sync else "false")),
+        # Navigation links (ms-applicationSet's `links`): every object a
+        # microservice deploys points back at its Argo CD Application, and its
+        # workload at its OpenShift console page from Argo CD's resource tree.
+        *([("links.argocdUrl", q(argocd_url.rstrip("/")))] if argocd_url else []),
+        *([("links.consoleUrl", q(console_url.rstrip("/")))] if console_url else []),
     ]
     lines = [
         "apiVersion: argoproj.io/v1alpha1",
@@ -6168,6 +6189,14 @@ def main() -> None:
     ap.add_argument("--argocd-cluster", default="",
                      help="deploy to the ArgoCD cluster registered under this NAME instead of "
                           "--destination-server's URL (destination.name rather than .server).")
+    ap.add_argument("--argocd-url", default="", metavar="URL",
+                     help="Argo CD's web UI. Every object a microservice deploys is annotated with "
+                          "a link to the Application that deploys it (and its workload gets the "
+                          "OpenShift topology view's corner link). Passed to ms-applicationSet as "
+                          "links.argocdUrl in the root ApplicationSet; empty writes nothing.")
+    ap.add_argument("--console-url", default="", metavar="URL",
+                     help="the OpenShift web console. Each workload's node in Argo CD's resource "
+                          "tree links to its page there (ms-applicationSet's links.consoleUrl).")
     ap.add_argument("--destination-server", default="https://kubernetes.default.svc",
                      help="cluster API URL every generated Application deploys to. The default is "
                           "the in-cluster address, correct when ArgoCD manages its own cluster; "
@@ -6893,7 +6922,7 @@ def main() -> None:
             args.chart_path, args.values_repo_url, args.values_revision, args.values_path,
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
-            auto_sync=args.auto_sync)
+            auto_sync=args.auto_sync, argocd_url=args.argocd_url, console_url=args.console_url)
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"

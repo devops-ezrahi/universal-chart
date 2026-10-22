@@ -256,6 +256,97 @@ def test_ms_applicationset_autosync(flag, automated):
     assert ("automated" in doc["spec"]["template"]["spec"]["syncPolicy"]) is automated
 
 
+# --- navigation links ---------------------------------------------------------
+
+def test_root_appset_passes_links_only_when_asked():
+    plain = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
+                                                          "https://v", "main"))
+    names = {p["name"] for p in plain["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert not {n for n in names if n.startswith("links.")}
+    appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
+                                                           "https://v", "main", argocd_url="https://argo/",
+                                                           console_url="https://console"))
+    params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
+    assert {"name": "links.argocdUrl", "value": "https://argo"} in params
+    assert {"name": "links.consoleUrl", "value": "https://console"} in params
+
+
+def test_reimport_drops_the_charts_own_links():
+    stamped = {"universal-chart/argocd-application": "https://argo/applications/argocd/web-dev",
+               "universal-chart/values-file": "https://git/x.yaml",
+               "app.openshift.io/edit-url": "https://argo/applications/argocd/web-dev",
+               "link.argocd.argoproj.io/external-link": "https://console/k8s/ns/dev/apps~v1~Deployment/web",
+               "team": "shop"}
+    assert conv.clean_annotations(stamped) == {"team": "shop"}
+    # Set by hand, not by the chart: kept.
+    own = {"link.argocd.argoproj.io/external-link": "https://grafana/d/web"}
+    assert conv.clean_annotations(own) == own
+
+
+@needs_helm
+def test_exact_copy_renders_no_link_annotations(tmp_path):
+    db = {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "db"},
+          "spec": {"serviceName": "db", "selector": {"matchLabels": {"app": "db"}},
+                   "template": {"metadata": {"labels": {"app": "db"}},
+                                "spec": {"containers": [{"name": "db", "image": "reg/db:1"}]}}}}
+    r, out = _convert(tmp_path, {"db": [db], "web": [_deploy("web")]})
+    assert r.returncode == 0, r.stderr[-2000:]
+    # Stateful = exact copy by default: it opts out; the plain Deployment does not.
+    assert yaml.safe_load((out / "base" / "db.yaml").read_text())["links"] == {"objects": False}
+    assert "links" not in yaml.safe_load((out / "base" / "web.yaml").read_text())
+    # Whatever ms-applicationSet passes, the exact copy renders no annotation.
+    files = [out / "base" / "db.yaml", out / "app" / "defaults.yaml", out / "app" / "values" / "db.yaml"]
+    args = ["helm", "template", "db", str(CHART_DIR), "-n", "app",
+            "--set-string", "links.application=argocd/db-app,links.argocd=https://argo/x,links.console=https://c"]
+    for f in files:
+        if f.exists():
+            args += ["-f", str(f)]
+    docs = [d for d in yaml.safe_load_all(subprocess.run(args, capture_output=True, text=True, check=True).stdout) if d]
+    sts = next(d for d in docs if d["kind"] == "StatefulSet")
+    assert not any(k.startswith(("universal-chart/", "link.argocd", "app.openshift.io/edit-url"))
+                   for k in (sts["metadata"].get("annotations") or {}))
+
+
+def _appset(*sets):
+    r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"), "-n", "openshift-gitops",
+                        "--set", "namespace=shop-dev,originBranch=main",
+                        "--set", "originRepoURL=https://git.example.com/scm/OPS/values.git", *sets],
+                       capture_output=True, text=True, check=True)
+    return [d for d in yaml.safe_load_all(r.stdout) if d]
+
+
+@needs_helm
+def test_ms_applicationset_links_by_default():
+    [appset] = _appset()
+    meta = appset["spec"]["template"]["metadata"]["annotations"]
+    browse = "https://git.example.com/projects/OPS/repos/values/browse/"
+    assert meta["link.argocd.argoproj.io/external-link"] == browse + "{{ .path.path }}/{{ .path.filename }}?at=main"
+    assert meta["universal-chart/defaults-file"] == browse + "shop-dev/defaults.yaml?at=main"
+    # No URLs configured: every object still names its Application and file.
+    params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert params == {"links.application": 'openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}-dev',
+                      "links.values": browse + "{{ .path.path }}/{{ .path.filename }}?at=main"}
+
+
+@needs_helm
+def test_ms_applicationset_object_links_can_be_turned_off():
+    [appset] = _appset("--set", "links.objects=false")
+    assert "parameters" not in appset["spec"]["template"]["spec"]["sources"][0]["helm"]
+
+
+@needs_helm
+def test_ms_applicationset_hands_links_to_the_chart():
+    docs = _appset("--set", "links.argocdUrl=https://argo/,links.consoleUrl=https://console,links.consoleLink=true")
+    appset = next(d for d in docs if d["kind"] == "ApplicationSet")
+    params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert params["links.argocd"] == ('https://argo/applications/openshift-gitops/'
+                                      '{{ .path.filename | trimSuffix ".yaml" }}-dev')
+    assert params["links.console"] == "https://console"
+    link = next(d for d in docs if d["kind"] == "ConsoleLink")
+    assert link["spec"]["namespaceDashboard"]["namespaces"] == ["shop-dev"]
+    assert link["spec"]["href"] == "https://argo/applications?labels=folder%3Dshop-dev"
+
+
 # --- --include and exact `=name` patterns ------------------------------------
 
 def _deploy(name):

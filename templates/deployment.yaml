@@ -12,7 +12,7 @@ metadata:
          manifest carried on this object - a lost argocd.argoproj.io/sync-wave
          reorders the whole deploy, and a lost prometheus.io/scrape stops
          metrics collection, both silently. */}}
-  {{- with merge (.Values.commonAnnotations | default dict) (.Values.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" . "own" .Values.annotations "consoleRef" (printf "apps~v1~Deployment/%s" (include "universal-chart.fullname" .))) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

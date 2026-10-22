@@ -9,7 +9,7 @@ metadata:
   namespace: {{ $.Release.Namespace }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
-  {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -27,7 +27,7 @@ metadata:
   namespace: {{ $.Release.Namespace }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
-  {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -48,7 +48,7 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
-  {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -69,7 +69,7 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
-  {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
