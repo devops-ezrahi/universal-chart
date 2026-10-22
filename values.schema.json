@@ -10,6 +10,15 @@
     "chartLabels": { "type": "boolean" },
     "selectorLabels": { "type": "object" },
     "commonAnnotations": { "type": "object" },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "argocd": { "type": "string" },
+        "values": { "type": "string" },
+        "console": { "type": "string" }
+      }
+    },
     "workload": {
       "type": "object",
       "required": ["type"],

@@ -467,6 +467,7 @@ helm unittest . --color --debug
 | `servicemonitor_test.yaml` | Prometheus ServiceMonitor path, port, interval |
 | `extra_deploy_test.yaml` | Raw YAML injection via `extraDeploy[]` |
 | `validation_test.yaml` | JSON Schema validation errors on invalid values |
+| `links_test.yaml` | `links` navigation annotations, workload-only links, no leak between objects |
 
 #### Example Test Structure
 
@@ -839,6 +840,28 @@ either value in git, as a helm parameter in the values repo's
 self-heal. The generated ApplicationSets carry
 `ignoreDifferences` for the pod-security fields OpenShift admission mutates on
 the live object, so Applications do not flip OutOfSync every reconcile.
+
+#### Links between Argo CD, git and the OpenShift console
+
+`links` in `ms-applicationSet` joins the three places a microservice lives.
+Set its values once, as helm parameters in the values repo's
+`rootApplicationSet.yaml`. The converter writes them for
+`--argocd-url <url>` / `--console-url <url>`:
+
+| Value | Default | What links where |
+|---|---|---|
+| `links.repoWebUrl` | derived from `originRepoURL` | **Argo CD → git.** Each Application gets `link.argocd.argoproj.io/external-link` set to its own `<folder>/values/<file>`, which Argo CD shows on the Application's tile and summary. It also carries `universal-chart/{base,defaults,values}-file` for the whole layer chain. The web URL is derived from an https `originRepoURL` on Bitbucket Server (`/scm/<project>/<repo>.git`), GitHub or GitLab, so nothing needs setting for those. This only changes the Application, not anything it deploys. |
+| `links.argocdUrl` | empty | **OpenShift → Argo CD.** Every object a release renders is annotated with `universal-chart/argocd-application: <argocd>/applications/<ns>/<app>`. The workload also gets `app.openshift.io/edit-url` with the same URL, which is the link in the corner of its node in the OpenShift topology view. That decorator is the only place the console turns an annotation into a link. Its tooltip says "Edit source code", and it opens the Application, which links on to the file. |
+| `links.consoleUrl` | empty | **Argo CD → OpenShift.** Each workload gets `link.argocd.argoproj.io/external-link` set to its own console page (`<console>/k8s/ns/<ns>/apps~v1~Deployment/<name>`), so its node in Argo CD's resource tree links straight there. |
+| `links.consoleLink` | `false` | **OpenShift project → Argo CD.** Adds a `ConsoleLink` on the Project overview, listing that folder's Applications (filtered on their `folder` label). It is cluster-scoped, so the root Application's AppProject must allow `console.openshift.io/ConsoleLink`. Needs `argocdUrl`. |
+| `links.argocdNamespace` | the chart's own namespace | The namespace the Applications live in, used in the Argo CD URL. |
+
+The chart side is `links.argocd` / `links.values` / `links.console`, which
+ms-applicationSet fills in per Application. Keep them out of values files. The
+annotations sit on object metadata only, never on a pod template, so turning
+links on restarts no pods. It does change every object once, so under manual
+sync each Application shows OutOfSync until it is synced. An annotation the
+values set themselves always wins over a link.
 
 #### Removing the Argo CD tree but keeping the workloads
 

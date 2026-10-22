@@ -1,0 +1,101 @@
+suite: Navigation links
+templates:
+  - templates/deployment.yaml
+  - templates/service.yaml
+  - templates/configmap.yaml
+  - templates/route.yaml
+release:
+  name: web-dev
+  namespace: shop-dev
+set:
+  image:
+    repository: nginx
+    tag: "1.27"
+tests:
+  - it: renders no link annotations by default
+    template: templates/deployment.yaml
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
+  - it: stamps the Argo CD and values-file links on every object
+    template: templates/service.yaml
+    set:
+      service:
+        enabled: true
+      links:
+        argocd: https://argo.example.com/applications/argocd/web-dev
+        values: https://git.example.com/projects/P/repos/values/browse/shop-dev/values/web.yaml?at=main
+    asserts:
+      - equal:
+          path: metadata.annotations["universal-chart/argocd-application"]
+          value: https://argo.example.com/applications/argocd/web-dev
+      - equal:
+          path: metadata.annotations["universal-chart/values-file"]
+          value: https://git.example.com/projects/P/repos/values/browse/shop-dev/values/web.yaml?at=main
+      - notExists:
+          path: metadata.annotations["app.openshift.io/edit-url"]
+
+  - it: gives the workload the topology link and its console page
+    template: templates/deployment.yaml
+    set:
+      links:
+        argocd: https://argo.example.com/applications/argocd/web-dev
+        console: https://console.example.com/
+    asserts:
+      - equal:
+          path: metadata.annotations["app.openshift.io/edit-url"]
+          value: https://argo.example.com/applications/argocd/web-dev
+      - equal:
+          path: metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: https://console.example.com/k8s/ns/shop-dev/apps~v1~Deployment/web-dev
+      - notExists:
+          path: spec.template.metadata.annotations["universal-chart/argocd-application"]
+
+  - it: never overrides an annotation the values set themselves
+    template: templates/deployment.yaml
+    set:
+      annotations:
+        link.argocd.argoproj.io/external-link: https://grafana.example.com/d/web
+      links:
+        console: https://console.example.com
+    asserts:
+      - equal:
+          path: metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: https://grafana.example.com/d/web
+
+  - it: keeps a Route's own sync-options beside the links
+    template: templates/route.yaml
+    set:
+      route:
+        enabled: true
+        targetPort: http
+      links:
+        argocd: https://argo.example.com/applications/argocd/web-dev
+    asserts:
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-options"]
+          value: Force=true,Replace=true
+      - exists:
+          path: metadata.annotations["universal-chart/argocd-application"]
+
+  - it: does not leak one object's annotations onto the next
+    template: templates/configmap.yaml
+    set:
+      commonAnnotations:
+        team: shop
+      configMaps:
+        a:
+          annotations:
+            only-a: "true"
+          data: {k: v}
+        b:
+          data: {k: v}
+    asserts:
+      - notExists:
+          path: metadata.annotations["only-a"]
+        documentIndex: 1
+      - equal:
+          path: metadata.annotations.team
+          value: shop
+        documentIndex: 1

@@ -6,7 +6,7 @@ metadata:
   name: {{ include "universal-chart.fullname" . }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.ingress.labels) | nindent 4 }}
-  {{- with merge (.Values.commonAnnotations | default dict) (.Values.ingress.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" . "own" .Values.ingress.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

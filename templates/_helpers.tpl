@@ -126,6 +126,46 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- end }}
 {{- end }}
 
+{{/*
+Object ANNOTATIONS: commonAnnotations, then the object's own, then any the
+template insists on (Route/PVC sync-options), as ONE fresh map — earlier wins,
+exactly as the inline `merge` each template used to do. Fresh, because sprig's
+`merge` writes into its first argument: merging into .Values.commonAnnotations
+leaked one object's annotations onto every object rendered after it.
+
+Then the navigation links (.Values.links), which only fill keys nothing above
+set — a values file's own link.argocd.argoproj.io/external-link stays:
+  universal-chart/argocd-application  the Argo CD Application deploying this release
+  universal-chart/values-file         the values file in git that sets it
+  app.openshift.io/edit-url           the same Argo CD link, on the workload only:
+                                      it is what the OpenShift topology view's
+                                      corner decorator opens, the one place the
+                                      console turns an annotation into a link
+  link.argocd.argoproj.io/external-link
+                                      on the workload only: this object's page in
+                                      the OpenShift console, shown as a link on
+                                      its node in Argo CD's resource tree
+Metadata only, never a pod template: a pod-template annotation rolls the pods.
+
+Usage: {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations) | fromYaml }}
+       Workloads add "consoleRef" "apps~v1~Deployment/<name>" for the two
+       workload-only links.
+*/}}
+{{- define "universal-chart.annotations" -}}
+{{- $out := merge (dict) (.root.Values.commonAnnotations | default dict) (.own | default dict) (.extra | default dict) }}
+{{- $links := .root.Values.links | default dict }}
+{{- $nav := dict }}
+{{- with $links.argocd }}{{- $_ := set $nav "universal-chart/argocd-application" . }}{{- end }}
+{{- with $links.values }}{{- $_ := set $nav "universal-chart/values-file" . }}{{- end }}
+{{- if .consoleRef }}
+{{- with $links.argocd }}{{- $_ := set $nav "app.openshift.io/edit-url" . }}{{- end }}
+{{- with $links.console }}
+{{- $_ := set $nav "link.argocd.argoproj.io/external-link" (printf "%s/k8s/ns/%s/%s" (trimSuffix "/" .) $.root.Release.Namespace $.consoleRef) }}
+{{- end }}
+{{- end }}
+{{- toYaml (merge $out $nav) }}
+{{- end }}
+
 {{- define "universal-chart.labels" -}}
 {{- $core := dict "app.kubernetes.io/name" (include "universal-chart.name" .) "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/managed-by" .Release.Service }}
 {{- /* An explicit selectorLabels override is what the workload's pods and

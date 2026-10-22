@@ -1,0 +1,25 @@
+{{- /* A link on the OpenShift Project overview (its Launcher card) to the Argo
+       CD Applications this folder generates - each carries the label
+       folder=<folder>, which is what Argo CD's list filters on. One per
+       folder, so variant folders each get their own. See values.yaml
+       `links.consoleLink`. */ -}}
+{{- $links := .Values.links | default dict -}}
+{{- if and $links.consoleLink $links.argocdUrl -}}
+{{- $ns := required "namespace is required" .Values.namespace -}}
+{{- $folder := .Values.folder | default $ns -}}
+{{- $label := $folder | replace "/" "-" | trunc 63 | trimSuffix "-" -}}
+apiVersion: console.openshift.io/v1
+kind: ConsoleLink
+metadata:
+  name: {{ printf "argocd-%s" $label | trunc 63 | trimSuffix "-" | quote }}
+  labels:
+    namespace: {{ $ns | quote }}
+    managed-by: ms-applicationSet
+spec:
+  text: {{ printf "Argo CD: %s" $folder | quote }}
+  href: {{ printf "%s/applications?labels=folder%%3D%s" (trimSuffix "/" $links.argocdUrl) $label | quote }}
+  location: NamespaceDashboard
+  namespaceDashboard:
+    namespaces:
+      - {{ $ns | quote }}
+{{- end }}

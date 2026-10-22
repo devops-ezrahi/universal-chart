@@ -256,6 +256,65 @@ def test_ms_applicationset_autosync(flag, automated):
     assert ("automated" in doc["spec"]["template"]["spec"]["syncPolicy"]) is automated
 
 
+# --- navigation links ---------------------------------------------------------
+
+def test_root_appset_passes_links_only_when_asked():
+    plain = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
+                                                          "https://v", "main"))
+    names = {p["name"] for p in plain["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert not {n for n in names if n.startswith("links.")}
+    appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
+                                                           "https://v", "main", argocd_url="https://argo/",
+                                                           console_url="https://console"))
+    params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
+    assert {"name": "links.argocdUrl", "value": "https://argo"} in params
+    assert {"name": "links.consoleUrl", "value": "https://console"} in params
+
+
+def test_reimport_drops_the_charts_own_links():
+    stamped = {"universal-chart/argocd-application": "https://argo/applications/argocd/web-dev",
+               "universal-chart/values-file": "https://git/x.yaml",
+               "app.openshift.io/edit-url": "https://argo/applications/argocd/web-dev",
+               "link.argocd.argoproj.io/external-link": "https://console/k8s/ns/dev/apps~v1~Deployment/web",
+               "team": "shop"}
+    assert conv.clean_annotations(stamped) == {"team": "shop"}
+    # Set by hand, not by the chart: kept.
+    own = {"link.argocd.argoproj.io/external-link": "https://grafana/d/web"}
+    assert conv.clean_annotations(own) == own
+
+
+def _appset(*sets):
+    r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"), "-n", "openshift-gitops",
+                        "--set", "namespace=shop-dev,originBranch=main",
+                        "--set", "originRepoURL=https://git.example.com/scm/OPS/values.git", *sets],
+                       capture_output=True, text=True, check=True)
+    return [d for d in yaml.safe_load_all(r.stdout) if d]
+
+
+@needs_helm
+def test_ms_applicationset_links_values_files_without_touching_releases():
+    [appset] = _appset()
+    meta = appset["spec"]["template"]["metadata"]["annotations"]
+    browse = "https://git.example.com/projects/OPS/repos/values/browse/"
+    assert meta["link.argocd.argoproj.io/external-link"] == browse + "{{ .path.path }}/{{ .path.filename }}?at=main"
+    assert meta["universal-chart/defaults-file"] == browse + "shop-dev/defaults.yaml?at=main"
+    # A derived repo link alone never changes what a release renders.
+    assert "parameters" not in appset["spec"]["template"]["spec"]["sources"][0]["helm"]
+
+
+@needs_helm
+def test_ms_applicationset_hands_links_to_the_chart():
+    docs = _appset("--set", "links.argocdUrl=https://argo/,links.consoleUrl=https://console,links.consoleLink=true")
+    appset = next(d for d in docs if d["kind"] == "ApplicationSet")
+    params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert params["links.argocd"] == ('https://argo/applications/openshift-gitops/'
+                                      '{{ .path.filename | trimSuffix ".yaml" }}-dev')
+    assert params["links.console"] == "https://console"
+    link = next(d for d in docs if d["kind"] == "ConsoleLink")
+    assert link["spec"]["namespaceDashboard"]["namespaces"] == ["shop-dev"]
+    assert link["spec"]["href"] == "https://argo/applications?labels=folder%3Dshop-dev"
+
+
 # --- --include and exact `=name` patterns ------------------------------------
 
 def _deploy(name):

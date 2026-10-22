@@ -8,7 +8,7 @@ metadata:
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
   {{- /* Argo CD must never prune or delete a PVC: losing one loses its data. */}}
-  {{- with merge (dict) ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) (dict "argocd.argoproj.io/sync-options" "Prune=false,Delete=false") }}
+  {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations "extra" (dict "argocd.argoproj.io/sync-options" "Prune=false,Delete=false")) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
