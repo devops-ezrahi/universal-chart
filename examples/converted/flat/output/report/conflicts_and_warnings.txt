@@ -1,4 +1,2 @@
-[ms1] env-group: env.DB_URL.value -> 'http://db.{{ .Values.environment }}.svc:5432', injected {'environment': {'dev': 'dev', 'prd': 'prd'}}
-[ms1] env-group: env.ENVIRONMENT.value -> '{{ .Values.environment }}', injected {'environment': {'dev': 'dev', 'prd': 'prd'}}
-[ms2] env-group: env.DB_URL.value -> 'http://db.{{ .Values.environment }}.svc:5432', injected {'environment': {'dev': 'dev', 'prd': 'prd'}}
-[ms2] env-group: env.ENVIRONMENT.value -> '{{ .Values.environment }}', injected {'environment': {'dev': 'dev', 'prd': 'prd'}}
+[ms1] env-group: env -> '[{"name": "ENVIRONMENT", "value": "{{ .Values.environment }}"}, {"name": "DB_URL", "value": "http://db.{{ .Values.environment }}.svc:5432"}]', injected {'environment': {'dev': 'dev', 'prd': 'prd'}}
+[ms2] env-group: env -> '[{"name": "ENVIRONMENT", "value": "{{ .Values.environment }}"}, {"name": "DB_URL", "value": "http://db.{{ .Values.environment }}.svc:5432"}]', injected {'environment': {'dev': 'dev', 'prd': 'prd'}}

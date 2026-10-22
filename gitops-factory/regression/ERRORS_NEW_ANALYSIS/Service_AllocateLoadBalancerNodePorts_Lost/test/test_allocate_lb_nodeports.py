@@ -138,13 +138,13 @@ BASE = {"workload": {"type": "deployment"}, "image": {"repository": "zookeeper",
 @pytest.mark.parametrize("value", [True, False])
 def test_primary_service_template_renders_both_values(value, tmp_path):
     docs = _render({**BASE, "service": {
-        "type": "LoadBalancer", "ports": {"client": {"port": 2181}}, FIELD: value}}, tmp_path)
+        "enabled": True, "type": "LoadBalancer", "ports": {"client": {"port": 2181}}, FIELD: value}}, tmp_path)
     svc = next(d for d in docs if d["kind"] == "Service")
     assert svc["spec"][FIELD] is value
 
 
 def test_primary_service_template_omits_it_when_unset(tmp_path):
-    docs = _render({**BASE, "service": {"type": "LoadBalancer",
+    docs = _render({**BASE, "service": {"enabled": True, "type": "LoadBalancer",
                                         "ports": {"client": {"port": 2181}}}}, tmp_path)
     svc = next(d for d in docs if d["kind"] == "Service")
     assert FIELD not in svc["spec"]
@@ -170,7 +170,7 @@ def test_the_template_uses_hasKey_not_with(tmp_path):
     """A `with` block treats `false` as empty and skips it. Asserted through
     behaviour rather than by reading the template: render false, expect false."""
     docs = _render({**BASE, "service": {
-        "type": "LoadBalancer", "ports": {"client": {"port": 2181}}, FIELD: False}}, tmp_path)
+        "enabled": True, "type": "LoadBalancer", "ports": {"client": {"port": 2181}}, FIELD: False}}, tmp_path)
     svc = next(d for d in docs if d["kind"] == "Service")
     assert FIELD in svc["spec"], "an explicit false was skipped — `with` semantics leaked in"
     assert svc["spec"][FIELD] is False

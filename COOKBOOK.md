@@ -838,6 +838,7 @@ service:
 
 # NodePort — accessible from outside on a high port
 service:
+  enabled: true
   type: NodePort
   ports:
     - name: http
@@ -847,6 +848,7 @@ service:
 
 # LoadBalancer — cloud provider creates an LB
 service:
+  enabled: true
   type: LoadBalancer
   loadBalancerSourceRanges:
     - 10.0.0.0/8       # restrict to internal network only
@@ -857,17 +859,20 @@ service:
 
 # ExternalName — CNAME alias to an external DNS name (no selector rendered)
 service:
+  enabled: true
   type: ExternalName
   externalName: my.database.example.com
 
 # Headless — for StatefulSet DNS (pod-0.myapp, pod-1.myapp, ...)
 service:
+  enabled: true
   type: ClusterIP
   clusterIP: None
   publishNotReadyAddresses: true    # include not-ready pods in DNS (required for DB clusters)
 
 # Session affinity — sticky sessions routed to the same pod
 service:
+  enabled: true
   type: ClusterIP
   sessionAffinity: ClientIP
   sessionAffinityConfig:
@@ -1173,6 +1178,7 @@ replicaCount: 3
 
 # Headless service needed for DNS
 service:
+  enabled: true
   clusterIP: None
 
 ports:

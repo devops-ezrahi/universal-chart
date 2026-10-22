@@ -288,12 +288,12 @@ that order, then every key it does not name in sorted order (so a hand-added
 entry is never lost). Returned as JSON; read it back with fromJsonArray.
 
 Helm ranges a map in SORTED key order, and for a pod template that is not
-cosmetic. env, ports, volumeMounts, volumes, envFrom and containers are LISTS in
+cosmetic. ports, volumes, envFrom and containers are LISTS in
 Kubernetes: reordering one changes the pod template, so the Deployment rolls a
 new ReplicaSet (or the StatefulSet a new revision) and every pod restarts on the
 first sync after migrating — even though nothing about the workload changed.
-env order is also semantic: `$(VAR)` only expands variables defined EARLIER in
-the list. The converter writes the raw manifest's order into the *Order values.
+The converter writes the raw manifest's order into the *Order values. (env and
+volumeMounts need none: they are written as lists, see universal-chart.listOrMap.)
 Usage: {{- $keys := include "universal-chart.orderedKeys" (dict "map" $m "order" $o) | fromJsonArray }}
 */}}
 {{- define "universal-chart.orderedKeys" -}}
@@ -314,7 +314,7 @@ Usage: {{- $keys := include "universal-chart.orderedKeys" (dict "map" $m "order"
 
 {{/*
 mapToList with an explicit order (see universal-chart.orderedKeys).
-Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.env "order" .Values.envOrder) | nindent 4 }}
+Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.ports "order" .Values.portOrder) | nindent 4 }}
 */}}
 {{- define "universal-chart.orderedMapToList" -}}
 {{- $map := .map | default dict }}
@@ -350,6 +350,41 @@ Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.env "o
   value: ""
   {{- end }}
 {{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+env / volumeMounts, rendered in the order they are WRITTEN.
+
+Given a list — the Kubernetes shape, and what the converter writes — the
+entries render exactly as listed, so the pod template keeps the deployment's
+own order: no restart on the cutover sync, and `$(VAR)` still sees the vars
+defined before it. A list is replaced wholesale by a later values file (Helm
+never merges lists), so an override restates the whole list.
+
+A map (keyed by name, the older form) still works and renders in sorted key
+order — Helm cannot know the order a map was written in.
+Usage: {{- include "universal-chart.listOrMap" (dict "items" .Values.env "stringValues" true) | nindent 4 }}
+*/}}
+{{- define "universal-chart.listOrMap" -}}
+{{- if kindIs "slice" .items }}
+{{- range $e := .items }}
+{{- /* Same EnvVar.value coercion as orderedMapToList: a bare `y`, `08` or
+       `true` read as a bool or number is refused by the API server. */}}
+{{- if and $.stringValues (kindIs "map" $e) (hasKey $e "value") (not (kindIs "invalid" $e.value)) (not (kindIs "string" $e.value)) }}
+{{- $e = merge (dict "value" (toString $e.value)) $e }}
+{{- end }}
+{{- if and (kindIs "map" $e) (hasKey $e "name") }}
+- name: {{ $e.name | toYaml }}
+  {{- with omit $e "name" }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+{{- else }}
+- {{- toYaml $e | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- else }}
+{{- include "universal-chart.orderedMapToList" (dict "map" .items "order" list "stringValues" .stringValues) }}
 {{- end }}
 {{- end }}
 
@@ -464,9 +499,8 @@ container genuinely needs scratch space, declare it explicitly —
 `volumes: { <name>: { emptyDir: {} } }` — in base/.
 
 Init containers and sidecars are raw, pass-through Kubernetes container
-specs (unlike the main container's map-based volumeMounts), so their
-volumeMounts is a LIST of {name, mountPath}, not a map — handled separately
-below.
+specs, so their volumeMounts is always a LIST of {name, mountPath} — handled
+separately below. The main container's may be a list or a name-keyed map.
 
 Usage: {{ include "universal-chart.validateVolumeMounts" (dict
   "label" "the workload"
@@ -480,9 +514,16 @@ Usage: {{ include "universal-chart.validateVolumeMounts" (dict
 {{- $validVolumes := merge (dict) (.volumeClaimTemplates | default dict) (.volumes | default dict) }}
 {{- $label := .label | default "the workload" }}
 
-{{- range $mountKey, $mountSpec := (.volumeMounts | default dict) }}
-{{- /* Composite key for a volume mounted more than once — the real volume
-       name is on the entry itself. See universal-chart.mapToList above. */}}
+{{- /* A list (as written) or the older name-keyed map, whose composite key for
+       a volume mounted more than once carries the real name on the entry
+       itself (see universal-chart.mapToList above). */}}
+{{- $mounts := .volumeMounts | default dict }}
+{{- if kindIs "slice" $mounts }}
+{{- $byName := dict }}
+{{- range $i, $m := $mounts }}{{- $_ := set $byName (printf "%d" $i) $m }}{{- end }}
+{{- $mounts = $byName }}
+{{- end }}
+{{- range $mountKey, $mountSpec := $mounts }}
 {{- $mountName := ($mountSpec.name | default $mountKey) }}
 {{- if not (hasKey $validVolumes $mountName) }}
 {{- fail (printf "Error: volumeMount %q is defined on %s's main container, but volume %q is missing. Declare it explicitly (e.g. volumes.%s.emptyDir: {} if it's meant to be transient) — this chart never injects a fallback volume for you." $mountName $label $mountName $mountName) }}

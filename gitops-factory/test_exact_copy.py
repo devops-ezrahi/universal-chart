@@ -47,7 +47,8 @@ def convert(tmp_path, env, *flags):
     return yaml.safe_load((out / "base" / "api.yaml").read_text(encoding="utf-8"))
 
 
-COSMETIC = ("portOrder", "volumeMountOrder", "volumeOrder", "sidecarOrder", "envOrder")
+COSMETIC = ("portOrder", "volumeOrder", "sidecarOrder")
+MOUNTS = [{"name": "z-data", "mountPath": "/data"}, {"name": "a-tmp", "mountPath": "/tmp"}]
 
 
 def test_clean_by_default(tmp_path):
@@ -57,19 +58,23 @@ def test_clean_by_default(tmp_path):
     # Meaning, not cosmetics: init containers run in order, a later envFrom wins.
     assert v["initContainerOrder"] == ["z-migrate", "a-warm"]
     assert v["envFromOrder"] == ["z-sec", "a-cm"]
+    # env and volumeMounts are lists in the deployment's own order, no order key.
+    assert v["env"] == PLAIN_ENV
+    assert v["volumeMounts"] == MOUNTS
+    assert "envOrder" not in v and "volumeMountOrder" not in v
 
 
 def test_env_order_kept_when_a_value_reads_another(tmp_path):
     v = convert(tmp_path, REF_ENV)
-    assert v["envOrder"] == ["HOST", "URL"]
+    assert v["env"] == REF_ENV
 
 
 @pytest.mark.parametrize("flag", [["--exact-copy"], ["--exact-copy", "true"]])
 def test_exact_copy_keeps_the_live_template(tmp_path, flag):
     v = convert(tmp_path, PLAIN_ENV, *flag)
     assert v["portOrder"] == ["web", "admin"]
-    assert v["envOrder"] == ["ZED", "ALPHA"]
-    assert v["volumeMountOrder"] == ["z-data", "a-tmp"]
+    assert v["env"] == PLAIN_ENV
+    assert v["volumeMounts"] == MOUNTS
     assert v["volumeOrder"] == ["z-data", "a-tmp"]
     assert v["sidecarOrder"] == ["z-proxy", "a-log"]
     assert v["securityContext"] == {}

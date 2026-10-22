@@ -90,18 +90,26 @@ def test_dict_key_order_was_never_the_problem():
                  [{"mountPath": "/etc/x", "name": "cfg"}]) == []
 
 
-def test_list_entry_order_with_unique_names_was_never_the_problem():
-    assert _diff([{"name": "a", "mountPath": "/a"}, {"name": "b", "mountPath": "/b"}],
-                 [{"name": "b", "mountPath": "/b"}, {"name": "a", "mountPath": "/a"}]) == []
+def test_list_entry_order_with_unique_names_is_reported_as_order_only():
+    """The converter now writes volumeMounts as a list in the deployment's own
+    order, so a reorder is a real (pod-restarting) difference — reported as ONE
+    order line, never as a LOST+ADDED pair."""
+    diffs = _diff([{"name": "a", "mountPath": "/a"}, {"name": "b", "mountPath": "/b"}],
+                  [{"name": "b", "mountPath": "/b"}, {"name": "a", "mountPath": "/a"}])
+    assert [(d[0], d[1]) for d in diffs] == [("CHANGED", "spec.volumeMounts")]
+    assert "order raw=['a', 'b']" in diffs[0][2]
 
 
 # ---------------------------------------------------------------------------
 # 2. The actual defect
 # ---------------------------------------------------------------------------
 
-def test_reordered_duplicate_name_mounts_are_not_a_change():
-    """THE defect. Same three mounts, different order, nothing lost."""
-    assert _diff(MOUNTS, list(reversed(MOUNTS))) == []
+def test_reordered_duplicate_name_mounts_are_one_order_change():
+    """THE defect was a whole-list CHANGED. Same three mounts, different order,
+    nothing lost: one order line, paired by '<name>:<subPath>'."""
+    diffs = _diff(MOUNTS, list(reversed(MOUNTS)))
+    assert [(d[0], d[1]) for d in diffs] == [("CHANGED", "spec.volumeMounts")]
+    assert "order raw=" in diffs[0][2]
 
 
 def test_it_reports_per_field_rather_than_dumping_the_whole_list():
