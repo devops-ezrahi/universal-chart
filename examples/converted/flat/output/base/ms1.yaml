@@ -28,7 +28,5 @@ service:
 
 fullnameOverride: ms1
 
-chartLabels: false
-
 selectorLabels:
   app: ms1

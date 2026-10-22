@@ -522,6 +522,7 @@ workload:
 | Volume mounts | `volumeMounts` | A list, rendered in the order written; same rules as `env` |
 | Service | `service.enabled: true` | Off by default; set `false` in a later values file to turn it back off |
 | ServiceAccount | `serviceAccount.create: true` | Off by default (pods run as `serviceAccount.name`, else `default`); `false` turns it back off |
+| Chart identity labels | `chartLabels: true` | Off by default: objects carry only their own `labels` + `commonLabels`; `true` adds `app.kubernetes.io/name`, `/instance`, `/managed-by`. Selectors use `selectorLabels` either way |
 | Sidecar containers | `sidecars` | Map-keyed by container name |
 | Init containers | `initContainers` | Map-keyed by container name |
 | Multiple ConfigMaps | `configMaps` | Map-keyed by ConfigMap name |

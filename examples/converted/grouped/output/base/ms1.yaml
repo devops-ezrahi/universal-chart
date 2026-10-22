@@ -48,7 +48,5 @@ cronjobs:
 
 fullnameOverride: ms1-{{ .Values.color }}
 
-chartLabels: false
-
 selectorLabels:
   app: ms1-{{ .Values.color }}

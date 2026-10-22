@@ -584,6 +584,7 @@ tests:
 
   - it: uses selectorLabels verbatim for the selector and pod template
     set:
+      chartLabels: true
       selectorLabels:
         app: midasson-api-black-b2b-tst
       podLabels:
@@ -603,6 +604,41 @@ tests:
       - equal:
           path: metadata.labels.app
           value: midasson-api-black-b2b-tst
+
+  - it: renders no chart identity labels by default, only the object's own
+    release:
+      name: web
+    set:
+      labels: { team: shop }
+    asserts:
+      - equal:
+          path: metadata.labels
+          value: { team: shop }
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: web
+            app.kubernetes.io/instance: web
+      - equal:
+          path: spec.template.metadata.labels
+          value:
+            app.kubernetes.io/name: web
+            app.kubernetes.io/instance: web
+
+  - it: adds the chart identity labels when chartLabels is true
+    release:
+      name: web
+    set:
+      chartLabels: true
+      labels: { team: shop }
+    asserts:
+      - equal:
+          path: metadata.labels
+          value:
+            app.kubernetes.io/name: web
+            app.kubernetes.io/instance: web
+            app.kubernetes.io/managed-by: Helm
+            team: shop
 
   - it: does not render serviceAccountName or automount for a pod without a ServiceAccount
     set:

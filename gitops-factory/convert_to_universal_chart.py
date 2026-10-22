@@ -2323,8 +2323,8 @@ def raw_labels(doc: dict) -> dict:
     return {k: v for k, v in labels.items() if k not in CHART_OWNED_LABELS}
 
 
-# name/instance/version/managed-by/app are CARRIED now: the converter sets
-# chartLabels: false, so the chart renders an object's labels exactly as the
+# name/instance/version/managed-by/app are CARRIED now: the chart's default
+# chartLabels: false renders an object's labels exactly as the
 # live object had them instead of re-deriving identity labels from this release
 # (a different instance, a new version and a missing name label all showed up
 # as ArgoCD diffs).
@@ -3905,7 +3905,6 @@ def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regis
                         cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                         owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
-    ctx.values["chartLabels"] = False  # labels exactly as live — see CHART_OWNED_LABELS
     # No nameOverride: the Argo CD Application that deploys the release already
     # names it, so the chart's fullname needs nothing from the values file.
     #
@@ -4890,7 +4889,7 @@ def find_stale_output(output_dir: Path, expected_values: dict[str, set], expecte
 # from a raw cluster dump is not data loss.
 FIDELITY_HELM_LABELS = {
     # The Helm identity labels are no longer here: the converter carries them
-    # (chartLabels: false), so a changed one is a real diff ArgoCD will show.
+    # (the chart's default chartLabels: false), so a changed one is a real diff ArgoCD will show.
     # Except helm.sh/chart: the converter drops it on purpose (CHART_OWNED_LABELS).
     "helm.sh/chart",
     # Not a Helm label but the same argument: ArgoCD writes it at sync time, so

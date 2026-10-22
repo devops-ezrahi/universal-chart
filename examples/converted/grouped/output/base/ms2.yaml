@@ -30,7 +30,5 @@ service:
 
 fullnameOverride: ms2
 
-chartLabels: false
-
 selectorLabels:
   app: ms2
