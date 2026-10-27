@@ -70,3 +70,68 @@ tests:
     asserts:
       - notExists:
           path: spec.template.spec.syncPolicy.automated
+
+  - it: derives the values-file link from an https Bitbucket Server URL
+    set:
+      originRepoURL: https://git.example.com/scm/OPS/values.git
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: 'https://git.example.com/projects/OPS/repos/values/browse/{{ .path.path }}/{{ .path.filename }}?at=main'
+
+  - it: derives the values-file link from Bitbucket Server's ssh:// URL, port dropped and key upper-cased
+    set:
+      originRepoURL: ssh://git@git.example.com:7999/ops/values.git
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: 'https://git.example.com/projects/OPS/repos/values/browse/{{ .path.path }}/{{ .path.filename }}?at=main'
+
+  - it: derives the values-file link from an scp-style Bitbucket URL
+    set:
+      originRepoURL: git@git.example.com:ops/values.git
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: 'https://git.example.com/projects/OPS/repos/values/browse/{{ .path.path }}/{{ .path.filename }}?at=main'
+
+  - it: derives the values-file link from a personal Bitbucket repo over SSH
+    set:
+      originRepoURL: ssh://git@git.example.com:7999/~jdoe/values.git
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: 'https://git.example.com/users/jdoe/repos/values/browse/{{ .path.path }}/{{ .path.filename }}?at=main'
+
+  - it: derives the values-file link from a GitHub SSH URL
+    set:
+      originRepoURL: git@github.com:acme/values.git
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: 'https://github.com/acme/values/blob/main/{{ .path.path }}/{{ .path.filename }}'
+
+  - it: derives the values-file link from a GitLab SSH URL with subgroups
+    set:
+      originRepoURL: ssh://git@gitlab.com/acme/platform/values.git
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: 'https://gitlab.com/acme/platform/values/-/blob/main/{{ .path.path }}/{{ .path.filename }}'
+
+  - it: links nothing for an SSH path that is not <project>/<repo>
+    set:
+      originRepoURL: ssh://git@git.example.com:7999/a/b/c.git
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+
+  - it: lets links.repoWebUrl win over an SSH URL
+    set:
+      originRepoURL: ssh://git@git.example.com:7999/ops/values.git
+      links:
+        repoWebUrl: https://bitbucket.example.com/bitbucket/projects/OPS/repos/values
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: 'https://bitbucket.example.com/bitbucket/projects/OPS/repos/values/browse/{{ .path.path }}/{{ .path.filename }}?at=main'

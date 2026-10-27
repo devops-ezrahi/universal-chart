@@ -66,8 +66,10 @@ links:
   # page in the console.
   consoleUrl: ""
   # The values repo's web UI, for links to the exact files an Application
-  # layers. Empty = derived from originRepoURL when it is an https URL on
-  # Bitbucket Server (/scm/<project>/<repo>.git), GitHub or GitLab. Each
+  # layers. Empty = derived from originRepoURL on Bitbucket Server, GitHub or
+  # GitLab: https (/scm/<project>/<repo>.git) or SSH (ssh://git@host:7999/
+  # <project>/<repo>.git, git@host:<project>/<repo>.git), the web UI taken to
+  # be https on the same host. Set it when the UI is elsewhere. Each
   # Application then links to its own values file (Argo CD's external-link)
   # and carries all three files as universal-chart/{base,defaults,values}-file.
   repoWebUrl: ""

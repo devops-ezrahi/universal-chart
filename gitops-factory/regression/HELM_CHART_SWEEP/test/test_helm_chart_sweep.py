@@ -329,6 +329,17 @@ def test_ms_applicationset_links_by_default():
 
 
 @needs_helm
+def test_ms_applicationset_links_an_ssh_values_repo():
+    # Most values repos are cloned over SSH; the link to the file still goes to
+    # the web UI on the same host, without the SSH port.
+    for url in ("ssh://git@git.example.com:7999/ops/values.git", "git@git.example.com:ops/values.git"):
+        [appset] = _appset("--set", f"originRepoURL={url}")
+        meta = appset["spec"]["template"]["metadata"]["annotations"]
+        assert meta["universal-chart/defaults-file"] == (
+            "https://git.example.com/projects/OPS/repos/values/browse/shop-dev/defaults.yaml?at=main"), url
+
+
+@needs_helm
 def test_ms_applicationset_object_links_can_be_turned_off():
     [appset] = _appset("--set", "links.objects=false")
     assert "parameters" not in appset["spec"]["template"]["spec"]["sources"][0]["helm"]
