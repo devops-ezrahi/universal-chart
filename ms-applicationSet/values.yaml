@@ -63,8 +63,16 @@ links:
   argocdNamespace: ""
   # The OpenShift web console, e.g. https://console-openshift-console.apps.example.com
   # Each workload becomes a link from its node in Argo CD's resource tree to its
-  # page in the console.
+  # page in the console. Empty = built from `cluster` below.
   consoleUrl: ""
+  # The cluster the workloads run on, when consoleUrl is not set:
+  # mycluster.example.com, apps.mycluster.example.com or its API URL
+  # https://api.mycluster.example.com:6443 all mean the same cluster, and the
+  # console is https://console-openshift-console.apps.mycluster.example.com.
+  # Empty = taken from destinationServer when that is an api.<cluster> URL, so a
+  # folder deployed to a remote cluster links to that cluster's console with
+  # nothing set. In-cluster (kubernetes.default.svc) needs cluster or consoleUrl.
+  cluster: ""
   # The values repo's web UI, for links to the exact files an Application
   # layers. Empty = derived from originRepoURL on Bitbucket Server, GitHub or
   # GitLab: https (/scm/<project>/<repo>.git) or SSH (ssh://git@host:7999/

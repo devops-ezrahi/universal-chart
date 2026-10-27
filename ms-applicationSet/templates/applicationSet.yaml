@@ -47,6 +47,25 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* The OpenShift console the workloads' links open. consoleUrl wins; else it
+       is built from the cluster - links.cluster, or the API URL the
+       Applications deploy to (https://api.<cluster>:6443) - as OpenShift names
+       the console's route: https://console-openshift-console.apps.<cluster>.
+       In-cluster (kubernetes.default.svc) or a cluster by name says nothing. */ -}}
+{{- $console := trimSuffix "/" ($links.consoleUrl | default "") -}}
+{{- $cluster := $links.cluster | default "" | toString -}}
+{{- if and (not $cluster) (not .Values.destinationName) (regexMatch "^https://api\\.[^/:]+" (.Values.destinationServer | default "")) -}}
+{{- $cluster = .Values.destinationServer -}}
+{{- end -}}
+{{- if and (not $console) $cluster -}}
+{{- $host := regexReplaceAll "^(https?://)?([^/:]+).*$" $cluster "${2}" -}}
+{{- if hasPrefix "api." $host -}}
+{{- $host = printf "apps.%s" (trimPrefix "api." $host) -}}
+{{- else if not (hasPrefix "apps." $host) -}}
+{{- $host = printf "apps.%s" $host -}}
+{{- end -}}
+{{- $console = printf "https://console-openshift-console.%s" $host -}}
+{{- end -}}
 {{- $fileUrl := "" -}}
 {{- if $web -}}
 {{- if regexMatch "/(projects|users)/[^/]+/repos/[^/]+$" $web -}}
@@ -175,9 +194,9 @@ spec:
                 value: '{{ replace "PATH" $valuesFile . }}'
                 forceString: true
               {{- end }}
-              {{- with $links.consoleUrl }}
+              {{- with $console }}
               - name: links.console
-                value: {{ trimSuffix "/" . | quote }}
+                value: {{ . | quote }}
                 forceString: true
               {{- end }}
             {{- end }}
