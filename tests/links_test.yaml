@@ -18,35 +18,37 @@ tests:
       - notExists:
           path: metadata.annotations
 
-  - it: stamps the Argo CD and values-file links on every object
+  - it: leaves every object but the workload as written
     template: templates/service.yaml
     set:
       service:
         enabled: true
       links:
+        application: openshift-gitops/web-dev
         argocd: https://argo.example.com/applications/argocd/web-dev
         values: https://git.example.com/projects/P/repos/values/browse/shop-dev/values/web.yaml?at=main
+        console: https://console.example.com
     asserts:
-      - equal:
-          path: metadata.annotations["universal-chart/argocd-application"]
-          value: https://argo.example.com/applications/argocd/web-dev
-      - equal:
-          path: metadata.annotations["universal-chart/values-file"]
-          value: https://git.example.com/projects/P/repos/values/browse/shop-dev/values/web.yaml?at=main
       - notExists:
-          path: metadata.annotations["app.openshift.io/edit-url"]
+          path: metadata.annotations
 
-  - it: names the Application even without an Argo CD URL
+  - it: writes no universal-chart/* annotation, whatever is passed
     template: templates/deployment.yaml
     set:
       links:
         application: openshift-gitops/web-dev
+        argocd: https://argo.example.com/applications/argocd/web-dev
+        values: https://git.example.com/x.yaml
     asserts:
-      - equal:
-          path: metadata.annotations["universal-chart/application"]
-          value: openshift-gitops/web-dev
       - notExists:
+          path: metadata.annotations["universal-chart/application"]
+      - notExists:
+          path: metadata.annotations["universal-chart/argocd-application"]
+      - notExists:
+          path: metadata.annotations["universal-chart/values-file"]
+      - equal:
           path: metadata.annotations["app.openshift.io/edit-url"]
+          value: https://argo.example.com/applications/argocd/web-dev
 
   - it: renders none of them for an exact copy
     template: templates/deployment.yaml
@@ -74,7 +76,7 @@ tests:
           path: metadata.annotations["link.argocd.argoproj.io/external-link"]
           value: https://console.example.com/k8s/ns/shop-dev/apps~v1~Deployment/web-dev
       - notExists:
-          path: spec.template.metadata.annotations["universal-chart/argocd-application"]
+          path: spec.template.metadata.annotations["app.openshift.io/edit-url"]
 
   - it: never overrides an annotation the values set themselves
     template: templates/deployment.yaml
@@ -100,8 +102,8 @@ tests:
       - equal:
           path: metadata.annotations["argocd.argoproj.io/sync-options"]
           value: Force=true,Replace=true
-      - exists:
-          path: metadata.annotations["universal-chart/argocd-application"]
+      - notExists:
+          path: metadata.annotations["app.openshift.io/edit-url"]
 
   - it: does not leak one object's annotations onto the next
     template: templates/configmap.yaml

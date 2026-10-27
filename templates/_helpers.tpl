@@ -134,11 +134,11 @@ exactly as the inline `merge` each template used to do. Fresh, because sprig's
 leaked one object's annotations onto every object rendered after it.
 
 Then the navigation links (.Values.links), which only fill keys nothing above
-set — a values file's own link.argocd.argoproj.io/external-link stays:
-  universal-chart/application         <namespace>/<name> of that Application
-  universal-chart/argocd-application  the Argo CD Application deploying this release
-  universal-chart/values-file         the values file in git that sets it
-  app.openshift.io/edit-url           the same Argo CD link, on the workload only:
+set — a values file's own link.argocd.argoproj.io/external-link stays. Only
+the two the consoles turn into links, both on the workload alone; every other
+object is left as written:
+  app.openshift.io/edit-url           the Argo CD Application deploying this
+                                      release, on the workload only:
                                       it is what the OpenShift topology view's
                                       corner decorator opens, the one place the
                                       console turns an annotation into a link
@@ -158,9 +158,6 @@ Usage: {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec
 {{- $nav := dict }}
 {{- /* links.objects: false (the converter's exact copy) renders none of them. */}}
 {{- if ne (toString $links.objects) "false" }}
-{{- with $links.application }}{{- $_ := set $nav "universal-chart/application" . }}{{- end }}
-{{- with $links.argocd }}{{- $_ := set $nav "universal-chart/argocd-application" . }}{{- end }}
-{{- with $links.values }}{{- $_ := set $nav "universal-chart/values-file" . }}{{- end }}
 {{- if .consoleRef }}
 {{- with $links.argocd }}{{- $_ := set $nav "app.openshift.io/edit-url" . }}{{- end }}
 {{- with $links.console }}

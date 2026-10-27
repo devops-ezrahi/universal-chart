@@ -153,8 +153,27 @@ tests:
     set:
       destinationServer: https://api.mycluster.example.com:6443
     asserts:
-      - notContains:
+      - notExists:
           path: spec.template.spec.sources[0].helm.parameters
-          any: true
-          content:
-            name: links.console
+
+  - it: passes the chart no links when no URL is set
+    asserts:
+      - notExists:
+          path: spec.template.spec.sources[0].helm.parameters
+
+  - it: hands the chart the Argo CD and console links when both are set
+    set:
+      links:
+        argocdUrl: https://argo.example.com/
+        argocdNamespace: openshift-gitops
+        consoleUrl: https://console.example.com
+    asserts:
+      - equal:
+          path: spec.template.spec.sources[0].helm.parameters
+          value:
+            - name: links.argocd
+              value: https://argo.example.com/applications/openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}-fac1-black
+              forceString: true
+            - name: links.console
+              value: https://console.example.com
+              forceString: true

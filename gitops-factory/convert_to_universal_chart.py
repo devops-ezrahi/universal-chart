@@ -988,15 +988,29 @@ def dump_yaml(data: Any, spaced: bool = False) -> str:
 # the same helper; carried into values, they would pin this deployment's URLs
 # and outrank the links of the Application that deploys it next.
 CHART_LINK_ANNOTATIONS = ("app.openshift.io/edit-url", "link.argocd.argoproj.io/external-link")
+# Since 2.3.0 the chart writes only those two, with no universal-chart/* beside
+# them to say so, so they are known by their shape: the edit-url opens an Argo
+# CD Application, the external-link a workload's own console page. Anything
+# else under those keys (a Grafana dashboard) was written by hand and stays.
+CHART_LINK_SHAPES = {
+    "app.openshift.io/edit-url": re.compile(r"/applications/[^/]+/[^/]+/?$"),
+    "link.argocd.argoproj.io/external-link": re.compile(r"/k8s/ns/[^/]+/[^/~]+~[^/~]+~[^/]+/[^/]+$"),
+}
 
 
 def clean_annotations(ann: Optional[dict]) -> dict:
     if not ann:
         return {}
     linked = "universal-chart/argocd-application" in ann or "universal-chart/application" in ann
+
+    def chart_link(k: str, v) -> bool:
+        if k not in CHART_LINK_ANNOTATIONS:
+            return False
+        return linked or bool(CHART_LINK_SHAPES[k].search(str(v)))
+
     return {k: v for k, v in ann.items()
             if not k.startswith(VOLATILE_ANNOTATION_PREFIXES) and not k.startswith("universal-chart/")
-            and not (linked and k in CHART_LINK_ANNOTATIONS)}
+            and not chart_link(k, v)}
 
 
 def filter_transient(docs: list[dict], warnings: Optional[list[str]] = None) -> list[dict]:

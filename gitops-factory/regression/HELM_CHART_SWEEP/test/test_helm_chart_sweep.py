@@ -280,8 +280,15 @@ def test_reimport_drops_the_charts_own_links():
                "link.argocd.argoproj.io/external-link": "https://console/k8s/ns/dev/apps~v1~Deployment/web",
                "team": "shop"}
     assert conv.clean_annotations(stamped) == {"team": "shop"}
+    # Since 2.3.0 the chart writes the two links alone, with no
+    # universal-chart/* beside them: known by their shape.
+    bare = {"app.openshift.io/edit-url": "https://argo/applications/openshift-gitops/web-dev",
+            "link.argocd.argoproj.io/external-link": "https://console/k8s/ns/dev/apps~v1~StatefulSet/db",
+            "team": "shop"}
+    assert conv.clean_annotations(bare) == {"team": "shop"}
     # Set by hand, not by the chart: kept.
-    own = {"link.argocd.argoproj.io/external-link": "https://grafana/d/web"}
+    own = {"link.argocd.argoproj.io/external-link": "https://grafana/d/web",
+           "app.openshift.io/edit-url": "https://bitbucket/projects/P/repos/web"}
     assert conv.clean_annotations(own) == own
 
 
@@ -324,10 +331,9 @@ def test_ms_applicationset_links_by_default():
     browse = "https://git.example.com/projects/OPS/repos/values/browse/"
     assert meta["link.argocd.argoproj.io/external-link"] == browse + "{{ .path.path }}/{{ .path.filename }}?at=main"
     assert meta["universal-chart/defaults-file"] == browse + "shop-dev/defaults.yaml?at=main"
-    # No URLs configured: every object still names its Application and file.
-    params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
-    assert params == {"links.application": 'openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}-dev',
-                      "links.values": browse + "{{ .path.path }}/{{ .path.filename }}?at=main"}
+    # No URLs configured: the objects get nothing - the chart writes only the
+    # two clickable links, and each needs its URL.
+    assert "parameters" not in appset["spec"]["template"]["spec"]["sources"][0]["helm"]
 
 
 @needs_helm
@@ -343,7 +349,7 @@ def test_ms_applicationset_links_an_ssh_values_repo():
 
 @needs_helm
 def test_ms_applicationset_object_links_can_be_turned_off():
-    [appset] = _appset("--set", "links.objects=false")
+    [appset] = _appset("--set", "links.objects=false,links.argocdUrl=https://argo,links.consoleUrl=https://c")
     assert "parameters" not in appset["spec"]["template"]["spec"]["sources"][0]["helm"]
 
 

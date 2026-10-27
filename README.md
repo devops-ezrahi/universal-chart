@@ -855,19 +855,19 @@ Set its values once, as helm parameters in the values repo's
 
 | Value | Default | What links where |
 |---|---|---|
-| `links.objects` | `true` | **Every object → its Application.** Each object a release renders carries `universal-chart/application: <argocd-ns>/<app>`, plus its values file (`universal-chart/values-file`) when the repo web URL is known — on by default, with or without the URLs below. `false` turns object annotations off. A release's own values set `links.objects: false` to opt out alone — the converter writes it for every `--exact-copy` release (stateful ones by default), which must render exactly as it runs now. |
+| `links.objects` | `true` | **The workload's two links below.** The chart writes nothing else on deployed objects — no `universal-chart/*` annotation — and these two only when their URL is set. `false` turns both off. A release's own values set `links.objects: false` to opt out alone — the converter writes it for every `--exact-copy` release (stateful ones by default), which must render exactly as it runs now. |
 | `links.repoWebUrl` | derived from `originRepoURL` | **Argo CD → git.** Each Application gets `link.argocd.argoproj.io/external-link` set to its own `<folder>/values/<file>`, which Argo CD shows on the Application's tile and summary. It also carries `universal-chart/{base,defaults,values}-file` for the whole layer chain. The web URL is derived from `originRepoURL` on Bitbucket Server, GitHub or GitLab, over https (`/scm/<project>/<repo>.git`) or SSH (`ssh://git@host:7999/<project>/<repo>.git`, `git@host:<project>/<repo>.git`) — the web UI is taken to be https on the same host, without the SSH port — so nothing needs setting for those. Set it when the web UI is on another host or under a context path. |
-| `links.argocdUrl` | empty | **OpenShift → Argo CD.** Every object a release renders is annotated with `universal-chart/argocd-application: <argocd>/applications/<ns>/<app>`. The workload also gets `app.openshift.io/edit-url` with the same URL, which is the link in the corner of its node in the OpenShift topology view. That decorator is the only place the console turns an annotation into a link. Its tooltip says "Edit source code", and it opens the Application, which links on to the file. |
+| `links.argocdUrl` | empty | **OpenShift → Argo CD.** The workload gets `app.openshift.io/edit-url: <argocd>/applications/<ns>/<app>`, the link in the corner of its node in the OpenShift topology view — the only place the console turns an annotation into a link. Its tooltip says "Edit source code", and it opens the Application, which links on to the file. Set in full. |
 | `links.consoleUrl` | empty | **Argo CD → OpenShift.** Each workload gets `link.argocd.argoproj.io/external-link` set to its own console page (`<console>/k8s/ns/<ns>/apps~v1~Deployment/<name>`), so its node in Argo CD's resource tree links straight there. Set in full — never derived, since one values repo can span several clusters and Argo CDs. |
 | `links.consoleLink` | `false` | **OpenShift project → Argo CD.** Adds a `ConsoleLink` on the Project overview, listing that folder's Applications (filtered on their `folder` label). It is cluster-scoped, so the root Application's AppProject must allow `console.openshift.io/ConsoleLink`. Needs `argocdUrl`. |
 | `links.argocdNamespace` | the chart's own namespace | The namespace the Applications live in, used in the Argo CD URL. |
 
-The chart side is `links.application` / `links.argocd` / `links.values` / `links.console`, which
+The chart side is `links.argocd` / `links.console` (`links.application` / `links.values` are accepted and ignored, for an older ms-applicationSet), which
 ms-applicationSet fills in per Application. Keep them out of values files. The
 annotations sit on object metadata only, never on a pod template, so they
-restart no pods. They do change every object once — on upgrading to this chart
-version too, since they are on by default — so under manual sync each
-Application shows OutOfSync until it is synced. An annotation the
+restart no pods. Upgrading to 2.3.0 removes the `universal-chart/*` annotations
+earlier versions wrote, so under manual sync each Application shows OutOfSync
+once until it is synced. An annotation the
 values set themselves always wins over a link.
 
 #### Removing the Argo CD tree but keeping the workloads

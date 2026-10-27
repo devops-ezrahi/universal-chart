@@ -23,19 +23,16 @@ commonAnnotations: {}
 # them in for each Application it generates (its `links` values); empty, the
 # default, renders nothing. Leave them out of values files.
 links:
-  # false = none of the annotations below, whatever ms-applicationSet passes.
+  # false = neither link below, whatever ms-applicationSet passes.
   # The converter writes it for an --exact-copy release, which must render
   # exactly as it runs now.
   objects: true
-  # <namespace>/<name> of the Argo CD Application deploying this release:
-  # universal-chart/application. Set even without an Argo CD URL, so
-  # `oc get -o yaml` always says where an object comes from.
-  application: ""
-  # The Argo CD Application deploying this release:
-  # universal-chart/argocd-application on every object, and app.openshift.io/edit-url
+  # The Argo CD Application deploying this release: app.openshift.io/edit-url
   # on the workload - the OpenShift topology view's corner link.
   argocd: ""
-  # This release's values file in the git web UI: universal-chart/values-file.
+  # Accepted and ignored: an ms-applicationSet older than 2.3.0 passes them,
+  # for annotations the chart no longer writes.
+  application: ""
   values: ""
   # OpenShift web console base URL. The workload gets
   # link.argocd.argoproj.io/external-link to its own console page, which Argo CD
