@@ -136,43 +136,7 @@ tests:
           path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
           value: 'https://bitbucket.example.com/bitbucket/projects/OPS/repos/values/browse/{{ .path.path }}/{{ .path.filename }}?at=main'
 
-  - it: builds the console link from a bare cluster domain
-    set:
-      links:
-        cluster: mycluster.example.com
-    asserts:
-      - contains:
-          path: spec.template.spec.sources[0].helm.parameters
-          content:
-            name: links.console
-            value: https://console-openshift-console.apps.mycluster.example.com
-            forceString: true
-
-  - it: builds the console link from the apps domain
-    set:
-      links:
-        cluster: apps.mycluster.example.com
-    asserts:
-      - contains:
-          path: spec.template.spec.sources[0].helm.parameters
-          content:
-            name: links.console
-            value: https://console-openshift-console.apps.mycluster.example.com
-            forceString: true
-
-  - it: builds the console link from the cluster's API URL
-    set:
-      links:
-        cluster: https://api.mycluster.example.com:6443
-    asserts:
-      - contains:
-          path: spec.template.spec.sources[0].helm.parameters
-          content:
-            name: links.console
-            value: https://console-openshift-console.apps.mycluster.example.com
-            forceString: true
-
-  - it: takes the cluster from a remote destinationServer with nothing set
+  - it: builds the console link from a remote destinationServer's API URL
     set:
       destinationServer: https://api.mycluster.example.com:6443
     asserts:
@@ -183,10 +147,10 @@ tests:
             value: https://console-openshift-console.apps.mycluster.example.com
             forceString: true
 
-  - it: lets consoleUrl win over the cluster
+  - it: lets consoleUrl win over the destinationServer
     set:
+      destinationServer: https://api.other.example.com:6443
       links:
-        cluster: other.example.com
         consoleUrl: https://console.example.com/
     asserts:
       - contains:

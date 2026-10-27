@@ -258,11 +258,13 @@ def test_ms_applicationset_autosync(flag, automated):
 
 # --- navigation links ---------------------------------------------------------
 
-def test_root_appset_passes_links_only_when_asked():
+def test_root_appset_always_carries_the_links_to_fill_in():
+    # Empty when not given, so they are set in rootApplicationSet.yaml itself.
     plain = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
                                                           "https://v", "main"))
-    names = {p["name"] for p in plain["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
-    assert not {n for n in names if n.startswith("links.")}
+    params = plain["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
+    assert {p["name"]: p["value"] for p in params if p["name"].startswith("links.")} == {
+        "links.argocdUrl": "", "links.consoleUrl": "", "links.repoWebUrl": ""}
     appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
                                                            "https://v", "main", argocd_url="https://argo/",
                                                            console_url="https://console"))
