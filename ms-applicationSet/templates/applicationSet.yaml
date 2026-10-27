@@ -20,9 +20,36 @@
 {{- else if and (not $web) (regexMatch "^https://(github\\.com|gitlab\\.com)/" $bare) -}}
 {{- $web = $bare -}}
 {{- end -}}
+{{- /* SSH, which most values repos are cloned over: ssh://git@host[:port]/<path>
+       (Bitbucket Server's own form, port 7999) or scp-style git@host:<path>. The
+       web UI is taken to be https on the same host, without the SSH port. A
+       Bitbucket path is <project>/<repo>; its project key is upper case in the
+       web UI however the clone URL spells it, and ~user is a personal repo. */ -}}
+{{- $sshHost := "" -}}
+{{- $sshPath := "" -}}
+{{- if and (not $web) (regexMatch "^ssh://[^@/]+@[^/:]+(:[0-9]+)?/.+$" $bare) -}}
+{{- $sshHost = regexReplaceAll "^ssh://[^@/]+@([^/:]+)(:[0-9]+)?/(.+)$" $bare "${1}" -}}
+{{- $sshPath = regexReplaceAll "^ssh://[^@/]+@([^/:]+)(:[0-9]+)?/(.+)$" $bare "${3}" -}}
+{{- else if and (not $web) (regexMatch "^[^@/:]+@[^/:]+:[^/].*$" $bare) -}}
+{{- $sshHost = regexReplaceAll "^[^@/:]+@([^/:]+):(.+)$" $bare "${1}" -}}
+{{- $sshPath = regexReplaceAll "^[^@/:]+@([^/:]+):(.+)$" $bare "${2}" -}}
+{{- end -}}
+{{- if $sshHost -}}
+{{- if has $sshHost (list "github.com" "gitlab.com") -}}
+{{- $web = printf "https://%s/%s" $sshHost $sshPath -}}
+{{- else if regexMatch "^(scm/)?[^/]+/[^/]+$" $sshPath -}}
+{{- $parts := regexReplaceAll "^scm/" $sshPath "" | splitList "/" -}}
+{{- $project := index $parts 0 -}}
+{{- if hasPrefix "~" $project -}}
+{{- $web = printf "https://%s/users/%s/repos/%s" $sshHost (trimPrefix "~" $project) (index $parts 1) -}}
+{{- else -}}
+{{- $web = printf "https://%s/projects/%s/repos/%s" $sshHost (upper $project) (index $parts 1) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- $fileUrl := "" -}}
 {{- if $web -}}
-{{- if regexMatch "/projects/[^/]+/repos/[^/]+$" $web -}}
+{{- if regexMatch "/(projects|users)/[^/]+/repos/[^/]+$" $web -}}
 {{- $fileUrl = printf "%s/browse/PATH?at=%s" $web $branch -}}
 {{- else if contains "gitlab" $web -}}
 {{- $fileUrl = printf "%s/-/blob/%s/PATH" $web $branch -}}
