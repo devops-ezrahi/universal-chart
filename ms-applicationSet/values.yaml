@@ -13,14 +13,6 @@ originPath: ""
 # variant folder ("prd/yellow", "prd/yellow/eu") deploys into `namespace` and
 # appends what follows the namespace to every generated name ("ms1-prd-yellow-eu").
 folder: ""
-# Appended to every generated name - the ApplicationSet and each Application
-# ("ms1-dev" -> "ms1-dev-pr-42") - and nothing else: namespace, helm release name
-# and therefore every rendered object stay the same. Lets a second copy (another
-# chartRevision / originBranch) live next to the original in Argo CD; keep that
-# copy on autoSync: false and its diff shows what it would change on the live
-# objects. Two auto-synced copies would fight over the same objects. Also set as
-# the label name-suffix, so the Argo CD UI can filter on it.
-nameSuffix: ""
 # Glob under <namespace>/values/. The default also finds files in sub-folders
 # with ArgoCD's legacy git-file globbing; use "**/*.yaml" with the new one.
 # base/ mirrors those sub-folders: values/group1/ms1.yaml reads base/group1/ms1.yaml.
@@ -38,7 +30,10 @@ autoSync: true
 # hand. With that finalizer, deleting an Application (or this ApplicationSet)
 # deletes every workload it deployed. true stops the controller adding it:
 # deleting the Application or the ApplicationSet leaves the workloads running.
-preserveResourcesOnDeletion: false
+# On by default: removing an Argo CD Application (or a whole namespace folder)
+# must never take the running workloads with it. Set false to have deletes
+# cascade to the workloads again.
+preserveResourcesOnDeletion: true
 
 # What the ApplicationSet controller may do to the Applications it generates
 # (spec.syncPolicy.applicationsSync). Empty = Argo CD's default ("sync": create,
@@ -48,6 +43,38 @@ preserveResourcesOnDeletion: false
 # Needs the controller's policy override enabled
 # (applicationsetcontroller.enable.policy.override).
 applicationsSync: ""
+
+# Links between Argo CD, the values repo and the OpenShift console. Set them
+# once, as helm parameters on the root ApplicationSet (the converter's
+# --argocd-url / --console-url). Every object every microservice deploys is
+# annotated with its Application (and its values file, when the repo's web UI
+# is known) - metadata only, no pod restarts, but the first time under manual
+# sync each Application reads OutOfSync until it is synced.
+links:
+  # false = annotate nothing the microservices deploy (the Application keeps
+  # its own values-file links).
+  objects: true
+  # Argo CD's web UI, e.g. https://openshift-gitops-server-openshift-gitops.apps.example.com
+  # Every object a microservice deploys is annotated with its Application's page
+  # (and its workload gets the OpenShift topology view's corner link to it).
+  argocdUrl: ""
+  # The namespace the generated Applications live in. Empty = the namespace this
+  # chart is rendered into, which is where Argo CD creates them.
+  argocdNamespace: ""
+  # The OpenShift web console, e.g. https://console-openshift-console.apps.example.com
+  # Each workload becomes a link from its node in Argo CD's resource tree to its
+  # page in the console.
+  consoleUrl: ""
+  # The values repo's web UI, for links to the exact files an Application
+  # layers. Empty = derived from originRepoURL when it is an https URL on
+  # Bitbucket Server (/scm/<project>/<repo>.git), GitHub or GitLab. Each
+  # Application then links to its own values file (Argo CD's external-link)
+  # and carries all three files as universal-chart/{base,defaults,values}-file.
+  repoWebUrl: ""
+  # An OpenShift ConsoleLink on this namespace's Project overview, to the Argo
+  # CD Applications deploying into it. Cluster-scoped: the root Application's
+  # project must allow console.openshift.io/ConsoleLink. Needs argocdUrl.
+  consoleLink: false
 
 project: default
 destinationServer: https://kubernetes.default.svc

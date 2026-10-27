@@ -223,7 +223,7 @@ def test_file_unclaimed_gives_every_pasted_object_a_home(tmp_path):
             {"kind": "Pod", "metadata": {"name": "t", "annotations": {"helm.sh/hook": "test"}}}]
     ni.file_unclaimed(ns, docs)
     shared = [(d["kind"], d["metadata"]["name"]) for d in yaml.safe_load_all((ns / "shared.yaml").read_text())]
-    assert shared == [("ConfigMap", "argocd-cm"), ("Role", "r")]
+    assert shared == [("ConfigMap", "argocd-cm"), ("Role", "r"), ("NetworkPolicy", "np")]
     assert (ns / "orphan.yaml").exists()
 
 
@@ -256,50 +256,95 @@ def test_ms_applicationset_autosync(flag, automated):
     assert ("automated" in doc["spec"]["template"]["spec"]["syncPolicy"]) is automated
 
 
-def test_name_suffix_renames_argo_objects_only():
-    appset = yaml.safe_load(conv.build_root_applicationset(
-        "root-pr-42", "https://c", "ms-applicationSet", "main", ".", "https://v", "main", name_suffix="-pr-42"))
-    tmpl = appset["spec"]["template"]
-    assert tmpl["metadata"]["name"] == '{{ .path.path | replace "/" "-" }}-pr-42'
-    params = {p["name"]: p["value"] for p in tmpl["spec"]["sources"][0]["helm"]["parameters"]}
-    assert params["nameSuffix"] == "pr-42"
-    assert params["namespace"] == "{{ index .path.segments 0 }}"
-    app = conv.build_cluster_shared_application("platform", "https://c", ".", "main", "https://v", "main",
-                                                name_suffix="pr-42")
-    assert app["metadata"]["name"] == "cluster-shared-resources-pr-42"
-    assert app["spec"]["destination"]["namespace"] == "platform"
-    # Argo CD names the Helm release after the Application: the copy pins the original's.
-    assert app["spec"]["sources"][0]["helm"]["releaseName"] == "cluster-shared-resources"
-    plain = yaml.safe_load(conv.build_root_applicationset(
-        "r", "https://c", "ms-applicationSet", "main", ".", "https://v", "main"))
-    assert not any(p["name"] == "nameSuffix" for p in plain["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"])
-    plain_app = conv.build_cluster_shared_application("platform", "https://c", ".", "main", "https://v", "main")
-    assert "releaseName" not in plain_app["spec"]["sources"][0]["helm"]
+# --- navigation links ---------------------------------------------------------
+
+def test_root_appset_passes_links_only_when_asked():
+    plain = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
+                                                          "https://v", "main"))
+    names = {p["name"] for p in plain["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert not {n for n in names if n.startswith("links.")}
+    appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
+                                                           "https://v", "main", argocd_url="https://argo/",
+                                                           console_url="https://console"))
+    params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
+    assert {"name": "links.argocdUrl", "value": "https://argo"} in params
+    assert {"name": "links.consoleUrl", "value": "https://console"} in params
+
+
+def test_reimport_drops_the_charts_own_links():
+    stamped = {"universal-chart/argocd-application": "https://argo/applications/argocd/web-dev",
+               "universal-chart/values-file": "https://git/x.yaml",
+               "app.openshift.io/edit-url": "https://argo/applications/argocd/web-dev",
+               "link.argocd.argoproj.io/external-link": "https://console/k8s/ns/dev/apps~v1~Deployment/web",
+               "team": "shop"}
+    assert conv.clean_annotations(stamped) == {"team": "shop"}
+    # Set by hand, not by the chart: kept.
+    own = {"link.argocd.argoproj.io/external-link": "https://grafana/d/web"}
+    assert conv.clean_annotations(own) == own
 
 
 @needs_helm
-@pytest.mark.parametrize("suffix", ["pr-42", "-pr-42"])
-def test_ms_applicationset_name_suffix(suffix):
-    r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"),
-                        "--set", "namespace=prd,folder=prd/yellow,originRepoURL=r,originBranch=m",
-                        "--set", f"nameSuffix={suffix}"],
+def test_exact_copy_renders_no_link_annotations(tmp_path):
+    db = {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "db"},
+          "spec": {"serviceName": "db", "selector": {"matchLabels": {"app": "db"}},
+                   "template": {"metadata": {"labels": {"app": "db"}},
+                                "spec": {"containers": [{"name": "db", "image": "reg/db:1"}]}}}}
+    r, out = _convert(tmp_path, {"db": [db], "web": [_deploy("web")]})
+    assert r.returncode == 0, r.stderr[-2000:]
+    # Stateful = exact copy by default: it opts out; the plain Deployment does not.
+    assert yaml.safe_load((out / "base" / "db.yaml").read_text())["links"] == {"objects": False}
+    assert "links" not in yaml.safe_load((out / "base" / "web.yaml").read_text())
+    # Whatever ms-applicationSet passes, the exact copy renders no annotation.
+    files = [out / "base" / "db.yaml", out / "app" / "defaults.yaml", out / "app" / "values" / "db.yaml"]
+    args = ["helm", "template", "db", str(CHART_DIR), "-n", "app",
+            "--set-string", "links.application=argocd/db-app,links.argocd=https://argo/x,links.console=https://c"]
+    for f in files:
+        if f.exists():
+            args += ["-f", str(f)]
+    docs = [d for d in yaml.safe_load_all(subprocess.run(args, capture_output=True, text=True, check=True).stdout) if d]
+    sts = next(d for d in docs if d["kind"] == "StatefulSet")
+    assert not any(k.startswith(("universal-chart/", "link.argocd", "app.openshift.io/edit-url"))
+                   for k in (sts["metadata"].get("annotations") or {}))
+
+
+def _appset(*sets):
+    r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"), "-n", "openshift-gitops",
+                        "--set", "namespace=shop-dev,originBranch=main",
+                        "--set", "originRepoURL=https://git.example.com/scm/OPS/values.git", *sets],
                        capture_output=True, text=True, check=True)
-    doc = yaml.safe_load(r.stdout)
-    tmpl = doc["spec"]["template"]
-    assert doc["metadata"]["name"] == "prd-yellow-pr-42"
-    assert tmpl["metadata"]["name"].endswith("}}-prd-yellow-pr-42")
-    assert tmpl["metadata"]["labels"]["name-suffix"] == "pr-42"
-    assert tmpl["spec"]["destination"]["namespace"] == "prd"
-    # The release keeps the unsuffixed Application name, so the copy renders the same objects.
-    assert tmpl["spec"]["sources"][0]["helm"]["releaseName"].endswith("}}-prd-yellow")
+    return [d for d in yaml.safe_load_all(r.stdout) if d]
 
 
 @needs_helm
-def test_ms_applicationset_no_suffix_no_release_name():
-    r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"),
-                        "--set", "namespace=prd,originRepoURL=r,originBranch=m"],
-                       capture_output=True, text=True, check=True)
-    assert "releaseName" not in yaml.safe_load(r.stdout)["spec"]["template"]["spec"]["sources"][0]["helm"]
+def test_ms_applicationset_links_by_default():
+    [appset] = _appset()
+    meta = appset["spec"]["template"]["metadata"]["annotations"]
+    browse = "https://git.example.com/projects/OPS/repos/values/browse/"
+    assert meta["link.argocd.argoproj.io/external-link"] == browse + "{{ .path.path }}/{{ .path.filename }}?at=main"
+    assert meta["universal-chart/defaults-file"] == browse + "shop-dev/defaults.yaml?at=main"
+    # No URLs configured: every object still names its Application and file.
+    params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert params == {"links.application": 'openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}-dev',
+                      "links.values": browse + "{{ .path.path }}/{{ .path.filename }}?at=main"}
+
+
+@needs_helm
+def test_ms_applicationset_object_links_can_be_turned_off():
+    [appset] = _appset("--set", "links.objects=false")
+    assert "parameters" not in appset["spec"]["template"]["spec"]["sources"][0]["helm"]
+
+
+@needs_helm
+def test_ms_applicationset_hands_links_to_the_chart():
+    docs = _appset("--set", "links.argocdUrl=https://argo/,links.consoleUrl=https://console,links.consoleLink=true")
+    appset = next(d for d in docs if d["kind"] == "ApplicationSet")
+    params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
+    assert params["links.argocd"] == ('https://argo/applications/openshift-gitops/'
+                                      '{{ .path.filename | trimSuffix ".yaml" }}-dev')
+    assert params["links.console"] == "https://console"
+    link = next(d for d in docs if d["kind"] == "ConsoleLink")
+    assert link["spec"]["namespaceDashboard"]["namespaces"] == ["shop-dev"]
+    assert link["spec"]["href"] == "https://argo/applications?labels=folder%3Dshop-dev"
 
 
 # --- --include and exact `=name` patterns ------------------------------------
@@ -453,3 +498,56 @@ def test_label_patterns_need_the_exact_label():
     assert not conv.matches_patterns(doc, ["team=billing"])
     assert conv.matches_patterns(doc, ["team=billing-ops"])
     assert not conv.matches_patterns(doc, ["owner=billing-ops"])
+
+
+# --- NetworkPolicy ----------------------------------------------------------
+
+def _np(name, pod_selector, **spec):
+    return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+            "metadata": {"name": name}, "spec": {"podSelector": pod_selector, **spec}}
+
+
+def _dep(name):
+    labels = {"app": name}
+    return {"kind": "Deployment", "metadata": {"name": name},
+            "spec": {"selector": {"matchLabels": labels},
+                     "template": {"metadata": {"labels": labels}, "spec": {"containers": [{"name": name}]}}}}
+
+
+def test_networkpolicy_is_converted_not_dropped():
+    sm = {"kind": "ServiceMonitor", "metadata": {"name": "sm"}}
+    np = _np("np", {})
+    warnings = []
+    assert conv.filter_transient([sm, np], warnings) == [np]
+    assert len(warnings) == 1 and warnings[0].startswith("ServiceMonitor/sm: dropped")
+
+
+def test_networkpolicy_values_entry():
+    c = conv.MicroserviceContext(namespace="ns", name="app")
+    doc = _np("allow-web", {"matchLabels": {"app": "api"}}, policyTypes=["Ingress"],
+              ingress=[{"from": [{"podSelector": {}}]}])
+    doc["metadata"].update(labels={"team": "a"}, annotations={"note": "x"})
+    conv.handle_networkpolicy(doc, c, "allow-web")
+    assert c.values["networkPolicies"] == {"allow-web": {
+        "podSelector": {"matchLabels": {"app": "api"}}, "policyTypes": ["Ingress"],
+        "ingress": [{"from": [{"podSelector": {}}]}], "labels": {"team": "a"}, "annotations": {"note": "x"}}}
+
+
+def test_networkpolicy_empty_pod_selector_is_left_out():
+    # The template renders {} for a missing one; written out, an empty map
+    # never reaches base/ and is copied into every namespace's values file.
+    c = conv.MicroserviceContext(namespace="ns", name="app")
+    conv.handle_networkpolicy(_np("deny-all", {}, policyTypes=["Ingress"]), c, "deny-all")
+    assert c.values["networkPolicies"] == {"deny-all": {"policyTypes": ["Ingress"]}}
+
+
+def test_include_keeps_a_namespace_wide_networkpolicy():
+    # Selecting every pod, it is used by every microservice: with only one
+    # converted it moves into that one instead of being dropped as unused.
+    shared = [_np("deny-all", {}), _np("only-web", {"matchLabels": {"app": "web"}}),
+              _np("expr", {"matchExpressions": [{"key": "app", "operator": "Exists"}]})]
+    kept = [("api", [_dep("api")])]
+    out, _ = conv.place_shared_by_use(shared, kept, [[_dep("web")]])
+    assert out == []
+    moved = [d["metadata"]["name"] for d in kept[0][1] if d["kind"] == "NetworkPolicy"]
+    assert sorted(moved) == ["deny-all", "expr"]

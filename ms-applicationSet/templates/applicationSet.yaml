@@ -5,9 +5,34 @@
 {{- if .Values.originPath }}{{- $prefix = printf "%s/" .Values.originPath -}}{{- end -}}
 {{- $folder := .Values.folder | default $ns -}}
 {{- $suffix := ternary "" (printf "-%s" (trimPrefix (printf "%s/" $ns) $folder | replace "/" "-")) (eq $folder $ns) -}}
-{{- $nameSuffix := toString .Values.nameSuffix | trimPrefix "-" -}}
+{{- /* The Application's name, as a goTemplate expression for the ApplicationSet. */ -}}
 {{- $appName := printf "{{ .path.filename | trimSuffix \".yaml\" }}-%s%s" ($ns | splitList "-" | last) $suffix -}}
-{{- if $nameSuffix }}{{- $suffix = printf "%s-%s" $suffix $nameSuffix -}}{{- end -}}
+{{- /* Links (see values.yaml `links`). $fileUrl holds PATH where a repo path
+       goes (a replace, not printf: a web URL may carry %-escapes): Bitbucket Server browses at /browse/<path>?at=<branch>,
+       GitHub at /blob/<branch>/<path>, GitLab at /-/blob/<branch>/<path>. */ -}}
+{{- $links := .Values.links | default dict -}}
+{{- $argocd := trimSuffix "/" ($links.argocdUrl | default "") -}}
+{{- $argocdNs := $links.argocdNamespace | default .Release.Namespace -}}
+{{- $web := trimSuffix "/" ($links.repoWebUrl | default "") -}}
+{{- $bare := trimSuffix ".git" $repo -}}
+{{- if and (not $web) (regexMatch "^https?://[^@]+/scm/[^/]+/[^/]+$" $bare) -}}
+{{- $web = regexReplaceAll "^(https?://.+)/scm/([^/]+)/([^/]+)$" $bare "${1}/projects/${2}/repos/${3}" -}}
+{{- else if and (not $web) (regexMatch "^https://(github\\.com|gitlab\\.com)/" $bare) -}}
+{{- $web = $bare -}}
+{{- end -}}
+{{- $fileUrl := "" -}}
+{{- if $web -}}
+{{- if regexMatch "/projects/[^/]+/repos/[^/]+$" $web -}}
+{{- $fileUrl = printf "%s/browse/PATH?at=%s" $web $branch -}}
+{{- else if contains "gitlab" $web -}}
+{{- $fileUrl = printf "%s/-/blob/%s/PATH" $web $branch -}}
+{{- else -}}
+{{- $fileUrl = printf "%s/blob/%s/PATH" $web $branch -}}
+{{- end -}}
+{{- end -}}
+{{- $baseFile := printf "%sbase{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $prefix $folder -}}
+{{- $defaultsFile := printf "%s%s/defaults.yaml" $prefix $folder -}}
+{{- $valuesFile := "{{ .path.path }}/{{ .path.filename }}" -}}
 {{/*
   One ApplicationSet for ONE namespace. Its git "files" generator enumerates
   <namespace>/values/*.yaml in the values repo - that flat directory IS the list
@@ -35,13 +60,6 @@
   prd/yellow/eu -> ms1-prd-yellow-eu). The folder's defaults.yaml carries its
   group values, so base/ can name things '{{ .Values.color }}' and two
   variants never collide.
-
-  nameSuffix ("pr-42") goes after all of that (ApplicationSet prd-yellow-pr-42,
-  Application ms1-prd-yellow-pr-42) and touches NOTHING else: same namespace,
-  same Helm release name (pinned to the unsuffixed Application name, since Argo
-  CD otherwise names the release after the Application), so the second copy
-  renders the very same objects and,
-  left on manual sync, Argo CD's diff shows exactly what it would change.
 */}}
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -50,21 +68,24 @@ metadata:
   labels:
     namespace: {{ $ns | quote }}
     managed-by: ms-applicationSet
-    {{- if $nameSuffix }}
-    name-suffix: {{ $nameSuffix | quote }}
-    {{- end }}
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
-  {{- $preserve := eq (toString .Values.preserveResourcesOnDeletion) "true" }}
-  {{- if or $preserve .Values.applicationsSync }}
+  {{- /* Built as a dict and written only when it holds something: a bare
+         `syncPolicy:` key is null, and the ApplicationSet CRD rejects
+         spec.syncPolicy null outright ("must be of type object"), which fails
+         the whole sync. toString/lower: an Argo CD helm parameter arrives as
+         a string ("true", "True"). */}}
+  {{- $appsetSync := dict }}
+  {{- if eq (lower (toString .Values.preserveResourcesOnDeletion)) "true" }}
+  {{- $_ := set $appsetSync "preserveResourcesOnDeletion" true }}
+  {{- end }}
+  {{- with trim (toString (.Values.applicationsSync | default "")) }}
+  {{- $_ := set $appsetSync "applicationsSync" . }}
+  {{- end }}
+  {{- with $appsetSync }}
   syncPolicy:
-    {{- if $preserve }}
-    preserveResourcesOnDeletion: true
-    {{- end }}
-    {{- with .Values.applicationsSync }}
-    applicationsSync: {{ . | quote }}
-    {{- end }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   generators:
     - git:
@@ -74,15 +95,22 @@ spec:
           - path: '{{ $prefix }}{{ $folder }}/values/{{ .Values.valuesGlob | default "*.yaml" }}'
   template:
     metadata:
-      name: '{{ $appName }}{{ if $nameSuffix }}-{{ $nameSuffix }}{{ end }}'
+      name: '{{ $appName }}'
       labels:
         namespace: {{ $ns | quote }}
+        {{- /* What the ConsoleLink filters Argo CD's list on; a label value
+               cannot hold the slash a variant folder has. */}}
+        folder: {{ $folder | replace "/" "-" | trunc 63 | trimSuffix "-" | quote }}
         managed-by: ms-applicationSet
-        {{- if $nameSuffix }}
-        name-suffix: {{ $nameSuffix | quote }}
-        {{- end }}
       annotations:
         argocd.argoproj.io/sync-wave: "0"
+        {{- with $fileUrl }}
+        # Argo CD shows this one on the Application's tile and summary.
+        link.argocd.argoproj.io/external-link: '{{ replace "PATH" $valuesFile . }}'
+        universal-chart/values-file: '{{ replace "PATH" $valuesFile . }}'
+        universal-chart/defaults-file: '{{ replace "PATH" $defaultsFile . }}'
+        universal-chart/base-file: '{{ replace "PATH" $baseFile . }}'
+        {{- end }}
     spec:
       project: {{ .Values.project | quote }}
       destination:
@@ -97,22 +125,42 @@ spec:
           targetRevision: {{ .Values.chartRevision | quote }}
           path: {{ .Values.chartPath | quote }}
           helm:
-            {{- if $nameSuffix }}
-            # Argo CD names the Helm release after the Application, so the
-            # suffixed copy pins the unsuffixed name to render the same objects.
-            releaseName: '{{ $appName }}'
-            {{- end }}
             valueFiles:
-              - '$Values/{{ $prefix }}base{{ printf "{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $folder }}'
-              - '$Values/{{ $prefix }}{{ $folder }}/defaults.yaml'
-              - '$Values/{{ printf "{{ .path.path }}/{{ .path.filename }}" }}'
+              - '$Values/{{ $baseFile }}'
+              - '$Values/{{ $defaultsFile }}'
+              - '$Values/{{ $valuesFile }}'
+            {{- /* On by default: every object names the Application deploying
+                   it, and links its values file when the repo's web UI is
+                   known. links.objects: false turns all of it off. */}}
+            {{- if ne (toString $links.objects) "false" }}
+            # The chart's `links`: annotations on every object it renders.
+            parameters:
+              - name: links.application
+                value: '{{ $argocdNs }}/{{ $appName }}'
+                forceString: true
+              {{- with $argocd }}
+              - name: links.argocd
+                value: '{{ . }}/applications/{{ $argocdNs }}/{{ $appName }}'
+                forceString: true
+              {{- end }}
+              {{- with $fileUrl }}
+              - name: links.values
+                value: '{{ replace "PATH" $valuesFile . }}'
+                forceString: true
+              {{- end }}
+              {{- with $links.consoleUrl }}
+              - name: links.console
+                value: {{ trimSuffix "/" . | quote }}
+                forceString: true
+              {{- end }}
+            {{- end }}
         - repoURL: {{ $repo | quote }}
           targetRevision: {{ $branch | quote }}
           ref: Values
       syncPolicy:
         {{- /* toString: Argo CD hands helm parameters over as --set, but a
                value typed into its UI or a values file may arrive as "false". */}}
-        {{- if ne (toString .Values.autoSync) "false" }}
+        {{- if ne (lower (toString .Values.autoSync)) "false" }}
         automated:
           prune: true
           selfHeal: true

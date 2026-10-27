@@ -7,7 +7,7 @@ metadata:
   namespace: {{ .Values.serviceMonitor.namespace | default .Release.Namespace }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" . "own" .Values.serviceMonitor.labels) | nindent 4 }}
-  {{- with merge (.Values.commonAnnotations | default dict) (.Values.serviceMonitor.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" . "own" .Values.serviceMonitor.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

@@ -94,7 +94,7 @@ def test_store_and_its_deps_placed_once_by_number_of_users(imported):
     assert sorted(docs) == ["kafka", "shared", "solo", "zookeeper"]
 
     # Two microservices read zookeeper-secret-store -> it, its CA and SA are shared.
-    assert _ids(docs["shared"]) == [("ConfigMap", "vault-ca"), ("SecretStore", "zookeeper-secret-store"),
+    assert _ids(docs["shared"]) == [("ConfigMap", "vault-ca"), ("NetworkPolicy", "deny-all"), ("SecretStore", "zookeeper-secret-store"),
                                     ("ServiceAccount", "vault")]
     # One microservice reads solo-store -> it and its deps sit in solo.yaml. The
     # ClusterSecretStore's CA/SA name another namespace and are not pulled.
@@ -117,9 +117,11 @@ def test_store_and_its_deps_placed_once_by_number_of_users(imported):
     assert store["spec"]["provider"]["vault"]["auth"]["kubernetes"] == {
         "mountPath": "dev", "role": "k8s-role-dev-interconn-opr-vault", "serviceAccountRef": {"name": "vault"}}
 
-    # NetworkPolicy / ServiceMonitor are no longer fetched at all.
+    # ServiceMonitors are not fetched at all; NetworkPolicies are (the converter
+    # turns them into networkPolicies).
     asked = {c[1].split(".", 1)[0] for c in oc.calls}
-    assert not asked & {"networkpolicies", "servicemonitors"}
+    assert "servicemonitors" not in asked
+    assert "networkpolicies" in asked
 
 
 def test_a_store_already_placed_is_not_duplicated():
@@ -173,8 +175,10 @@ def test_converter_renders_the_pulled_store_ca_and_sa(imported, tmp_path):
     assert "solo-store" in solo["secretStores"]
     assert "solo-vault-ca" in solo["secrets"]
     # solo's pod runs as `default`; the Vault SA beside it must not become the
-    # chart's serviceAccount (that would move the pod onto it).
-    assert solo["serviceAccount"]["create"] is False
+    # chart's serviceAccount (that would move the pod onto it); the chart's
+    # default, create: false, already keeps it on `default`.
+    assert not (solo.get("serviceAccount") or {}).get("create")
+    assert not (solo.get("serviceAccount") or {}).get("name")
     assert any("name: solo-vault" in e for e in solo["extraDeploy"])
     assert "global-store" in (out / "cluster-shared" / "values" / "cluster-shared-values.yaml").read_text(
         encoding="utf-8")

@@ -116,7 +116,7 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- define "universal-chart.objectLabels" -}}
 {{- /* chartLabels: false = render the object's own labels verbatim (plus
        commonLabels), no chart identity labels. The converter sets it: a live
-       object carries its own name/instance/version/helm.sh/chart, and
+       object carries its own name/instance/version, and
        re-deriving them from this release rewrites every one of them. */}}
 {{- if not .root.Values.chartLabels }}
 {{- toYaml (merge (dict) (.own | default dict) (.root.Values.commonLabels | default dict)) }}
@@ -126,11 +126,53 @@ Usage: {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.lab
 {{- end }}
 {{- end }}
 
-{{- define "universal-chart.labels" -}}
-{{- $core := dict "app.kubernetes.io/name" (include "universal-chart.name" .) "app.kubernetes.io/instance" .Release.Name "helm.sh/chart" (printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-") "app.kubernetes.io/managed-by" .Release.Service }}
-{{- if .Chart.AppVersion }}
-{{- $core = merge $core (dict "app.kubernetes.io/version" (.Chart.AppVersion | toString)) }}
+{{/*
+Object ANNOTATIONS: commonAnnotations, then the object's own, then any the
+template insists on (Route/PVC sync-options), as ONE fresh map — earlier wins,
+exactly as the inline `merge` each template used to do. Fresh, because sprig's
+`merge` writes into its first argument: merging into .Values.commonAnnotations
+leaked one object's annotations onto every object rendered after it.
+
+Then the navigation links (.Values.links), which only fill keys nothing above
+set — a values file's own link.argocd.argoproj.io/external-link stays:
+  universal-chart/application         <namespace>/<name> of that Application
+  universal-chart/argocd-application  the Argo CD Application deploying this release
+  universal-chart/values-file         the values file in git that sets it
+  app.openshift.io/edit-url           the same Argo CD link, on the workload only:
+                                      it is what the OpenShift topology view's
+                                      corner decorator opens, the one place the
+                                      console turns an annotation into a link
+  link.argocd.argoproj.io/external-link
+                                      on the workload only: this object's page in
+                                      the OpenShift console, shown as a link on
+                                      its node in Argo CD's resource tree
+Metadata only, never a pod template: a pod-template annotation rolls the pods.
+
+Usage: {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations) | fromYaml }}
+       Workloads add "consoleRef" "apps~v1~Deployment/<name>" for the two
+       workload-only links.
+*/}}
+{{- define "universal-chart.annotations" -}}
+{{- $out := merge (dict) (.root.Values.commonAnnotations | default dict) (.own | default dict) (.extra | default dict) }}
+{{- $links := .root.Values.links | default dict }}
+{{- $nav := dict }}
+{{- /* links.objects: false (the converter's exact copy) renders none of them. */}}
+{{- if ne (toString $links.objects) "false" }}
+{{- with $links.application }}{{- $_ := set $nav "universal-chart/application" . }}{{- end }}
+{{- with $links.argocd }}{{- $_ := set $nav "universal-chart/argocd-application" . }}{{- end }}
+{{- with $links.values }}{{- $_ := set $nav "universal-chart/values-file" . }}{{- end }}
+{{- if .consoleRef }}
+{{- with $links.argocd }}{{- $_ := set $nav "app.openshift.io/edit-url" . }}{{- end }}
+{{- with $links.console }}
+{{- $_ := set $nav "link.argocd.argoproj.io/external-link" (printf "%s/k8s/ns/%s/%s" (trimSuffix "/" .) $.root.Release.Namespace $.consoleRef) }}
 {{- end }}
+{{- end }}
+{{- end }}
+{{- toYaml (merge $out $nav) }}
+{{- end }}
+
+{{- define "universal-chart.labels" -}}
+{{- $core := dict "app.kubernetes.io/name" (include "universal-chart.name" .) "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/managed-by" .Release.Service }}
 {{- /* An explicit selectorLabels override is what the workload's pods and
        selector are actually identified by (an existing release's labels,
        carried over when migrating it onto this chart), so it outranks the
@@ -246,12 +288,12 @@ that order, then every key it does not name in sorted order (so a hand-added
 entry is never lost). Returned as JSON; read it back with fromJsonArray.
 
 Helm ranges a map in SORTED key order, and for a pod template that is not
-cosmetic. env, ports, volumeMounts, volumes, envFrom and containers are LISTS in
+cosmetic. ports, volumes, envFrom and containers are LISTS in
 Kubernetes: reordering one changes the pod template, so the Deployment rolls a
 new ReplicaSet (or the StatefulSet a new revision) and every pod restarts on the
 first sync after migrating — even though nothing about the workload changed.
-env order is also semantic: `$(VAR)` only expands variables defined EARLIER in
-the list. The converter writes the raw manifest's order into the *Order values.
+The converter writes the raw manifest's order into the *Order values. (env and
+volumeMounts need none: they are written as lists, see universal-chart.listOrMap.)
 Usage: {{- $keys := include "universal-chart.orderedKeys" (dict "map" $m "order" $o) | fromJsonArray }}
 */}}
 {{- define "universal-chart.orderedKeys" -}}
@@ -272,7 +314,7 @@ Usage: {{- $keys := include "universal-chart.orderedKeys" (dict "map" $m "order"
 
 {{/*
 mapToList with an explicit order (see universal-chart.orderedKeys).
-Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.env "order" .Values.envOrder) | nindent 4 }}
+Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.ports "order" .Values.portOrder) | nindent 4 }}
 */}}
 {{- define "universal-chart.orderedMapToList" -}}
 {{- $map := .map | default dict }}
@@ -308,6 +350,41 @@ Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.env "o
   value: ""
   {{- end }}
 {{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+env / volumeMounts, rendered in the order they are WRITTEN.
+
+Given a list — the Kubernetes shape, and what the converter writes — the
+entries render exactly as listed, so the pod template keeps the deployment's
+own order: no restart on the cutover sync, and `$(VAR)` still sees the vars
+defined before it. A list is replaced wholesale by a later values file (Helm
+never merges lists), so an override restates the whole list.
+
+A map (keyed by name, the older form) still works and renders in sorted key
+order — Helm cannot know the order a map was written in.
+Usage: {{- include "universal-chart.listOrMap" (dict "items" .Values.env "stringValues" true) | nindent 4 }}
+*/}}
+{{- define "universal-chart.listOrMap" -}}
+{{- if kindIs "slice" .items }}
+{{- range $e := .items }}
+{{- /* Same EnvVar.value coercion as orderedMapToList: a bare `y`, `08` or
+       `true` read as a bool or number is refused by the API server. */}}
+{{- if and $.stringValues (kindIs "map" $e) (hasKey $e "value") (not (kindIs "invalid" $e.value)) (not (kindIs "string" $e.value)) }}
+{{- $e = merge (dict "value" (toString $e.value)) $e }}
+{{- end }}
+{{- if and (kindIs "map" $e) (hasKey $e "name") }}
+- name: {{ $e.name | toYaml }}
+  {{- with omit $e "name" }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+{{- else }}
+- {{- toYaml $e | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- else }}
+{{- include "universal-chart.orderedMapToList" (dict "map" .items "order" list "stringValues" .stringValues) }}
 {{- end }}
 {{- end }}
 
@@ -422,9 +499,8 @@ container genuinely needs scratch space, declare it explicitly —
 `volumes: { <name>: { emptyDir: {} } }` — in base/.
 
 Init containers and sidecars are raw, pass-through Kubernetes container
-specs (unlike the main container's map-based volumeMounts), so their
-volumeMounts is a LIST of {name, mountPath}, not a map — handled separately
-below.
+specs, so their volumeMounts is always a LIST of {name, mountPath} — handled
+separately below. The main container's may be a list or a name-keyed map.
 
 Usage: {{ include "universal-chart.validateVolumeMounts" (dict
   "label" "the workload"
@@ -438,9 +514,16 @@ Usage: {{ include "universal-chart.validateVolumeMounts" (dict
 {{- $validVolumes := merge (dict) (.volumeClaimTemplates | default dict) (.volumes | default dict) }}
 {{- $label := .label | default "the workload" }}
 
-{{- range $mountKey, $mountSpec := (.volumeMounts | default dict) }}
-{{- /* Composite key for a volume mounted more than once — the real volume
-       name is on the entry itself. See universal-chart.mapToList above. */}}
+{{- /* A list (as written) or the older name-keyed map, whose composite key for
+       a volume mounted more than once carries the real name on the entry
+       itself (see universal-chart.mapToList above). */}}
+{{- $mounts := .volumeMounts | default dict }}
+{{- if kindIs "slice" $mounts }}
+{{- $byName := dict }}
+{{- range $i, $m := $mounts }}{{- $_ := set $byName (printf "%d" $i) $m }}{{- end }}
+{{- $mounts = $byName }}
+{{- end }}
+{{- range $mountKey, $mountSpec := $mounts }}
 {{- $mountName := ($mountSpec.name | default $mountKey) }}
 {{- if not (hasKey $validVolumes $mountName) }}
 {{- fail (printf "Error: volumeMount %q is defined on %s's main container, but volume %q is missing. Declare it explicitly (e.g. volumes.%s.emptyDir: {} if it's meant to be transient) — this chart never injects a fallback volume for you." $mountName $label $mountName $mountName) }}

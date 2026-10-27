@@ -10,6 +10,17 @@
     "chartLabels": { "type": "boolean" },
     "selectorLabels": { "type": "object" },
     "commonAnnotations": { "type": "object" },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "objects": { "type": "boolean" },
+        "application": { "type": "string" },
+        "argocd": { "type": "string" },
+        "values": { "type": "string" },
+        "console": { "type": "string" }
+      }
+    },
     "workload": {
       "type": "object",
       "required": ["type"],
@@ -43,9 +54,7 @@
     "podSecurityContext":    { "type": "object" },
     "securityContext":       { "type": ["object", "null"] },
     "portOrder":             { "type": "array", "items": { "type": "string" } },
-    "envOrder":              { "type": "array", "items": { "type": "string" } },
     "envFromOrder":          { "type": "array", "items": { "type": "string" } },
-    "volumeMountOrder":      { "type": "array", "items": { "type": "string" } },
     "volumeOrder":           { "type": "array", "items": { "type": "string" } },
     "sidecarOrder":          { "type": "array", "items": { "type": "string" } },
     "command":               { "type": "array", "items": { "type": "string" } },
@@ -55,7 +64,7 @@
     "stdinOnce":             { "type": "boolean" },
     "tty":                   { "type": "boolean" },
     "ports":                 { "type": "object" },
-    "env":                   { "type": "object" },
+    "env":                   { "type": ["array", "object", "null"] },
     "envFrom":               { "type": "object" },
     "resources":             { "type": "object" },
     "livenessProbe":         { "type": "object" },
@@ -64,7 +73,7 @@
     "containerRestartRules": { "type": "array" },
     "containerRestartPolicy": { "type": "string", "enum": ["", "Always", "OnFailure", "Never"] },
     "lifecycle":             { "type": "object" },
-    "volumeMounts":          { "type": "object" },
+    "volumeMounts":          { "type": ["array", "object", "null"] },
     "volumeDevices":         { "type": "array" },
     "volumes":               { "type": "object" },
     "initContainers":        { "type": "object" },

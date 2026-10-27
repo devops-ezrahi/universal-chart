@@ -10,17 +10,12 @@ workload:
 containerName: app
 
 env:
-  COLOR:
-    value: none
-  DB_URL:
-    value: http://db.{{ .Values.environment }}.svc:5432
-  ENVIRONMENT:
-    value: '{{ .Values.environment }}'
-
-envOrder:
-- ENVIRONMENT
-- DB_URL
-- COLOR
+- name: ENVIRONMENT
+  value: '{{ .Values.environment }}'
+- name: DB_URL
+  value: http://db.{{ .Values.environment }}.svc:5432
+- name: COLOR
+  value: none
 
 service:
   enabled: true
@@ -33,10 +28,7 @@ service:
     app: ms2
   type: ClusterIP
 
-serviceAccount:
-  create: false
-
-chartLabels: false
+fullnameOverride: ms2
 
 selectorLabels:
   app: ms2

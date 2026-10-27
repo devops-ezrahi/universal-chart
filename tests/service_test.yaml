@@ -2,7 +2,14 @@ suite: Service
 templates:
   - templates/service.yaml
 tests:
-  - it: should render by default
+  - it: should not render by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render when enabled
+    set:
+      service.enabled: true
     asserts:
       - isKind:
           of: Service
@@ -19,6 +26,7 @@ tests:
 
   - it: should set service type
     set:
+      service.enabled: true
       service.type: LoadBalancer
     asserts:
       - equal:
@@ -171,6 +179,8 @@ tests:
           path: spec.selector
 
   - it: should include selector for non-ExternalName
+    set:
+      service.enabled: true
     asserts:
       - isNotNull:
           path: spec.selector

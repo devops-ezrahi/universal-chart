@@ -7,15 +7,17 @@ metadata:
   name: {{ $name }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
-  {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
   podSelector:
     {{- toYaml ($spec.podSelector | default dict) | nindent 4 }}
+  {{- with $spec.policyTypes }}
   policyTypes:
-    {{- toYaml $spec.policyTypes | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   {{- with $spec.ingress }}
   ingress:
     {{- toYaml . | nindent 4 }}

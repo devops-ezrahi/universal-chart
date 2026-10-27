@@ -18,7 +18,7 @@ metadata:
   name: {{ include "universal-chart.cronJobName" (dict "root" $ "name" $name) }}
   labels:
     {{- include "universal-chart.objectLabels" (dict "root" $ "own" $spec.labels) | nindent 4 }}
-  {{- with merge ($.Values.commonAnnotations | default dict) ($spec.annotations | default dict) }}
+  {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec.annotations "consoleRef" (printf "batch~v1~CronJob/%s" (include "universal-chart.cronJobName" (dict "root" $ "name" $name)))) | fromYaml }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

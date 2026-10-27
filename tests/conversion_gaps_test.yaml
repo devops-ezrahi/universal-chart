@@ -29,6 +29,8 @@ tests:
   - it: the primary Service keeps the release selector by default
     template: templates/service.yaml
     release: { name: web }
+    set:
+      service: { enabled: true }
     asserts:
       - equal:
           path: 'spec.selector["app.kubernetes.io/instance"]'
@@ -39,7 +41,7 @@ tests:
   - it: the primary Service takes an explicit selector and trafficDistribution
     template: templates/service.yaml
     set:
-      service: { selector: { app: redis }, trafficDistribution: PreferClose }
+      service: { enabled: true, selector: { app: redis }, trafficDistribution: PreferClose }
     asserts:
       - equal:
           path: 'spec.selector'

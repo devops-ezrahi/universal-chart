@@ -467,6 +467,7 @@ helm unittest . --color --debug
 | `servicemonitor_test.yaml` | Prometheus ServiceMonitor path, port, interval |
 | `extra_deploy_test.yaml` | Raw YAML injection via `extraDeploy[]` |
 | `validation_test.yaml` | JSON Schema validation errors on invalid values |
+| `links_test.yaml` | `links` navigation annotations, workload-only links, no leak between objects |
 
 #### Example Test Structure
 
@@ -518,6 +519,11 @@ workload:
 | Workload type | `workload.type` | deployment / statefulset / daemonset / none (no compute workload) |
 | Replica count | `replicaCount` | Omitted automatically when HPA is enabled |
 | Update strategy | `strategy` | RollingUpdate / Recreate / OnDelete |
+| Environment variables | `env` | A list, rendered in the order written (`$(VAR)` sees earlier vars); a later values file replaces the whole list. The older name-keyed map still works, rendered sorted |
+| Volume mounts | `volumeMounts` | A list, rendered in the order written; same rules as `env` |
+| Service | `service.enabled: true` | Off by default; set `false` in a later values file to turn it back off |
+| ServiceAccount | `serviceAccount.create: true` | Off by default (pods run as `serviceAccount.name`, else `default`); `false` turns it back off |
+| Chart identity labels | `chartLabels: true` | Off by default: objects carry only their own `labels` + `commonLabels`; `true` adds `app.kubernetes.io/name`, `/instance`, `/managed-by`. Selectors use `selectorLabels` either way |
 | Sidecar containers | `sidecars` | Map-keyed by container name |
 | Init containers | `initContainers` | Map-keyed by container name |
 | Multiple ConfigMaps | `configMaps` | Map-keyed by ConfigMap name |
@@ -600,12 +606,12 @@ ports:
     containerPort: 5432
 
 env:
-  POSTGRES_USER:
+  - name: POSTGRES_USER
     valueFrom:
       secretKeyRef:
         name: postgres-secret
         key: username
-  POSTGRES_PASSWORD:
+  - name: POSTGRES_PASSWORD
     valueFrom:
       secretKeyRef:
         name: postgres-secret
@@ -626,7 +632,7 @@ volumeClaimTemplates:
     storageClassName: fast-ssd
 
 volumeMounts:
-  data:
+  - name: data
     mountPath: /var/lib/postgresql/data
     subPath: pgdata
 
@@ -651,7 +657,7 @@ tolerations:
   - operator: Exists
 
 volumeMounts:
-  varlog:
+  - name: varlog
     mountPath: /var/log
     readOnly: true
 
@@ -823,19 +829,14 @@ empty = the namespace folder itself), `valuesGlob` (default `*.yaml`; use
 `**/*.yaml` with Argo CD's new git-file globbing), `project`,
 `destinationServer`, `destinationName` (a registered cluster name, wins over
 `destinationServer`), `chartRepoURL`, `chartRevision` and `chartPath`
-have defaults in its `values.yaml`. `nameSuffix` (e.g. `pr-42`) is appended to
-the ApplicationSet's and every Application's name (`ms1-dev` → `ms1-dev-pr-42`)
-and to nothing else — same namespace, same Helm release name, so the same
-objects. That lets a second copy pointing at another `chartRevision` or
-`originBranch` sit next to the original in Argo CD: keep the copy on
-`autoSync: false` and its diff tree shows exactly what your change would do to
-the live objects (two auto-synced copies would fight over them).
+have defaults in its `values.yaml`.
 
 Argo CD's ApplicationSet controller puts `resources-finalizer.argocd.argoproj.io`
 on every Application it generates and restores it if it is removed by hand, so
 deleting an Application or its ApplicationSet also deletes its workloads.
-`preserveResourcesOnDeletion: true` stops the controller adding the finalizer,
-so those deletes leave the workloads running. `applicationsSync` sets
+`preserveResourcesOnDeletion` (default `true`) stops the controller adding the
+finalizer, so those deletes leave the workloads running; set it to `false` for
+deletes that cascade to the workloads. `applicationsSync` sets
 the ApplicationSet's `syncPolicy.applicationsSync`; `create-only` or
 `create-delete` stop the controller updating existing Applications, so a hand
 edit to one stays. This needs the controller's policy override enabled. Set
@@ -845,14 +846,38 @@ self-heal. The generated ApplicationSets carry
 `ignoreDifferences` for the pod-security fields OpenShift admission mutates on
 the live object, so Applications do not flip OutOfSync every reconcile.
 
+#### Links between Argo CD, git and the OpenShift console
+
+`links` in `ms-applicationSet` joins the three places a microservice lives.
+Set its values once, as helm parameters in the values repo's
+`rootApplicationSet.yaml`. The converter writes them for
+`--argocd-url <url>` / `--console-url <url>`:
+
+| Value | Default | What links where |
+|---|---|---|
+| `links.objects` | `true` | **Every object → its Application.** Each object a release renders carries `universal-chart/application: <argocd-ns>/<app>`, plus its values file (`universal-chart/values-file`) when the repo web URL is known — on by default, with or without the URLs below. `false` turns object annotations off. A release's own values set `links.objects: false` to opt out alone — the converter writes it for every `--exact-copy` release (stateful ones by default), which must render exactly as it runs now. |
+| `links.repoWebUrl` | derived from `originRepoURL` | **Argo CD → git.** Each Application gets `link.argocd.argoproj.io/external-link` set to its own `<folder>/values/<file>`, which Argo CD shows on the Application's tile and summary. It also carries `universal-chart/{base,defaults,values}-file` for the whole layer chain. The web URL is derived from an https `originRepoURL` on Bitbucket Server (`/scm/<project>/<repo>.git`), GitHub or GitLab, so nothing needs setting for those. |
+| `links.argocdUrl` | empty | **OpenShift → Argo CD.** Every object a release renders is annotated with `universal-chart/argocd-application: <argocd>/applications/<ns>/<app>`. The workload also gets `app.openshift.io/edit-url` with the same URL, which is the link in the corner of its node in the OpenShift topology view. That decorator is the only place the console turns an annotation into a link. Its tooltip says "Edit source code", and it opens the Application, which links on to the file. |
+| `links.consoleUrl` | empty | **Argo CD → OpenShift.** Each workload gets `link.argocd.argoproj.io/external-link` set to its own console page (`<console>/k8s/ns/<ns>/apps~v1~Deployment/<name>`), so its node in Argo CD's resource tree links straight there. |
+| `links.consoleLink` | `false` | **OpenShift project → Argo CD.** Adds a `ConsoleLink` on the Project overview, listing that folder's Applications (filtered on their `folder` label). It is cluster-scoped, so the root Application's AppProject must allow `console.openshift.io/ConsoleLink`. Needs `argocdUrl`. |
+| `links.argocdNamespace` | the chart's own namespace | The namespace the Applications live in, used in the Argo CD URL. |
+
+The chart side is `links.application` / `links.argocd` / `links.values` / `links.console`, which
+ms-applicationSet fills in per Application. Keep them out of values files. The
+annotations sit on object metadata only, never on a pod template, so they
+restart no pods. They do change every object once — on upgrading to this chart
+version too, since they are on by default — so under manual sync each
+Application shows OutOfSync until it is synced. An annotation the
+values set themselves always wins over a link.
+
 #### Removing the Argo CD tree but keeping the workloads
 
 This takes git access, plus Argo CD UI or API access for the last step. It
 needs no kubectl access to the Argo CD cluster. Tested against Argo CD v3.1.8:
 
-1. In the values repo's `rootApplicationSet.yaml`, add a helm parameter
-   `preserveResourcesOnDeletion: 'true'` next to `autoSync`. Commit it and
-   wait until no microservice Application has a finalizer left. The
+1. Make sure `preserveResourcesOnDeletion` is on — it is the default, so only
+   a values repo whose `rootApplicationSet.yaml` sets it to `'false'` needs
+   that parameter removed. Commit it and wait until no microservice Application has a finalizer left. The
    ApplicationSet controller removes it from existing Applications within one
    reconcile (about 3 minutes). Check in the UI (Application → Details →
    finalizers) or with

@@ -259,8 +259,9 @@ tests:
           value: 10
 
   # ─── labels ────────────────────────────────────────────
-  - it: should include chart labels
+  - it: should include chart labels when chartLabels is true
     set:
+      chartLabels: true
       workload.type: deployment
       scc:
         my-scc: {}

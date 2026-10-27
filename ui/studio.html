@@ -1186,31 +1186,56 @@ function coerce(s){
   if(/^-?\d+$/.test(s))return Number(s);
   return s;
 }
+/* A namespace's own overrides: the matrix cells set for it, and its extra YAML.
+   Nothing set at all means the release is NOT deployed there — a blank file
+   is "don't create", never "deploy the base as-is". */
+function fleetOverrides(n){
+  const o={};let count=0;
+  state.fleet.rows.forEach(r=>{
+    if(!nz(r.path))return;
+    const val=(r.vals||{})[n.name];
+    if(!nz(val))return;
+    // A tag is a string to the chart's schema even when it looks like a
+    // number ("7", "20241012"); coerced, the render fails validation.
+    setPath(o,r.path,/(^|\.)tag$/.test(r.path)?String(val):coerce(String(val)));count++;});
+  return {o,count,extra:nz(n.extra)?String(n.extra).replace(/\s+$/,''):''};
+}
+/* Top-level keys of a namespace's extra YAML. It is appended as text, so a key
+   it shares with the matrix rows would appear twice in values-<ns>.yaml — and
+   Helm rejects a file with a repeated key. */
+function extraTopKeys(extra){return [...new Set((String(extra||'').match(/^[A-Za-z0-9_.\-]+(?=\s*:)/gm)||[]))];}
+function fleetDeployed(){return state.fleet.ns.filter(n=>nz(n.name)&&(()=>{const f=fleetOverrides(n);return f.count||f.extra;})());}
+function fleetSkipped(){return state.fleet.ns.filter(n=>nz(n.name)&&fleetDeployed().indexOf(n)<0);}
 function fleetFiles(){
   const {doc,owners}=buildDoc();
+  // The image tag is per-namespace, never shared: it leaves the base and goes
+  // into each namespace's own file (the base's tag is the fallback for a
+  // namespace that does not pin its own).
+  const baseTag=doc.image&&doc.image.tag;
+  if(doc.image&&'tag' in doc.image){delete doc.image.tag;if(!Object.keys(doc.image).length)delete doc.image;}
   const base=serialize(doc,owners);
-  const files=[{name:'values.yaml',text:base.text,marks:base.marks,sub:'base — everything shared'}];
-  state.fleet.ns.forEach(n=>{
-    if(!nz(n.name))return;
-    const o={};let count=0;
-    state.fleet.rows.forEach(r=>{
-      if(!nz(r.path))return;
-      const val=(r.vals||{})[n.name];
-      if(!nz(val))return;
-      setPath(o,r.path,coerce(String(val)));count++;});
+  const files=[{name:'values.yaml',text:base.text,marks:base.marks,sub:'base — everything shared, no image tag'}];
+  const deployed=fleetDeployed(),skipped=fleetSkipped();
+  deployed.forEach(n=>{
+    const {o,count,extra}=fleetOverrides(n);
+    // Not when the extra YAML has its own image: block — appending it after
+    // ours would repeat the key (Checks flags a tag missing from that block).
+    if(nz(baseTag)&&!(o.image&&nz(o.image.tag))&&extraTopKeys(extra).indexOf('image')<0)setPath(o,'image.tag',baseTag);
     let txt=Object.keys(o).length?toYaml(o):'';
-    if(nz(n.extra))txt=(txt?txt+'\n':'')+String(n.extra).replace(/\s+$/,'');
+    if(extra)txt=(txt?txt+'\n':'')+extra;
     const head='# '+n.name+' — overrides only. Everything else comes from values.yaml.';
-    files.push({name:'values-'+n.name+'.yaml',text:head+'\n'+(txt||'{}'),marks:[],
+    files.push({name:'values-'+n.name+'.yaml',text:head+'\n'+txt,marks:[],
       sub:count+' override'+(count===1?'':'s')});
   });
   const rel=state.fleet.release||'myapp';
   const cmds=['#!/usr/bin/env bash','set -euo pipefail','','CHART=./Universal-chart',''];
-  state.fleet.ns.forEach(n=>{if(!nz(n.name))return;
+  deployed.forEach(n=>{
     cmds.push('helm upgrade --install '+(n.release||rel)+' "$CHART" \\');
     cmds.push('  --namespace '+n.name+' --create-namespace \\');
     cmds.push('  -f values.yaml -f values-'+n.name+'.yaml');
     cmds.push('');});
+  if(skipped.length)
+    cmds.push('# Not deployed — nothing set for them: '+skipped.map(n=>n.name).join(', '),'');
   const cl=FEAT.filter(f=>f.cluster&&on(f.id)).flatMap(f=>{try{return f.renders(fv(f.id));}catch(x){return [];}})
     .filter(r=>r.scope==='cluster');
   if(cl.length){
@@ -1218,7 +1243,7 @@ function fleetFiles(){
     cl.forEach(r=>cmds.push('#   '+r.kind+'/'+r.name));
     cmds.push('# Move them into a single shared release and drop them from the per-namespace ones.');
   }
-  files.push({name:'deploy.sh',text:cmds.join('\n'),marks:[],sub:state.fleet.ns.filter(n=>nz(n.name)).length+' namespaces'});
+  files.push({name:'deploy.sh',text:cmds.join('\n'),marks:[],sub:deployed.length+' namespace'+(deployed.length===1?'':'s')});
   return files;
 }
 function currentFiles(){
@@ -1304,6 +1329,21 @@ function checks(){
       clusterScoped.map(r=>'<code>'+e(r.kind)+'/'+e(r.name)+'</code>').join(', ')+' — every namespace would own the same object. Move them into one shared release.'});
   else if(clusterScoped.length)
     out.push({l:'warn',t:'Cluster-scoped: '+clusterScoped.map(r=>'<code>'+e(r.kind)+'/'+e(r.name)+'</code>').join(', ')+'. Only one release in the cluster may own these.'});
+  if(state.mode==='fleet'){
+    const sk=fleetSkipped();
+    if(sk.length&&!fleetDeployed().length)
+      out.push({l:'bad',t:'<b>No namespace has anything set</b>, so nothing is deployed. Give each namespace that should run this release at least its <code>image.tag</code>.'});
+    fleetDeployed().forEach(n=>{
+      const {o,extra}=fleetOverrides(n),ek=extraTopKeys(extra);
+      const dup=Object.keys(o).filter(k=>ek.indexOf(k)>=0);
+      if(dup.length)
+        out.push({l:'bad',t:'<b><code>values-'+e(n.name)+'.yaml</code> would have '+dup.map(k=>'<code>'+e(k)+'</code>').join(', ')+' twice</b> — once from the matrix, once from its extra YAML. Helm rejects a repeated key; set it in one place.'});
+      if(ek.indexOf('image')>=0&&on('image')&&nz(fv('image').tag)&&!/^\s+tag\s*:/m.test(extra))
+        out.push({l:'warn',t:'<b>'+e(n.name)+'’s extra YAML has its own <code>image:</code> block without a <code>tag</code></b>, so the base tag is not added there and the chart falls back to <code>Chart.appVersion</code>. Add <code>tag:</code> to that block.'});
+    });
+    if(sk.length&&fleetDeployed().length)
+      out.push({l:'warn',t:'<b>Not deployed to '+sk.map(n=>'<code>'+e(n.name)+'</code>').join(', ')+'</b> — nothing is set for '+(sk.length===1?'it':'them')+'. A blank namespace gets no values file and no release; set a value (its <code>image.tag</code>, say) to deploy there.'});
+  }
   if(!on('image')&&on('workload')&&wt!=='none')
     out.push({l:'bad',t:'No <code>image.repository</code>. The schema requires it for any workload that runs pods.'});
   if(!out.length)out.push({l:'ok',t:'Nothing to flag. Every cross-check the cookbook documents passes on this build.'});
@@ -1463,13 +1503,13 @@ function fleetHTML(){
     '<button class="add" style="width:auto;padding:6px 14px" data-act="nsadd">+ Namespace</button>'+
     '<button class="add" style="width:auto;padding:6px 14px" data-act="nsscaffold">Scaffold dev / staging / prod</button></div>'+
     '<div class="sub">What differs</div>'+
-    '<p class="blurb" style="margin-top:-4px">Blank means “inherit the base”. That is the whole point — leave everything you can blank.</p>'+
+    '<p class="blurb" style="margin-top:-4px">A blank cell means “inherit the base” — leave everything you can blank. A namespace with <i>nothing</i> set (no cell, no extra YAML) is not deployed at all: no <code>values-&lt;ns&gt;.yaml</code>, no release. <code>image.tag</code> never sits in the base — it goes into each deployed namespace’s own file.</p>'+
     '<div class="matrix"><table class="mx"><thead><tr><th>values path</th>'+
       ns.filter(n=>nz(n.name)).map(n=>'<th>'+e(n.name)+'</th>').join('')+'<th></th></tr></thead><tbody>'+
     (state.fleet.rows.length?state.fleet.rows.map((r,i)=>'<tr><td>'+e(r.path)+'</td>'+
       ns.filter(n=>nz(n.name)).map(n=>'<td><input class="cell" data-fleet="cell" data-i="'+i+'" data-ns="'+e(n.name)+'" placeholder="inherit" value="'+e(((r.vals||{})[n.name])||'')+'"></td>').join('')+
       '<td style="width:34px"><button class="x" data-act="mxdel" data-i="'+i+'">&times;</button></td></tr>').join('')
-      :'<tr><td colspan="'+(ns.filter(n=>nz(n.name)).length+2)+'" style="padding:14px;color:var(--ink3)">No per-namespace differences yet — every namespace gets the base values as-is.</td></tr>')+
+      :'<tr><td colspan="'+(ns.filter(n=>nz(n.name)).length+2)+'" style="padding:14px;color:var(--ink3)">No per-namespace values yet — so no namespace is deployed. Add an <code>image.tag</code> row and fill it in for each namespace that should run this.</td></tr>')+
     '</tbody></table></div>'+
     '<div class="field" style="margin-top:14px"><label>Add an override row</label>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap"><select class="inp" id="mxpath" style="flex:1;min-width:220px">'+
@@ -1490,9 +1530,9 @@ function fleetHTML(){
 /* ---------- output ---------- */
 function hl(l){
   if(/^\s*#/.test(l))return '<span class="c-cm">'+e(l)+'</span>';
-  const m=l.match(/^(\s*(?:- )?)([A-Za-z0-9_.\/-]+)(:)(.*)$/);
+  const m=l.match(/^(\s*(?:- )?)([A-Za-z0-9_.\/-]+)(:)(\s.*)?$/);
   if(!m)return e(l);
-  return e(m[1])+'<span class="c-k">'+e(m[2])+'</span>:'+hlv(m[4]);
+  return e(m[1])+'<span class="c-k">'+e(m[2])+'</span>:'+hlv(m[4]||'');
 }
 function hlv(s){
   if(!s.trim())return e(s);

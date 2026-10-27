@@ -216,7 +216,7 @@ BASE = {"workload": {"type": "deployment"}, "image": {"repository": "busybox", "
 
 
 def test_cronjob_template_renders_pod_labels_alongside_the_selector_labels(tmp_path):
-    docs = _render({**BASE, "cronjobs": {"backup": {
+    docs = _render({**BASE, "chartLabels": True, "cronjobs": {"backup": {
         "schedule": "0 2 * * *",
         "jobTemplate": {"image": {"repository": "busybox"}, "podLabels": POD_LABELS},
     }}}, tmp_path)

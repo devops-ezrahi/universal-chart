@@ -11,9 +11,9 @@ Supports two URL formats:
   3. Full namespace - fetches ALL apps AND ALL namespace-level resources
        (workloads incl. Jobs, referenced CMs/Secrets/PVCs/SAs, ALL services and
        routes, HPAs, PDBs, Ingresses, NetworkAttachmentDefinitions; unclaimed
-       ones land in shared.yaml) plus a final fetch-failure report.
-       NetworkPolicies and ServiceMonitors are not fetched — the converter
-       deliberately does not convert them:
+       ones land in shared.yaml, NetworkPolicies) plus a final fetch-failure
+       report. ServiceMonitors are not fetched — the converter deliberately
+       does not convert them:
        python correct.py --kubeconfig my-kubeconfig.yaml -n bluetorch-tst -o namespaces
   4. Topologies file - multiple topology URLs from one namespace:
        python correct.py --topologies urls.txt -o namespaces
@@ -66,6 +66,7 @@ NAMESPACE_SCAN_SPEC = [
     ("poddisruptionbudgets", None),
     ("ingresses", None),
     ("network-attachment-defs", "k8s.cni.cncf.io"),
+    ("networkpolicies", None),
 ]
 
 # All resource types that can be referenced by workloads
@@ -98,6 +99,7 @@ RESOURCE_PLURAL_TO_KIND = {
     "roles": "Role",
     "rolebindings": "RoleBinding",
     "poddisruptionbudgets": "PodDisruptionBudget",
+    "networkpolicies": "NetworkPolicy",
     "network-attachment-defs": "NetworkAttachmentDefinition",
     "externalsecrets": "ExternalSecret",
     "secretstores": "SecretStore",
@@ -1289,7 +1291,7 @@ def write_shared_yaml(shared_entries, output_path):
 
 # Kinds file_unclaimed leaves out: the converter drops these by design
 # (convert_to_universal_chart.DROPPED_KINDS), so filing them only adds noise.
-UNCLAIMED_SKIP_KINDS = {"NetworkPolicy", "ServiceMonitor"}
+UNCLAIMED_SKIP_KINDS = {"ServiceMonitor"}
 UNCLAIMED_WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "DeploymentConfig"}
 
 
