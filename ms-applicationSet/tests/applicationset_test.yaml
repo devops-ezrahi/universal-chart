@@ -135,3 +135,45 @@ tests:
       - equal:
           path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
           value: 'https://bitbucket.example.com/bitbucket/projects/OPS/repos/values/browse/{{ .path.path }}/{{ .path.filename }}?at=main'
+
+  - it: passes consoleUrl through as set
+    set:
+      destinationServer: https://api.other.example.com:6443
+      links:
+        consoleUrl: https://console.example.com/
+    asserts:
+      - contains:
+          path: spec.template.spec.sources[0].helm.parameters
+          content:
+            name: links.console
+            value: https://console.example.com
+            forceString: true
+
+  - it: makes no console link when consoleUrl is not set, whatever the destination
+    set:
+      destinationServer: https://api.mycluster.example.com:6443
+    asserts:
+      - notExists:
+          path: spec.template.spec.sources[0].helm.parameters
+
+  - it: passes the chart no links when no URL is set
+    asserts:
+      - notExists:
+          path: spec.template.spec.sources[0].helm.parameters
+
+  - it: hands the chart the Argo CD and console links when both are set
+    set:
+      links:
+        argocdUrl: https://argo.example.com/
+        argocdNamespace: openshift-gitops
+        consoleUrl: https://console.example.com
+    asserts:
+      - equal:
+          path: spec.template.spec.sources[0].helm.parameters
+          value:
+            - name: links.argocd
+              value: https://argo.example.com/applications/openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}-fac1-black
+              forceString: true
+            - name: links.console
+              value: https://console.example.com
+              forceString: true

@@ -49,6 +49,12 @@ spec:
             value: https://kubernetes.default.svc
           - name: autoSync
             value: 'false'
+          - name: links.argocdUrl
+            value: ''
+          - name: links.consoleUrl
+            value: ''
+          - name: links.repoWebUrl
+            value: ''
         path: ms-applicationSet
         repoURL: https://github.com/devops-ezrahi/universal-chart.git
         targetRevision: main

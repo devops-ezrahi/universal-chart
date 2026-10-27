@@ -47,6 +47,9 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* Set in full, never derived: a values repo can span several clusters
+       and several Argo CDs, and no URL here says which console is whose. */ -}}
+{{- $console := trimSuffix "/" ($links.consoleUrl | default "") -}}
 {{- $fileUrl := "" -}}
 {{- if $web -}}
 {{- if regexMatch "/(projects|users)/[^/]+/repos/[^/]+$" $web -}}
@@ -156,28 +159,20 @@ spec:
               - '$Values/{{ $baseFile }}'
               - '$Values/{{ $defaultsFile }}'
               - '$Values/{{ $valuesFile }}'
-            {{- /* On by default: every object names the Application deploying
-                   it, and links its values file when the repo's web UI is
-                   known. links.objects: false turns all of it off. */}}
-            {{- if ne (toString $links.objects) "false" }}
-            # The chart's `links`: annotations on every object it renders.
+            {{- /* The workload's two clickable links: the OpenShift topology
+                   badge to its Application, and its Argo CD tree node to its
+                   console page. Each only when its URL is set;
+                   links.objects: false turns both off. */}}
+            {{- if and (ne (toString $links.objects) "false") (or $argocd $console) }}
             parameters:
-              - name: links.application
-                value: '{{ $argocdNs }}/{{ $appName }}'
-                forceString: true
               {{- with $argocd }}
               - name: links.argocd
                 value: '{{ . }}/applications/{{ $argocdNs }}/{{ $appName }}'
                 forceString: true
               {{- end }}
-              {{- with $fileUrl }}
-              - name: links.values
-                value: '{{ replace "PATH" $valuesFile . }}'
-                forceString: true
-              {{- end }}
-              {{- with $links.consoleUrl }}
+              {{- with $console }}
               - name: links.console
-                value: {{ trimSuffix "/" . | quote }}
+                value: {{ . | quote }}
                 forceString: true
               {{- end }}
             {{- end }}
