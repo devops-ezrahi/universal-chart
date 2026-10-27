@@ -28,6 +28,7 @@ jobs:
       - run: helm lint .
       - run: helm lint ms-applicationSet
       - run: helm unittest .
+      - run: helm unittest ms-applicationSet
 
       # The converter's regression suite renders every fixture with the helm
       # installed above, so it lives in the same job.

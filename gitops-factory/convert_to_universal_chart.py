@@ -28,8 +28,8 @@ into:
        ({{ .Values.color }}, {{ .Values.environment }}, {{ .Release.Namespace }})
        whose per-folder value lives in defaults.yaml. The chart runs every value
        through `tpl`, so a literal '{{' from the source is written escaped as
-       {{ "{{" }} (helm_safe_values). NetworkPolicy and ServiceMonitor are
-       deliberately NOT converted (DROPPED_KINDS; one report line each).
+       {{ "{{" }} (helm_safe_values). ServiceMonitor is deliberately NOT
+       converted (DROPPED_KINDS; one report line each).
 
     2. One namespace-shared "release" (workload.type: none) that owns any
        resources living in shared.yaml, so they are never double-declared
@@ -138,15 +138,16 @@ TRANSIENT_KINDS = {
     "ControllerRevision", "Binding",
 }
 
-# Kinds deliberately NOT converted. NetworkPolicy and ServiceMonitor are
-# platform concerns on the migration target (network isolation and scrape
-# config are owned there, not by each application's release), so carrying the
-# source cluster's copies would install policy nobody asked the release to own.
-# They are dropped at load time by filter_transient — one line per object in
-# conflicts_and_warnings.txt — and, because the round-trip fidelity check reads
-# the raw side through the same filter_transient, never counted as lost there.
-# The chart still has networkPolicies / serviceMonitor for hand-written values.
-DROPPED_KINDS = {"NetworkPolicy", "ServiceMonitor"}
+# Kinds deliberately NOT converted. ServiceMonitor is a platform concern on the
+# migration target (scrape config is owned there, not by each application's
+# release), so carrying the source cluster's copy would install config nobody
+# asked the release to own. It is dropped at load time by filter_transient —
+# one line per object in conflicts_and_warnings.txt — and, because the
+# round-trip fidelity check reads the raw side through the same
+# filter_transient, never counted as lost there. The chart still has
+# serviceMonitor for hand-written values. NetworkPolicy IS converted, into
+# networkPolicies (handle_networkpolicy).
+DROPPED_KINDS = {"ServiceMonitor"}
 
 CLUSTER_SCOPED_KINDS = {
     "ClusterRole", "ClusterRoleBinding", "StorageClass",
@@ -161,7 +162,7 @@ WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet"}
 NS_RAW_NAME_KINDS = [
     "ConfigMap", "Secret", "PersistentVolumeClaim",
     "Role", "RoleBinding", "ServiceAccount", "Route", "Service",
-    "SecretStore", "ExternalSecret",
+    "SecretStore", "ExternalSecret", "NetworkPolicy",
 ]
 
 # OpenShift's integrated-registry controller names the Secrets it generates for
@@ -2818,6 +2819,17 @@ def place_shared_by_use(shared_docs: list[dict], kept: list[tuple[str, list[dict
             if sel:
                 out |= {i for i, (_, docs) in enumerate(owners)
                         for _, labels, _ in pod_specs(docs) if all(labels.get(k) == v for k, v in sel.items())}
+        if kind == "NetworkPolicy":
+            # Used by every microservice whose pods it selects. An empty
+            # podSelector selects every pod in the namespace, so every one with
+            # pods uses it — dropped as unused, it would take a deny-all away
+            # from the releases being converted. matchExpressions are not
+            # evaluated: a selector that has them counts as selecting all.
+            sel = spec.get("podSelector") or {}
+            labels_sel = sel.get("matchLabels") or {}
+            out |= {i for i, (_, docs) in enumerate(owners)
+                    for _, labels, _ in pod_specs(docs)
+                    if sel.get("matchExpressions") or all(labels.get(k) == v for k, v in labels_sel.items())}
         if kind == "HorizontalPodAutoscaler":
             ref = spec.get("scaleTargetRef") or {}
             out |= users.get((ref.get("kind"), ref.get("name")), set())
@@ -3150,6 +3162,27 @@ def handle_role(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     if ann:
         entry["annotations"] = ann
     ctx.values.setdefault("rbac", {}).setdefault("roles", {})[name] = entry
+
+
+def handle_networkpolicy(doc: dict, ctx: MicroserviceContext, name: str) -> None:
+    """networkPolicies.<name>: the spec as written. templates/networkpolicy.yaml
+    renders the map key as the object name, like configMaps, so the name is
+    claimed through the NamespaceRegistry (NS_RAW_NAME_KINDS) and two files
+    declaring the same policy end up with one copy."""
+    spec = doc.get("spec") or {}
+    # An empty podSelector (every pod) is left out: the template renders {}
+    # for a missing one, and an empty map never makes it into base/'s common
+    # subtree, so it would be copied into every namespace's values file.
+    entry = {"podSelector": spec["podSelector"]} if spec.get("podSelector") else {}
+    for k in ("policyTypes", "ingress", "egress"):
+        if spec.get(k) is not None:
+            entry[k] = spec[k]
+    if raw_labels(doc):
+        entry["labels"] = raw_labels(doc)
+    ann = clean_annotations((doc.get("metadata") or {}).get("annotations"))
+    if ann:
+        entry["annotations"] = ann
+    ctx.values.setdefault("networkPolicies", {})[name] = entry
 
 
 def handle_rolebinding(doc: dict, ctx: MicroserviceContext, name: str) -> None:
@@ -4051,6 +4084,9 @@ def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regis
         elif kind == "Role":
             if ctx.claim_actions["Role"].get(name) != "reference_shared":
                 handle_role(doc, ctx, ctx.name_map["Role"][name])
+        elif kind == "NetworkPolicy":
+            if ctx.claim_actions["NetworkPolicy"].get(name) != "reference_shared":
+                handle_networkpolicy(doc, ctx, ctx.name_map["NetworkPolicy"][name])
         elif kind == "RoleBinding":
             if ctx.claim_actions["RoleBinding"].get(name) != "reference_shared":
                 handle_rolebinding(doc, ctx, ctx.name_map["RoleBinding"][name])
