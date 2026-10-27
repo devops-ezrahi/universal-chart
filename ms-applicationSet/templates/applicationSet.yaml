@@ -47,25 +47,9 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- /* The OpenShift console the workloads' links open. consoleUrl wins; else,
-       when the Applications deploy to a cluster by its API URL
-       (https://api.<cluster>:6443), it is that cluster's console as OpenShift
-       names the route: https://console-openshift-console.apps.<cluster>.
-       In-cluster (kubernetes.default.svc) or a cluster by name says nothing. */ -}}
+{{- /* Set in full, never derived: a values repo can span several clusters
+       and several Argo CDs, and no URL here says which console is whose. */ -}}
 {{- $console := trimSuffix "/" ($links.consoleUrl | default "") -}}
-{{- $cluster := "" -}}
-{{- if and (not .Values.destinationName) (regexMatch "^https://api\\.[^/:]+" (.Values.destinationServer | default "")) -}}
-{{- $cluster = .Values.destinationServer -}}
-{{- end -}}
-{{- if and (not $console) $cluster -}}
-{{- $host := regexReplaceAll "^(https?://)?([^/:]+).*$" $cluster "${2}" -}}
-{{- if hasPrefix "api." $host -}}
-{{- $host = printf "apps.%s" (trimPrefix "api." $host) -}}
-{{- else if not (hasPrefix "apps." $host) -}}
-{{- $host = printf "apps.%s" $host -}}
-{{- end -}}
-{{- $console = printf "https://console-openshift-console.%s" $host -}}
-{{- end -}}
 {{- $fileUrl := "" -}}
 {{- if $web -}}
 {{- if regexMatch "/(projects|users)/[^/]+/repos/[^/]+$" $web -}}

@@ -4563,8 +4563,9 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         # workload at its OpenShift console page from Argo CD's resource tree.
         # Always written, empty when not given, so they are filled in here -
         # where the tree is retargeted, a closed network included - and not in
-        # the chart. Empty consoleUrl is derived from a destinationServer of
-        # https://api.<cluster>:6443, empty repoWebUrl from the values repo URL.
+        # the chart. URLs are set in full (several clusters and Argo CDs can
+        # share one tree); only an empty repoWebUrl is derived, from the values
+        # repo URL.
         ("links.argocdUrl", q(argocd_url.rstrip("/"))),
         ("links.consoleUrl", q(console_url.rstrip("/"))),
         ("links.repoWebUrl", q(repo_web_url.rstrip("/"))),
