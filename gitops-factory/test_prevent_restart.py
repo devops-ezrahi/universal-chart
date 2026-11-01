@@ -1,6 +1,7 @@
-"""--exact-copy: the list-order keys and the empty securityContext that only
+"""--prevent-restart: the list-order keys and the empty securityContext that only
 keep the pod template byte-identical (so the cutover restarts nothing) are
-written under the flag alone. Orders that change behaviour are kept always."""
+written under the flag alone. Orders that change behaviour are kept always.
+Workload labels/annotations are outside the template and stay editable."""
 import subprocess
 import sys
 from pathlib import Path
@@ -69,8 +70,8 @@ def test_env_order_kept_when_a_value_reads_another(tmp_path):
     assert v["env"] == REF_ENV
 
 
-@pytest.mark.parametrize("flag", [["--exact-copy"], ["--exact-copy", "true"]])
-def test_exact_copy_keeps_the_live_template(tmp_path, flag):
+@pytest.mark.parametrize("flag", [["--prevent-restart"], ["--prevent-restart", "true"], ["--preventRestart"]])
+def test_prevent_restart_keeps_the_live_template(tmp_path, flag):
     v = convert(tmp_path, PLAIN_ENV, *flag)
     assert v["portOrder"] == ["web", "admin"]
     assert v["env"] == PLAIN_ENV
@@ -78,3 +79,6 @@ def test_exact_copy_keeps_the_live_template(tmp_path, flag):
     assert v["volumeOrder"] == ["z-data", "a-tmp"]
     assert v["sidecarOrder"] == ["z-proxy", "a-log"]
     assert v["securityContext"] == {}
+    # Only the pod template is frozen: the chart's link annotations on the
+    # workload metadata stay on (they restart nothing).
+    assert "links" not in v

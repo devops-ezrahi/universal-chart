@@ -311,10 +311,13 @@ def run(a, ns, git, work, gitroot, wt, branch):
     args = ["python3", str(conv), "--input", str(work / "in"), "--output", str(out), "--chart", str(wt),
             "--argocd-manifests", "true", "--values-repo-url", f"{git}/new-{ns}.git", "--values-revision", "main",
             "--chart-repo-url", f"{git}/chart.git", "--chart-revision", branch, "--root-set-name", f"new-{ns}"]
-    # "Nothing restarted" is what --exact-copy is for; a revision from before
-    # the flag rendered exactly by default, so it converts without it.
-    if "--exact-copy" in sh("python3", str(conv), "--help", check=False).stdout:
-        args.append("--exact-copy")
+    # "Nothing restarted" is what --prevent-restart is for (--exact-copy on the
+    # revisions before it); one from before both rendered exactly by default.
+    helptext = sh("python3", str(conv), "--help", check=False).stdout
+    for flag in ("--prevent-restart", "--exact-copy"):
+        if flag in helptext:
+            args.append(flag)
+            break
     p = sh(*args, "--verify-fidelity", check=False)
     if p.returncode:
         log("converter rejected --verify-fidelity at this revision; converting without it")

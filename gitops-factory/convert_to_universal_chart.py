@@ -1906,10 +1906,10 @@ def set_order(v: dict, key: str, order_key: str) -> None:
     A single entry has no order to keep, so nothing is written for it.
 
     The cosmetic ones (COSMETIC_ORDER_KEYS — only the restart cares) are
-    written under --exact-copy alone; envFrom/initContainer order is meaning
+    written under --prevent-restart alone; envFrom/initContainer order is meaning
     and always kept.
     """
-    if order_key in COSMETIC_ORDER_KEYS and not EXACT_COPY:
+    if order_key in COSMETIC_ORDER_KEYS and not PREVENT_RESTART:
         return
     m = v.get(key)
     if isinstance(m, dict) and len(m) > 1:
@@ -1970,11 +1970,11 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
             v[probe] = c[probe]
     if c.get("lifecycle"):
         v["lifecycle"] = c["lifecycle"]
-    # Under --exact-copy, `in` rather than truthiness: an explicit empty
+    # Under --prevent-restart, `in` rather than truthiness: an explicit empty
     # `securityContext: {}` is stored by the API server as given, and dropping
     # it changes the pod template, which restarts the pods on the first sync
     # after migrating. Otherwise an empty one says nothing and is left out.
-    if c.get("securityContext") or (EXACT_COPY and isinstance(c.get("securityContext"), dict)):
+    if c.get("securityContext") or (PREVENT_RESTART and isinstance(c.get("securityContext"), dict)):
         v["securityContext"] = c["securityContext"]
     if c.get("volumeMounts"):
         # A list in the deployment's own order (see env_list).
@@ -2672,20 +2672,22 @@ VALUES_REPO_PLACEHOLDER = "<values-repo-url>"
 # differs carries it in values/. --env-in-values writes every namespace's env
 # list into its own values/ file instead.
 ENV_IN_VALUES = False
-# --exact-copy: render every migrated pod template byte-for-byte as it is live,
-# so the cutover sync restarts no pods. That costs readability — list-order
-# keys nobody wrote (portOrder, volumeOrder, sidecarOrder) and an empty
-# `securityContext: {}` kept only because the API server stored it — so it is
-# for workloads that cannot take a restart. Off, the values say what the app
+# --prevent-restart: render every migrated pod TEMPLATE (spec.template) byte-for-
+# byte as it is live, so the cutover sync restarts no pods. Only the template:
+# labels and annotations on the workload itself, the chart's link annotations
+# included, are added/edited as usual — they never roll a pod. That costs
+# readability — list-order keys nobody wrote (portOrder, volumeOrder,
+# sidecarOrder) and an empty `securityContext: {}` kept only because the API
+# server stored it — so it is for workloads that cannot take a restart. Off, the values say what the app
 # needs and the first sync rolls the pods once. Orders that carry MEANING are
 # kept either way: initContainerOrder (run order) and envFromOrder (the later
 # ref wins a shared key). env and volumeMounts are lists, always in the
 # deployment's own order.
-EXACT_COPY = False
-# The --exact-copy flag as given: True / False for every release, None (the
+PREVENT_RESTART = False
+# The --prevent-restart flag as given: True / False for every release, None (the
 # default) for the stateful ones only (is_stateful). build_microservice sets
-# EXACT_COPY from it per release.
-EXACT_COPY_FLAG: bool | None = None
+# PREVENT_RESTART from it per release.
+PREVENT_RESTART_FLAG: bool | None = None
 # Order keys whose only job is the byte-identical pod template above.
 COSMETIC_ORDER_KEYS = frozenset({"portOrder", "volumeOrder", "sidecarOrder"})
 
@@ -3577,8 +3579,8 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # not merely an override.
     if pod_tpl_spec.get("securityContext"):
         job_template["podSecurityContext"] = pod_tpl_spec["securityContext"]
-    # An explicit {} only under --exact-copy — see handle_main_container.
-    if main.get("securityContext") or (EXACT_COPY and isinstance(main.get("securityContext"), dict)):
+    # An explicit {} only under --prevent-restart — see handle_main_container.
+    if main.get("securityContext") or (PREVENT_RESTART and isinstance(main.get("securityContext"), dict)):
         job_template["securityContext"] = main["securityContext"]
     carry_job_pod_fields(pod_tpl_spec, main, job_template)
     # `parallelism` and `completions` join the list rather than being captured
@@ -3690,8 +3692,8 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # See the matching comment in handle_cronjob.
     if pod_spec.get("securityContext"):
         entry["podSecurityContext"] = pod_spec["securityContext"]
-    # An explicit {} only under --exact-copy — see handle_main_container.
-    if main.get("securityContext") or (EXACT_COPY and isinstance(main.get("securityContext"), dict)):
+    # An explicit {} only under --prevent-restart — see handle_main_container.
+    if main.get("securityContext") or (PREVENT_RESTART and isinstance(main.get("securityContext"), dict)):
         entry["securityContext"] = main["securityContext"]
     carry_job_pod_fields(pod_spec, main, entry)
     # Same list as handle_cronjob, and kept in step with it deliberately: a Job
@@ -3929,7 +3931,7 @@ def is_stateful(docs: list[dict]) -> str | None:
     pods mount a PersistentVolumeClaim. Those are the ones a cutover restart
     hurts — a database's pods come back one by one, an RWO volume has to
     detach and re-attach — so by default they are converted with
-    --exact-copy and the first sync restarts nothing."""
+    --prevent-restart and the first sync restarts nothing."""
     for d in docs:
         kind = d.get("kind")
         if kind == "StatefulSet":
@@ -3944,29 +3946,28 @@ def is_stateful(docs: list[dict]) -> str | None:
 def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_registry: NamespaceRegistry,
                        cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                        owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
-    """_build_microservice with EXACT_COPY set for this release: as the flag
+    """_build_microservice with PREVENT_RESTART set for this release: as the flag
     says, or — no flag — on for a stateful one (is_stateful)."""
-    global EXACT_COPY
+    global PREVENT_RESTART
     reason = is_stateful(docs)
-    EXACT_COPY = EXACT_COPY_FLAG if EXACT_COPY_FLAG is not None else reason is not None
-    if EXACT_COPY_FLAG is None and reason:
-        warnings.append(f"{ms_name}: stateful ({reason}) — converted as --exact-copy, so the "
-                        f"cutover sync restarts none of its pods (--exact-copy false to turn off)")
+    PREVENT_RESTART = PREVENT_RESTART_FLAG if PREVENT_RESTART_FLAG is not None else reason is not None
+    if PREVENT_RESTART_FLAG is None and reason:
+        warnings.append(f"{ms_name}: stateful ({reason}) — converted as --prevent-restart, so the "
+                        f"cutover sync restarts none of its pods (--prevent-restart false to turn off)")
     try:
         return _build_microservice(namespace, ms_name, docs, ns_registry, cluster_registry, cluster_values,
                                    warnings, owner_label, known_pv_names)
     finally:
-        EXACT_COPY = bool(EXACT_COPY_FLAG)
+        PREVENT_RESTART = bool(PREVENT_RESTART_FLAG)
 
 
 def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_registry: NamespaceRegistry,
                         cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                         owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
-    # An exact copy renders every object as it runs now: none of the navigation
-    # annotations ms-applicationSet would otherwise hand the chart (links.*).
-    if EXACT_COPY:
-        ctx.values["links"] = {"objects": False}
+    # --prevent-restart freezes the pod TEMPLATE only. Object metadata (labels,
+    # annotations, the links.* ms-applicationSet hands the chart) is outside it
+    # and restarts nothing, so it is rendered as usual either way.
     # No nameOverride: the Argo CD Application that deploys the release already
     # names it, so the chart's fullname needs nothing from the values file.
     #
@@ -6290,11 +6291,13 @@ def main() -> None:
                      help="write each namespace's env list into its own values/ file. Default "
                           "false: the env list is treated like any other value — in base/ when it "
                           "is the same in every namespace, in values/ only where it differs.")
-    ap.add_argument("--exact-copy", nargs="?", const=True, default=None, type=_bool_arg,
+    ap.add_argument("--prevent-restart", "--preventRestart", dest="prevent_restart", nargs="?", const=True, default=None, type=_bool_arg,
                      metavar="true|false",
-                     help="render migrated pod templates byte-for-byte as they run now, so the "
-                          "cutover sync restarts no pods: writes portOrder/volumeOrder/sidecarOrder "
-                          "and keeps an empty securityContext: {}. Default: "
+                     help="render migrated pod templates (spec.template) byte-for-byte as they run "
+                          "now, so the cutover sync restarts no pods: writes portOrder/volumeOrder/"
+                          "sidecarOrder and keeps an empty securityContext: {}. Labels and annotations "
+                          "on the workload itself (and the chart's link annotations) are still added "
+                          "and edited — they restart nothing. Default: "
                           "on for stateful releases only (a StatefulSet, or a workload mounting a "
                           "PersistentVolumeClaim), the rest get cleaner values and roll once on the "
                           "first sync. true: every release. false: none. Orders that change "
@@ -6338,12 +6341,12 @@ def main() -> None:
 
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
         INCLUDE_PATTERNS
-    global ENV_IN_VALUES, EXACT_COPY, EXACT_COPY_FLAG
+    global ENV_IN_VALUES, PREVENT_RESTART, PREVENT_RESTART_FLAG
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
     ENV_IN_VALUES = args.env_in_values
-    EXACT_COPY_FLAG = args.exact_copy
-    EXACT_COPY = bool(EXACT_COPY_FLAG)
+    PREVENT_RESTART_FLAG = args.prevent_restart
+    PREVENT_RESTART = bool(PREVENT_RESTART_FLAG)
     EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
         for opt in (args.exclude, args.keep, args.include))
