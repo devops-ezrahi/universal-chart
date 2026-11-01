@@ -293,17 +293,18 @@ def test_reimport_drops_the_charts_own_links():
 
 
 @needs_helm
-def test_exact_copy_renders_no_link_annotations(tmp_path):
+def test_prevent_restart_still_renders_link_annotations(tmp_path):
     db = {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "db"},
           "spec": {"serviceName": "db", "selector": {"matchLabels": {"app": "db"}},
                    "template": {"metadata": {"labels": {"app": "db"}},
                                 "spec": {"containers": [{"name": "db", "image": "reg/db:1"}]}}}}
     r, out = _convert(tmp_path, {"db": [db], "web": [_deploy("web")]})
     assert r.returncode == 0, r.stderr[-2000:]
-    # Stateful = exact copy by default: it opts out; the plain Deployment does not.
-    assert yaml.safe_load((out / "base" / "db.yaml").read_text())["links"] == {"objects": False}
+    # Stateful = --prevent-restart by default. That freezes the pod template
+    # only, so neither release opts out of the links.
+    assert "links" not in yaml.safe_load((out / "base" / "db.yaml").read_text())
     assert "links" not in yaml.safe_load((out / "base" / "web.yaml").read_text())
-    # Whatever ms-applicationSet passes, the exact copy renders no annotation.
+    # The links ms-applicationSet passes land on the workload's own metadata.
     files = [out / "base" / "db.yaml", out / "app" / "defaults.yaml", out / "app" / "values" / "db.yaml"]
     args = ["helm", "template", "db", str(CHART_DIR), "-n", "app",
             "--set-string", "links.application=argocd/db-app,links.argocd=https://argo/x,links.console=https://c"]
@@ -312,8 +313,11 @@ def test_exact_copy_renders_no_link_annotations(tmp_path):
             args += ["-f", str(f)]
     docs = [d for d in yaml.safe_load_all(subprocess.run(args, capture_output=True, text=True, check=True).stdout) if d]
     sts = next(d for d in docs if d["kind"] == "StatefulSet")
-    assert not any(k.startswith(("universal-chart/", "link.argocd", "app.openshift.io/edit-url"))
-                   for k in (sts["metadata"].get("annotations") or {}))
+    ann = sts["metadata"].get("annotations") or {}
+    assert ann["app.openshift.io/edit-url"] == "https://argo/x"
+    assert "link.argocd.argoproj.io/external-link" in ann
+    # ...and never on the pod template, which would restart the pods.
+    assert not (sts["spec"]["template"]["metadata"].get("annotations") or {})
 
 
 def _appset(*sets):

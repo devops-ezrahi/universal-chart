@@ -1,4 +1,4 @@
-"""Stateful releases are converted as --exact-copy by default, so the cutover
+"""Stateful releases are converted as --prevent-restart by default, so the cutover
 sync restarts none of their pods.
 
 Kubernetes rolls a workload when its pod template changes — list ORDER
@@ -14,7 +14,7 @@ is a `kubectl rollout restart` stamp, which the chart never sets (after_sync).
 
 Negative controls make sure a pass means something: a stateless Deployment
 still gets the clean (sorted, restart-once) values by default, and
-`--exact-copy false` makes the same StatefulSet come out different."""
+`--prevent-restart false` makes the same StatefulSet come out different."""
 import copy
 import shutil
 import subprocess
@@ -197,7 +197,7 @@ def server_defaults(obj: dict) -> dict:
     `resources` (a plain struct, always present), the pod's `securityContext`
     (defaulted to {} when nil) and a volumeClaimTemplate's apiVersion/kind.
     A container's `securityContext` is NOT here — a nil pointer stays nil, so
-    exact copy has to keep the `{}`."""
+    --prevent-restart has to keep the `{}`."""
     out = copy.deepcopy(obj)
     pod = out["spec"]["template"]["spec"]
     pod.setdefault("securityContext", {})
@@ -217,7 +217,7 @@ def assert_identical(live: dict, rendered: dict):
 
 
 def _sorted(x):
-    """Lists sorted, the way the clean (non exact-copy) values render them;
+    """Lists sorted, the way the clean (non --prevent-restart) values render them;
     the empty container securityContext dropped likewise."""
     if isinstance(x, dict):
         return {k: _sorted(v) for k, v in x.items() if not (k == "securityContext" and v == {} and "image" in x)}
@@ -228,7 +228,7 @@ def _sorted(x):
 
 def assert_identical_but_order(live: dict, rendered: dict):
     """A negative control must differ for the right reason: only by list
-    order and the dropped `securityContext: {}` — what exact copy is for."""
+    order and the dropped `securityContext: {}` — what --prevent-restart is for."""
     synced = server_defaults(after_sync(live, rendered))
     assert _sorted(synced["spec"]) == _sorted(live["spec"]), "\n".join(diff(_sorted(live["spec"]),
                                                                              _sorted(synced["spec"]))[:20])
@@ -245,7 +245,7 @@ def test_stateful_releases_render_exactly_as_live_by_default(tmp_path, namespace
         for release, kind in STATEFUL.items():
             assert_identical(live[(ns, release)], render(out, ns, release, kind))
     report = (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")
-    assert "postgres: stateful (StatefulSet/postgres) — converted as --exact-copy" in report
+    assert "postgres: stateful (StatefulSet/postgres) — converted as --prevent-restart" in report
     assert "files: stateful (Deployment/files mounts a PersistentVolumeClaim)" in report
     assert "web: stateful" not in report
 
@@ -263,19 +263,19 @@ def test_stateless_release_stays_clean_by_default(tmp_path):
     assert_identical_but_order(w, rendered)
 
 
-def test_exact_copy_false_turns_it_off(tmp_path):
-    live, out, r = convert(tmp_path, ["shop-dev"], "--exact-copy", "false")
+def test_prevent_restart_false_turns_it_off(tmp_path):
+    live, out, r = convert(tmp_path, ["shop-dev"], "--prevent-restart", "false")
     for release, kind in STATEFUL.items():
         w = live[("shop-dev", release)]
         rendered = render(out, "shop-dev", release, kind)
         assert server_defaults(after_sync(w, rendered))["spec"]["template"] != w["spec"]["template"], release
         assert_identical_but_order(w, rendered)
-    assert "converted as --exact-copy" not in (out / "report" / "conflicts_and_warnings.txt").read_text(
+    assert "converted as --prevent-restart" not in (out / "report" / "conflicts_and_warnings.txt").read_text(
         encoding="utf-8")
 
 
-@pytest.mark.parametrize("flag", [["--exact-copy"], ["--exact-copy", "true"]])
-def test_exact_copy_true_covers_every_release(tmp_path, flag):
+@pytest.mark.parametrize("flag", [["--prevent-restart"], ["--prevent-restart", "true"]])
+def test_prevent_restart_true_covers_every_release(tmp_path, flag):
     live, out, _ = convert(tmp_path, NAMESPACES, *flag)
     for ns in NAMESPACES:
         for release, kind in {**STATEFUL, "web": "Deployment"}.items():

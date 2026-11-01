@@ -23,9 +23,9 @@ commonAnnotations: {}
 # them in for each Application it generates (its `links` values); empty, the
 # default, renders nothing. Leave them out of values files.
 links:
-  # false = neither link below, whatever ms-applicationSet passes.
-  # The converter writes it for an --exact-copy release, which must render
-  # exactly as it runs now.
+  # false = neither link below, whatever ms-applicationSet passes. A manual
+  # opt-out: the converter never writes it (--prevent-restart keeps them, as
+  # workload annotations restart nothing).
   objects: true
   # The Argo CD Application deploying this release: app.openshift.io/edit-url
   # on the workload - the OpenShift topology view's corner link.
@@ -139,7 +139,7 @@ ports: {}
 # -- Render order of ports / envFrom / volumes / sidecars, by map key. Keys not
 # listed follow in sorted order. Kubernetes stores these as lists, so a
 # different order is a pod-template change (= pods restart). The converter
-# writes them in the raw manifest's order under --exact-copy (no restart at
+# writes them in the raw manifest's order under --prevent-restart (no restart at
 # cutover); otherwise only initContainerOrder and envFromOrder.
 # env and volumeMounts have no order key: write them as lists and they render
 # exactly in the order written.

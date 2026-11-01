@@ -50,7 +50,7 @@ tests:
           path: metadata.annotations["app.openshift.io/edit-url"]
           value: https://argo.example.com/applications/argocd/web-dev
 
-  - it: renders none of them for an exact copy
+  - it: renders none of them with links.objects false
     template: templates/deployment.yaml
     set:
       links:
