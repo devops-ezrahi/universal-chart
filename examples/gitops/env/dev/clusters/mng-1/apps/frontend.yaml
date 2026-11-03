@@ -6,12 +6,9 @@ image:
   tag: "dev-latest"    # override image tag for dev
 
 env:
-  - name: API_URL
-    value: "http://backend"
-  - name: NODE_ENV
-    value: "development"
-  - name: DEBUG
-    value: "true"
+  API_URL: "http://backend"
+  NODE_ENV: "development"
+  DEBUG: "true"
 
 route:
   host: frontend.apps.mng-1.dev.example.com

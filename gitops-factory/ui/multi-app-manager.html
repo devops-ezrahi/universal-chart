@@ -230,7 +230,9 @@ function splitImage(image) {
    vars belong in the minimal file exclusively. */
 function isMinimalPath(dottedPath) {
   if (dottedPath === "image.tag") return true;
-  if (dottedPath.startsWith("env.") && dottedPath.endsWith(".value")) return true;
+  // env is NAME: value (env.NAME); the older env.NAME.value form too.
+  const parts = dottedPath.split(".");
+  if (parts[0] === "env" && (parts.length === 2 || (parts.length === 3 && parts[2] === "value"))) return true;
   return false;
 }
 
@@ -626,9 +628,11 @@ function formEditorPanel(msName) {
   const cpuLim = el("input", { value: getPath(merged, "resources.limits.cpu") || "", placeholder: "500m" });
   const memLim = el("input", { value: getPath(merged, "resources.limits.memory") || "", placeholder: "256Mi" });
 
+  // env is NAME: value; a ref (NAME: {secretKeyRef: ...}) is not editable here.
+  // The older NAME: {value: ...} form is read too.
   const envEntries = Object.entries(merged.env || {})
-    .filter(([, v]) => "value" in v && !("valueFrom" in v))
-    .map(([n, v]) => [n, String(v.value)]);
+    .filter(([, v]) => v !== null && (typeof v !== "object" || ("value" in v && !("valueFrom" in v))))
+    .map(([n, v]) => [n, String(typeof v === "object" ? v.value : v)]);
   const envWrap = rowList(envEntries, "ENV_NAME", "value");
 
   panel.appendChild(el("fieldset", {}, [
@@ -708,7 +712,7 @@ function formEditorPanel(msName) {
         if (Object.keys(resources).length) setPath(values, "resources", resources);
 
         readRowList(envWrap).forEach(([n, v]) => {
-          if (n) setPath(minimal, `env.${n}.value`, v);
+          if (n) setPath(minimal, `env.${n}`, v);
         });
 
         // base/<name>.yaml is SHARED by every folder running this release, so

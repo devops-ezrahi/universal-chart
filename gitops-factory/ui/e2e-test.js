@@ -139,6 +139,28 @@ class NodeDirHandle {
   assert.strictEqual(repoInput.value, "registry.example.org/ms1", "form should prefill image repository");
   console.log("form editor prefill for EXISTING microservice: OK");
 
+  // env is NAME: value in converter output: the form lists each literal var,
+  // and a reference (NAME: {secretKeyRef: ...}) is left out, not crashed on.
+  assert.ok(merged.env && !Array.isArray(merged.env), "converter output env should be a map");
+  const literal = Object.fromEntries(Object.entries(merged.env).filter(([, v]) => typeof v !== "object"));
+  assert.ok(Object.keys(literal).length > 0, "fixture should carry literal env vars");
+  const baseMs1 = win.__state.apps[0].base["ms1"];
+  baseMs1.env = { ...baseMs1.env, DB_PASS: { secretKeyRef: { name: "db", key: "pw" } } };
+  win.renderAll();
+  const envWrap = Array.from(win.document.querySelectorAll(".rows-wrap"))
+    .find((w) => w.querySelector("input[placeholder='ENV_NAME']"));
+  const rows = Object.fromEntries(Array.from(envWrap.querySelectorAll(".list-row"))
+    .map((r) => Array.from(r.querySelectorAll("input")).map((i) => i.value)));
+  assert.deepStrictEqual(rows, literal, "form lists every literal env var and skips the reference");
+  // Saving writes env.NAME: value (not env.NAME.value) into the folder's values file.
+  const saveMs1 = Array.from(win.document.querySelectorAll("button")).find((b) => b.textContent === "Save");
+  await saveMs1.onclick();
+  const savedEnv = win.jsyaml.load(fs.readFileSync(path.join(appDirPath, "dev/yellow/values/ms1.yaml"), "utf8")).env;
+  for (const [k, v] of Object.entries(literal)) assert.strictEqual(savedEnv[k], v, `saved env.${k}`);
+  assert.ok(!("DB_PASS" in savedEnv), "a reference is not copied into the values file");
+  delete baseMs1.env.DB_PASS;
+  console.log("form env: NAME: value map read and saved: OK —", Object.keys(literal).join(", "));
+
   // Saving a folder's values file keeps it in its values/ sub-folder.
   win.__state.activeNamespace = "dev/black";
   await win.saveRawValues("ms1", "minimal", { image: { tag: "9.9.9" } });

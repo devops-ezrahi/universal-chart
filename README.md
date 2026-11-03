@@ -519,7 +519,7 @@ workload:
 | Workload type | `workload.type` | deployment / statefulset / daemonset / none (no compute workload) |
 | Replica count | `replicaCount` | Omitted automatically when HPA is enabled |
 | Update strategy | `strategy` | RollingUpdate / Recreate / OnDelete |
-| Environment variables | `env` | A list, rendered in the order written (`$(VAR)` sees earlier vars); a later values file replaces the whole list. The older name-keyed map still works, rendered sorted |
+| Environment variables | `env`, `envOrder` | A map, `NAME: value`; a ref is `NAME: {secretKeyRef: ...}` (also `configMapKeyRef`, `fieldRef`, `resourceFieldRef`), the chart adds `valueFrom`. A later values file overrides one var, or deletes it with `NAME: null`. Rendered sorted by name, except the names in `envOrder` go first (needed only when a `$(VAR)` must see an earlier var). A Kubernetes-style list still works, rendered as written |
 | Volume mounts | `volumeMounts` | A list, rendered in the order written; same rules as `env` |
 | Service | `service.enabled: true` | Off by default; set `false` in a later values file to turn it back off |
 | ServiceAccount | `serviceAccount.create: true` | Off by default (pods run as `serviceAccount.name`, else `default`); `false` turns it back off |
@@ -606,16 +606,14 @@ ports:
     containerPort: 5432
 
 env:
-  - name: POSTGRES_USER
-    valueFrom:
-      secretKeyRef:
-        name: postgres-secret
-        key: username
-  - name: POSTGRES_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: postgres-secret
-        key: password
+  POSTGRES_USER:
+    secretKeyRef:
+      name: postgres-secret
+      key: username
+  POSTGRES_PASSWORD:
+    secretKeyRef:
+      name: postgres-secret
+      key: password
 
 service:
   enabled: true

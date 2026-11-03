@@ -530,14 +530,14 @@ def combine_env_groups(name: str, entries: list, groups: list, base: dict,
     """Lift every value that differs between one release's namespaces only by
     group tokens into `base` as a template, dropping the concrete copies from
     each instance. Candidates are string leaves of ctx.values plus, under
-    --env-in-values, the env list (it lives in ctx.full_env and never reaches
-    ctx.values).
+    --env-in-values, the env map (it lives in ctx.full_env and never reaches
+    ctx.values) — one candidate per var.
 
     Returns ({namespace: {group: value}}, [applied combination records])."""
     def candidates(ctx) -> dict:
         out = {p: ("values", v) for p, v in _string_leaves(ctx.values).items()}
         if ctx.full_env:
-            out.update({p: ("env", v) for p, v in _string_leaves({"env": ctx.full_env}).items()})
+            out.update({p: ("env", v) for p, v in _string_leaves(ctx.full_env).items()})
         return out
 
     per_instance = [(ns, ctx, candidates(ctx)) for ns, ctx in entries]
@@ -561,14 +561,11 @@ def combine_env_groups(name: str, entries: list, groups: list, base: dict,
                     continue
             except EOFError:
                 pass
-        if kinds == {"env"}:
-            base["env"] = _leaf_value(template)
-            for _, ctx, _ in per_instance:
-                ctx.full_env = []
-        else:
-            set_nested(base, path, _leaf_value(template))
-            for _, ctx, _ in per_instance:
-                _pop_nested(ctx.values, path)
+        # env is a map, so (like any other value) only the one var that
+        # differs by a group token is lifted, not the whole env.
+        set_nested(base, path, _leaf_value(template))
+        for _, ctx, _ in per_instance:
+            _pop_nested(ctx.full_env if kinds == {"env"} else ctx.values, path)
         for g, m in injection.items():
             for ns, v in m.items():
                 injections[ns][g] = v
@@ -821,7 +818,7 @@ TOP_LEVEL_KEY_ORDER = [
     "progressDeadlineSeconds", "minReadySeconds", "podManagementPolicy", "serviceName", "strategy",
     "containerName", "command", "args", "workingDir", "restartPolicy", "terminationGracePeriodSeconds",
     "containerRestartPolicy", "terminationMessagePath", "terminationMessagePolicy",
-    "env", "envFrom", "envFromOrder", "ports", "portOrder", "resources", "livenessProbe", "readinessProbe", "startupProbe",
+    "env", "envOrder", "envFrom", "envFromOrder", "ports", "portOrder", "resources", "livenessProbe", "readinessProbe", "startupProbe",
     "containerRestartRules", "lifecycle",
     "volumes", "volumeOrder", "volumeMounts", "pvc", "volumeClaimTemplates", "persistentVolumeClaimRetentionPolicy",
     "persistentVolumes", "storageClasses",
@@ -1610,10 +1607,10 @@ class MicroserviceContext:
     # Full (untrimmed) image, kept only so build_minimal_values can pull the
     # tag out of it — ctx.values["image"] deliberately EXCLUDES the tag (see
     # handle_main_container) so it isn't duplicated in both files. full_env is
-    # the env list under --env-in-values, written to the minimal override
-    # instead of ctx.values.
+    # {"env": {...}, "envOrder": [...]} under --env-in-values, written to the
+    # minimal override instead of ctx.values.
     full_image: dict = field(default_factory=dict)
-    full_env: list = field(default_factory=list)
+    full_env: dict = field(default_factory=dict)
     # How many replicas to run is a per-environment decision, not a property
     # of the microservice: prd and tst legitimately differ, and base/ is
     # shared by every namespace running this microservice. Tracked here rather
@@ -1648,29 +1645,93 @@ class MicroserviceContext:
     nad_names: set = field(default_factory=set)
 
 
-def env_list(env, ctx: "MicroserviceContext | None" = None) -> list:
-    """The container's env as a LIST, in the deployment's own order.
+_ENV_REF_RE = re.compile(r"\$\(([A-Za-z_][A-Za-z0-9_.\-]*)\)")
 
-    Kept a list (not a name-keyed map) so the chart renders it exactly as the
-    deployment had it: no reorder — so no pod restart on the cutover sync — and
-    `$(VAR)` still expands, since Kubernetes resolves only vars defined EARLIER.
-    ConfigMap/Secret references follow ctx.name_map's renames.
+
+def env_map(env, ctx: "MicroserviceContext | None" = None) -> dict:
+    """The container's env as a MAP keyed by var name, in the deployment's order.
+
+    A map (not a list) so a later values file overrides ONE var — or deletes it
+    with `NAME: null` — instead of restating the whole list, and so the base/
+    values split places each var on its own: a var the same in every namespace
+    stays in base/, only the ones that differ go to that folder's values file.
+
+      - name: A / value: x            ->  A: x
+      - name: B / valueFrom: {ref}    ->  B: {ref}      (the chart adds valueFrom)
+
+    `- name: FOO` with nothing else, or `value: {}`, both reduce to an empty
+    body — normalised to `""` rather than dropped: an env var explicitly set to
+    the empty string is meaningful, and removing it is NOT the same.
+    ConfigMap/Secret references follow ctx.name_map's renames. A name listed
+    twice keeps its last entry — the one Kubernetes applies.
     """
-    out = []
-    for e in env or []:
-        entry = copy.deepcopy(e)
-        # `- name: FOO` with nothing else, or `value: {}`, both reduce to an
-        # empty body — and an empty body has neither a value nor a valueFrom, so
-        # it renders as a malformed env var. Normalised to `value: ""` rather
-        # than dropped: an env var explicitly set to the empty string is
-        # meaningful (it is how a program is told to use its own default), and
-        # removing the variable is NOT the same as setting it empty.
-        if set(entry) == {"name"} or entry.get("value") == {}:
-            entry = {"name": entry["name"], "value": ""}
-        out.append(entry)
+    entries = [copy.deepcopy(e) for e in env or [] if isinstance(e, dict) and e.get("name")]
     if ctx is not None:
-        remap_container_refs({"env": out}, ctx)
+        remap_container_refs({"env": entries}, ctx)
+    out: dict = {}
+    for e in entries:
+        name = e["name"]
+        body = {k: v for k, v in e.items() if k != "name"}
+        if not body or body.get("value") == {} or (set(body) == {"value"} and body["value"] is None):
+            val: Any = ""
+        elif set(body) == {"value"}:
+            val = body["value"] if isinstance(body["value"], str) else str(body["value"])
+        elif set(body) == {"valueFrom"} and isinstance(body["valueFrom"], dict) and body["valueFrom"]:
+            val = body["valueFrom"]
+        else:
+            val = body  # anything unusual is kept in the explicit value/valueFrom form
+        if name in out:
+            del out[name]  # keep the position of the entry that wins
+            if ctx is not None:
+                ctx.warnings.append(f"env var '{name}' is listed more than once; kept the last one")
+        out[name] = val
     return out
+
+
+def _env_refs(val) -> set:
+    """Names a value refers to as $(NAME)."""
+    return set(_ENV_REF_RE.findall(val)) if isinstance(val, str) else set()
+
+
+def env_order_breaks_refs(raw_names: list, values: dict, rendered_names: list) -> bool:
+    """True when rendering in `rendered_names` order changes what a $(VAR)
+    expands to: Kubernetes expands $(B) inside A only when B is defined BEFORE A,
+    so a reorder that moves B across A changes A's value."""
+    raw_pos = {n: i for i, n in enumerate(raw_names)}
+    new_pos = {n: i for i, n in enumerate(rendered_names)}
+    for name, val in values.items():
+        for ref in _env_refs(val):
+            if ref == name or ref not in raw_pos or ref not in new_pos or name not in new_pos:
+                continue
+            if (raw_pos[ref] < raw_pos[name]) != (new_pos[ref] < new_pos[name]):
+                return True
+    return False
+
+
+def env_order(emap: dict) -> Optional[list]:
+    """envOrder for env_map's result, or None when order does not matter.
+
+    The chart renders an env map sorted by name. That is harmless unless a var
+    uses $(OTHER) and sorting moves OTHER across it, or --prevent-restart wants
+    the pod template byte-for-byte (a reorder rolls the pods). Only then, and
+    only when the raw order is not already sorted, is the order written."""
+    names = list(emap)
+    if len(names) < 2 or names == sorted(names):
+        return None
+    if PREVENT_RESTART or env_order_breaks_refs(names, emap, sorted(names)):
+        return names
+    return None
+
+
+def put_env(target: dict, raw_env, ctx: "MicroserviceContext | None" = None) -> dict:
+    """Write env (and envOrder, when needed) into `target`; returns target."""
+    emap = env_map(raw_env, ctx)
+    if emap:
+        target["env"] = emap
+        order = env_order(emap)
+        if order:
+            target["envOrder"] = order
+    return target
 
 
 def envfrom_list_to_map(envfrom_list) -> dict:
@@ -1845,11 +1906,11 @@ def remap_container_refs(container: dict, ctx: MicroserviceContext) -> dict:
     """Rewrite configMapKeyRef/secretKeyRef/configMapRef/secretRef names inside
     a raw (list-shaped) container spec's env/envFrom, in place, using the same
     ctx.name_map collision-resolution table applied to the main container via
-    env_list/remap_envfrom. Init containers and sidecars are stored as native
+    env_map/remap_envfrom. Init containers and sidecars are stored as native
     Kubernetes container specs (toYaml'd through as-is by the chart), so this
     walks the list entries directly — without it, a ConfigMap/Secret that gets
     renamed by the collision-avoidance pass leaves these containers pointing at
-    a name that no longer exists. The main container's env (env_list) is
+    a name that no longer exists. The main container's env (env_map) is
     remapped through here too.
     """
     for e in container.get("env") or []:
@@ -1901,8 +1962,8 @@ def set_order(v: dict, key: str, order_key: str) -> None:
     came out alphabetised. That is a pod-template change: migrating a workload
     onto the chart rolled every pod on the first sync for no other reason. The
     maps here are built in raw order (dicts keep insertion order), so their
-    keys ARE the raw order. (env and volumeMounts are written as lists, which
-    the chart renders as written, so they need no order key.)
+    keys ARE the raw order. (volumeMounts is written as a list, which the chart
+    renders as written; env's envOrder is decided by env_order.)
     A single entry has no order to keep, so nothing is written for it.
 
     The cosmetic ones (COSMETIC_ORDER_KEYS — only the restart cares) are
@@ -1954,12 +2015,12 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
         v["ports"] = ports_list_to_map(c["ports"])
         set_order(v, "ports", "portOrder")
     if c.get("env"):
-        # See ENV_IN_VALUES: under that flag the env list goes to the
+        # See ENV_IN_VALUES: under that flag the env map goes to the
         # minimal override instead of here.
         if ENV_IN_VALUES:
-            ctx.full_env = env_list(c["env"], ctx)
+            ctx.full_env = put_env({}, c["env"], ctx)
         else:
-            v["env"] = env_list(c["env"], ctx)
+            put_env(v, c["env"], ctx)
     if c.get("envFrom"):
         v["envFrom"] = remap_envfrom(envfrom_list_to_map(c["envFrom"]), ctx)
         set_order(v, "envFrom", "envFromOrder")
@@ -1977,7 +2038,7 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
     if c.get("securityContext") or (PREVENT_RESTART and isinstance(c.get("securityContext"), dict)):
         v["securityContext"] = c["securityContext"]
     if c.get("volumeMounts"):
-        # A list in the deployment's own order (see env_list).
+        # A list, in the deployment's own order.
         v["volumeMounts"] = copy.deepcopy(c["volumeMounts"])
     if c.get("containerRestartRules"):
         v["containerRestartRules"] = c["containerRestartRules"]
@@ -2667,10 +2728,10 @@ ARGOCD_MANIFESTS = False
 # Written into the ArgoCD wiring when --values-repo-url is not given: an obvious
 # "fill me in" rather than a plausible URL that silently points nowhere.
 VALUES_REPO_PLACEHOLDER = "<values-repo-url>"
-# The env list lives in the release's values like everything else, so one the
-# same in every namespace lands in base/ once and only a namespace whose list
-# differs carries it in values/. --env-in-values writes every namespace's env
-# list into its own values/ file instead.
+# The env map lives in the release's values like everything else, so a var the
+# same in every namespace lands in base/ once and only a namespace whose var
+# differs carries that one var in values/. --env-in-values writes every
+# namespace's whole env map into its own values/ file instead.
 ENV_IN_VALUES = False
 # --prevent-restart: render every migrated pod TEMPLATE (spec.template) byte-for-
 # byte as it is live, so the cutover sync restarts no pods. Only the template:
@@ -2681,8 +2742,9 @@ ENV_IN_VALUES = False
 # server stored it — so it is for workloads that cannot take a restart. Off, the values say what the app
 # needs and the first sync rolls the pods once. Orders that carry MEANING are
 # kept either way: initContainerOrder (run order) and envFromOrder (the later
-# ref wins a shared key). env and volumeMounts are lists, always in the
-# deployment's own order.
+# ref wins a shared key). volumeMounts is a list, always in the deployment's
+# own order; env is a map, with envOrder written when a $(VAR) needs an earlier
+# var or under this flag (see env_order).
 PREVENT_RESTART = False
 # The --prevent-restart flag as given: True / False for every release, None (the
 # default) for the stateful ones only (is_stateful). build_microservice sets
@@ -3624,9 +3686,9 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             job_template[k] = main[k]
     if main.get("env"):
         if ENV_IN_VALUES:
-            ctx.sub_full_env[("cronjobs", sub_name)] = env_list(main["env"], ctx)
+            ctx.sub_full_env[("cronjobs", sub_name)] = put_env({}, main["env"], ctx)
         else:
-            job_template["env"] = env_list(main["env"], ctx)
+            put_env(job_template, main["env"], ctx)
     if main.get("envFrom"):
         job_template["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
         set_order(job_template, "envFrom", "envFromOrder")
@@ -3723,9 +3785,9 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
             entry[k] = main[k]
     if main.get("env"):
         if ENV_IN_VALUES:
-            ctx.sub_full_env[("jobs", sub_name)] = env_list(main["env"], ctx)
+            ctx.sub_full_env[("jobs", sub_name)] = put_env({}, main["env"], ctx)
         else:
-            entry["env"] = env_list(main["env"], ctx)
+            put_env(entry, main["env"], ctx)
     if main.get("envFrom"):
         entry["envFrom"] = remap_envfrom(envfrom_list_to_map(main["envFrom"]), ctx)
         set_order(entry, "envFrom", "envFromOrder")
@@ -4158,7 +4220,7 @@ def build_minimal_values(ctx: MicroserviceContext) -> dict:
     if img:
         minimal["image"] = img
     if ctx.full_env:
-        minimal["env"] = ctx.full_env
+        minimal.update(copy.deepcopy(ctx.full_env))  # env (+ envOrder)
 
     # CronJob/Job sub-resources: same image-tag/env split as above,
     # just at their own nested path (cronjobs.<name>.jobTemplate.image /
@@ -4175,7 +4237,7 @@ def build_minimal_values(ctx: MicroserviceContext) -> dict:
         path = minimal.setdefault(top_key, {}).setdefault(sub_name, {})
         if top_key == "cronjobs":
             path = path.setdefault("jobTemplate", {})
-        path["env"] = env_val
+        path.update(copy.deepcopy(env_val))  # env (+ envOrder)
 
     # Init container / sidecar images (see sub_raw_image's field comment) —
     # each path already ends in "image", so this places the raw string back
@@ -5218,7 +5280,7 @@ def _by_name(items: list):
 
     Compared positionally, a pure reordering would read as a difference — and
     the chart legitimately reorders: the converter stores containers, volumes,
-    volumeMounts, env and ports as MAPS keyed by name, and the chart's
+    env and ports as MAPS keyed by name, and the chart's
     mapToList helper renders them back in sorted-key order. Kubernetes itself
     addresses every one of these by name and never by position, so keying by
     name compares what actually matters. Returns None for lists where this
@@ -5402,13 +5464,19 @@ def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list
             # Init containers run one after another, so their ORDER is part of
             # the spec — matching by name alone hid a builder that sorted them
             # (a migration running before the wait-for-database it depends on).
-            # env and volumeMounts are written as lists in the deployment's
-            # own order, so any reorder there is a converter bug too: it rolls
-            # the pods, and `$(VAR)` expands only vars defined earlier.
+            # volumeMounts is written as a list in the deployment's own order,
+            # so any reorder there is a converter bug too. env is a map the
+            # chart renders sorted (or in envOrder): a reorder is only a change
+            # when it moves a var across one whose `$(VAR)` reads it —
+            # Kubernetes expands only vars defined earlier. (--prevent-restart
+            # writes envOrder, so its templates keep the raw order anyway.)
             if path[-1:] in (("initContainers",), ("env",), ("volumeMounts",)):
                 raw_order = [n for n in raw_map if n in rendered_map]
                 rendered_order = [n for n in rendered_map if n in raw_map]
-                if raw_order != rendered_order:
+                if raw_order != rendered_order and (
+                        path[-1] != "env" or env_order_breaks_refs(
+                            raw_order, {n: (raw_map[n] or {}).get("value") for n in raw_order},
+                            rendered_order)):
                     out.append(("CHANGED", _dot(path), f"order raw={raw_order} render={rendered_order}"))
             for name, item in raw_map.items():
                 if name not in rendered_map:
@@ -5524,7 +5592,7 @@ def collect_object_references(doc: dict) -> list[tuple[str, str, str]]:
     """Every by-NAME reference a rendered object makes, as (kind, name, where).
 
     A rename is only safe if every reference follows it. The converter does
-    rewrite them — env_list / remap_envfrom / remap_volumes /
+    rewrite them — env_map / remap_envfrom / remap_volumes /
     remap_container_refs all consult ctx.name_map — but "we rewrote the ones we
     know about" is a different claim from "no reference dangles", and the report
     could not decide between "real issue" and "internally consistent / benign"
@@ -6288,8 +6356,8 @@ def main() -> None:
                           "becomes {{ .Release.Namespace }}; '--env-group namespace' enables only "
                           "that. Repeatable; a second group nests (dev/yellow/eu/).")
     ap.add_argument("--env-in-values", nargs="?", const=True, default=False, type=_bool_arg,
-                     help="write each namespace's env list into its own values/ file. Default "
-                          "false: the env list is treated like any other value — in base/ when it "
+                     help="write each namespace's whole env map into its own values/ file. Default "
+                          "false: each env var is treated like any other value — in base/ when it "
                           "is the same in every namespace, in values/ only where it differs.")
     ap.add_argument("--prevent-restart", "--preventRestart", dest="prevent_restart", nargs="?", const=True, default=None, type=_bool_arg,
                      metavar="true|false",

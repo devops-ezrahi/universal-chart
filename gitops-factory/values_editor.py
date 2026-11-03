@@ -184,7 +184,11 @@ def is_minimal_path(dotted_path: str, value: Any) -> bool:
     """
     if dotted_path == "image.tag":
         return True
-    if dotted_path.startswith("env.") and dotted_path.endswith(".value"):
+    # env is a map: `env.NAME: value` is a literal (the older `env.NAME.value`
+    # form too); `env.NAME.secretKeyRef...` is a reference and stays put.
+    if dotted_path.startswith("env.") and (
+            dotted_path.count(".") == 1 and not isinstance(value, dict)
+            or dotted_path.count(".") == 2 and dotted_path.endswith(".value")):
         return True
     return False
 
@@ -295,7 +299,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         env_name, sep, env_value = spec.partition("=")
         if not sep:
             sys.exit(f"--env must be NAME=value, got: {spec}")
-        set_path(minimal, f"env.{env_name}.value", parse_scalar(env_value))
+        set_path(minimal, f"env.{env_name}", env_value)  # env is NAME: value
 
     for spec in args.set or []:
         dotted_path, sep, raw_value = spec.partition("=")

@@ -107,45 +107,36 @@ ports:
 # ----- Environment variables -----------------------------------------------------------------
 env:
   # Literal value
-  - name: APP_ENV
-    value: "production"
-  - name: LOG_LEVEL
-    value: "info"
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
   # From fieldRef (Downward API)
-  - name: POD_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
-  - name: POD_NAMESPACE
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.namespace
-  - name: POD_IP
-    valueFrom:
-      fieldRef:
-        fieldPath: status.podIP
-  - name: NODE_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: spec.nodeName
+  POD_NAME:
+    fieldRef:
+      fieldPath: metadata.name
+  POD_NAMESPACE:
+    fieldRef:
+      fieldPath: metadata.namespace
+  POD_IP:
+    fieldRef:
+      fieldPath: status.podIP
+  NODE_NAME:
+    fieldRef:
+      fieldPath: spec.nodeName
   # From resourceFieldRef
-  - name: MEM_LIMIT
-    valueFrom:
-      resourceFieldRef:
-        containerName: webapp
-        resource: limits.memory
+  MEM_LIMIT:
+    resourceFieldRef:
+      containerName: webapp
+      resource: limits.memory
   # From ConfigMap key
-  - name: DB_HOST
-    valueFrom:
-      configMapKeyRef:
-        name: webapp-config
-        key: db-host
+  DB_HOST:
+    configMapKeyRef:
+      name: webapp-config
+      key: db-host
   # From Secret key
-  - name: DB_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: webapp-secret
-        key: db-password
+  DB_PASSWORD:
+    secretKeyRef:
+      name: webapp-secret
+      key: db-password
 
 envFrom:
   - configMapRef:
@@ -688,8 +679,7 @@ jobs:
     command: ["python", "manage.py", "migrate", "--no-input"]
     args: []
     env:
-      - name: DJANGO_SETTINGS_MODULE
-        value: config.settings.production
+      DJANGO_SETTINGS_MODULE: config.settings.production
     envFrom:
       - secretRef:
           name: webapp-secret
@@ -744,8 +734,7 @@ cronjobs:
         - "--bucket=my-backup-bucket"
         - "--prefix=webapp"
       env:
-        - name: AWS_REGION
-          value: us-east-1
+        AWS_REGION: us-east-1
       envFrom:
         - secretRef:
             name: webapp-secret

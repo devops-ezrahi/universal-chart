@@ -540,6 +540,55 @@ tests:
             - { name: A, value: a }
             - { name: Z, value: z }
 
+  - it: renders the NAME-value env map (scalar = value, a ref goes under valueFrom), sorted by name
+    set:
+      env:
+        Z_URL: http://z
+        PORT: 8080
+        EMPTY: ""
+        DB_PASS:
+          secretKeyRef: { name: db, key: password }
+        POD_IP:
+          fieldRef: { fieldPath: status.podIP }
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - name: DB_PASS
+              valueFrom: { secretKeyRef: { name: db, key: password } }
+            - { name: EMPTY, value: "" }
+            - name: POD_IP
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - { name: PORT, value: "8080" }
+            - { name: Z_URL, value: http://z }
+
+  - it: renders the env map in envOrder first, then the rest sorted
+    set:
+      env:
+        HOST: db
+        A_URL: postgres://$(HOST)
+        B: b
+      envOrder: [HOST, A_URL]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - { name: HOST, value: db }
+            - { name: A_URL, value: postgres://$(HOST) }
+            - { name: B, value: b }
+
+  - it: a later values file overrides, deletes (null) and adds single env vars
+    values:
+      - env_base_values.yaml
+      - env_override_values.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - { name: DB_URL, value: http://db.base:5432 }
+            - { name: EXTRA, value: x }
+            - { name: LOG_LEVEL, value: debug }
+
   - it: renders volumes in volumeOrder and a volumeMounts list as written
     set:
       volumes:

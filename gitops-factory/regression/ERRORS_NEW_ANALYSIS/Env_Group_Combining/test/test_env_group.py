@@ -47,9 +47,12 @@ def test_env_group_merges_into_one_templated_base(tmp_path):
     base = _values(out / "base" / "filter-service-b2b.yaml")
     assert base["route"]["host"] == "filter.{{ .Release.Namespace }}.{{ .Values.color }}.example.org"
     assert base["fullnameOverride"] == "filter-service-{{ .Values.color }}-b2b"
-    # env is one list in the deployment's order, and NEIGHBOUR_URL (below) cannot
-    # be templated, so the whole list stays in each namespace's values/.
-    assert "env" not in base
+    # env is a map, so each var is combined on its own: COLOR and SELF_URL
+    # become templates in base/, and only NEIGHBOUR_URL (below), which cannot
+    # be templated, stays in each namespace's values/.
+    assert base["env"] == {"COLOR": "{{ .Values.color }}",
+                           "SELF_URL": "http://api.{{ .Release.Namespace }}.svc:8080"}
+    assert "envOrder" not in base
     # A source '{{' is escaped so the chart's tpl emits it literally.
     assert base["configMaps"]["filter-alerts"]["data"]["ALERT"] == \
         '{{ "{{" }} $labels.pod }} is down in {{ .Release.Namespace }}'
@@ -63,7 +66,7 @@ def test_env_group_merges_into_one_templated_base(tmp_path):
     assert base["configMaps"][cm]["data"]["mode"] == "{{ .Values.color }}"
     cron = base["cronjobs"]["report-{{ .Values.color }}"]["jobTemplate"]
     assert cron["envFrom"][cm] == {"type": "configMapRef"}
-    assert cron["env"] == [{"name": "COLOR", "value": "{{ .Values.color }}"}]
+    assert cron["env"] == {"COLOR": "{{ .Values.color }}"}
     assert base["sidecars"]["proxy-{{ .Values.color }}"]["args"] == ["--color", "{{ .Values.color }}"]
 
     # The color token in each file name moved the release into a folder of
@@ -72,10 +75,7 @@ def test_env_group_merges_into_one_templated_base(tmp_path):
         assert _values(out / ns / color / "defaults.yaml")["color"] == color
         values = _values(out / ns / color / "values" / "filter-service-b2b.yaml")
         # Names another namespace, not its own: never templated.
-        assert values["env"] == [
-            {"name": "COLOR", "value": color},
-            {"name": "SELF_URL", "value": f"http://api.{ns}.svc:8080"},
-            {"name": "NEIGHBOUR_URL", "value": f"http://db.{other}.svc:5432"}]
+        assert values["env"] == {"NEIGHBOUR_URL": f"http://db.{other}.svc:5432"}
 
 
 def test_without_env_group_output_is_unchanged(tmp_path):
@@ -106,10 +106,10 @@ def test_combine_values_rules():
     assert conv.strip_name_tokens("black", {"black"}) == "black"
 
 
-def test_env_list_is_kept_whole_and_in_order(tmp_path):
-    """env is a list in the deployment's own order, and Helm replaces a list
-    rather than merging it: when one var differs between namespaces, each
-    namespace's values/ carries its whole list, in order, and base/ none."""
+def test_env_is_split_per_var(tmp_path):
+    """env is a NAME: value map, which Helm merges key by key: when one var
+    differs between namespaces, base/ keeps the vars every namespace agrees on
+    and each namespace's values/ carries only the var that differs."""
     for ns, fruit in (("ns1", "banana"), ("ns2", "tapuz")):
         (tmp_path / "in" / ns).mkdir(parents=True)
         (tmp_path / "in" / ns / "app.yaml").write_text(f"""\
@@ -135,9 +135,8 @@ spec:
         capture_output=True, text=True, errors="replace", cwd=str(GITOPS_DIR))
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
-    assert "env" not in _values(out / "base" / "app.yaml")
-    assert _values(out / "ns1" / "values" / "app.yaml")["env"] == [
-        {"name": "foo", "value": "bar"}, {"name": "test", "value": "banana"}]
-    assert _values(out / "ns2" / "values" / "app.yaml")["env"] == [
-        {"name": "foo", "value": "bar"}, {"name": "test", "value": "tapuz"}]
-    assert "['env'] differ" in (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")
+    assert _values(out / "base" / "app.yaml")["env"] == {"foo": "bar"}
+    assert _values(out / "ns1" / "values" / "app.yaml")["env"] == {"test": "banana"}
+    assert _values(out / "ns2" / "values" / "app.yaml")["env"] == {"test": "tapuz"}
+    # Only the one var that differs is reported and moved, not the whole env.
+    assert "['env.test'] differ" in (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")

@@ -79,31 +79,25 @@ ports:
 
 # ----- Environment variables -----------------------------------------------------------------
 env:
-  - name: POSTGRES_DB
-    valueFrom:
-      configMapKeyRef:
-        name: postgres-config
-        key: POSTGRES_DB
-  - name: POSTGRES_USER
-    valueFrom:
-      secretKeyRef:
-        name: postgres-secret
-        key: POSTGRES_USER
-  - name: POSTGRES_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: postgres-secret
-        key: POSTGRES_PASSWORD
-  - name: PGDATA
-    value: /var/lib/postgresql/data/pgdata
-  - name: POD_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
-  - name: POD_NAMESPACE
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.namespace
+  POSTGRES_DB:
+    configMapKeyRef:
+      name: postgres-config
+      key: POSTGRES_DB
+  POSTGRES_USER:
+    secretKeyRef:
+      name: postgres-secret
+      key: POSTGRES_USER
+  POSTGRES_PASSWORD:
+    secretKeyRef:
+      name: postgres-secret
+      key: POSTGRES_PASSWORD
+  PGDATA: /var/lib/postgresql/data/pgdata
+  POD_NAME:
+    fieldRef:
+      fieldPath: metadata.name
+  POD_NAMESPACE:
+    fieldRef:
+      fieldPath: metadata.namespace
 
 envFrom:
   - configMapRef:
@@ -441,21 +435,18 @@ cronjobs:
             -Fc -Z 9 -f /backups/pg_dump_${DATE}.pgc
           echo "Backup completed: pg_dump_${DATE}.pgc"
       env:
-        - name: PGPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: PGPASSWORD
-        - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: POSTGRES_USER
-        - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: postgres-config
-              key: POSTGRES_DB
+        PGPASSWORD:
+          secretKeyRef:
+            name: postgres-secret
+            key: PGPASSWORD
+        POSTGRES_USER:
+          secretKeyRef:
+            name: postgres-secret
+            key: POSTGRES_USER
+        POSTGRES_DB:
+          configMapKeyRef:
+            name: postgres-config
+            key: POSTGRES_DB
       resources:
         requests:
           cpu: 200m
@@ -496,21 +487,18 @@ cronjobs:
         - -c
         - VACUUM ANALYZE;
       env:
-        - name: PGPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: PGPASSWORD
-        - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: postgres-secret
-              key: POSTGRES_USER
-        - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: postgres-config
-              key: POSTGRES_DB
+        PGPASSWORD:
+          secretKeyRef:
+            name: postgres-secret
+            key: PGPASSWORD
+        POSTGRES_USER:
+          secretKeyRef:
+            name: postgres-secret
+            key: POSTGRES_USER
+        POSTGRES_DB:
+          configMapKeyRef:
+            name: postgres-config
+            key: POSTGRES_DB
       resources:
         requests:
           cpu: 100m

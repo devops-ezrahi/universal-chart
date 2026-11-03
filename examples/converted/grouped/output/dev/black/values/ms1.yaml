@@ -11,16 +11,7 @@ image:
 replicaCount: 1
 
 env:
-- name: ENVIRONMENT
-  value: dev
-- name: DB_URL
-  value: http://db.dev.svc:5432
-- name: COLOR
-  value: black
-- name: LOG_LEVEL
-  value: info
-- name: FEATURE_FLAG
-  value: 'on'
+  FEATURE_FLAG: 'on'
 
 cronjobs:
   ms1-report-{{ .Values.color }}:

@@ -32,8 +32,8 @@ The large mock dump `namespaces/` is not committed either — generate it with
 | `--env-suffixes tok,tok` | Strip these words from anywhere in a file name, replacing the default rule (strip a trailing suffix equal to the namespace's). They never make folders: values differing by them become `{{ .Values.environment }}` (`env` is the chart's env-var map), with `environment: dev` in every folder's `defaults.yaml`. A word given to both `--env-suffixes` and `--env-group` counts as a suffix. |
 | Group tokens in keys | A map key differing only by group words (a volume `certs-black`/`certs-yellow`, a CronJob, sidecar, init container, ConfigMap, env var name) becomes one templated key in `base/` — `certs-{{ .Values.color }}` — and the chart `tpl`s keys too. A list (args, a sidecar's env) is templated whole the same way. Top-level keys (the chart's own) are never renamed. |
 | Labels in `defaults.yaml` | A workload label or pod label every microservice in a namespace carries, with the same value, goes into that namespace's `defaults.yaml` and out of its `values/` files — so `environment: dev` is written once per namespace instead of once per microservice. Only releases with a Deployment/StatefulSet/DaemonSet count, since those labels render nowhere else: a `shared` release (or a CronJob-only one) with no labels no longer keeps them out. `base/` is not changed, as it is shared with other namespaces. |
-| `--prevent-restart [true\|false]` (also `--preventRestart`) | For apps that cannot take a restart: renders the migrated pod template (`spec.template`) byte-for-byte as it runs, so the cutover sync restarts no pods, while labels and annotations on the workload itself — the chart's link annotations included — are still added and edited, as they roll nothing. It replaces `--exact-copy`, which also dropped those annotations. In the template: `portOrder` / `volumeOrder` / `sidecarOrder` in the raw order, and an empty `securityContext: {}` kept because the API server stored it. **By default on for stateful releases only** — a StatefulSet, or a workload mounting a PersistentVolumeClaim (one report line each says so); every other release carries only what the app needs and rolls once on the first sync (the chart renders those lists sorted by name). `--prevent-restart true`: every release. `--prevent-restart false`: none. Every release also pins `fullnameOverride` to its live name: Argo CD renders a release under its Application's name (`postgres-dev`), and without the pin a StatefulSet would come back as a new one with empty volumes. A `kubectl rollout restart` stamp is left out on purpose — Argo CD syncs with ServerSideApply, so the live stamp stays and nothing restarts. Orders that change behaviour are written either way: `initContainerOrder` (run order) and `envFromOrder` (a later ref wins a shared key). `env` and `volumeMounts` need no order key at all: they are written as lists in the deployment's own order, always. Selector labels are not part of it: a selector is immutable, so they are needed to adopt a live workload at all. Object labels are carried as live too (the chart adds no identity labels unless `chartLabels: true`). |
-| Env list in base | The `env` list (in the deployment's own order) is treated like any other value: in `base/` when it is the same in every namespace (after `--env-group` / `--env-suffixes` templating), otherwise each namespace's `values/` carries its whole list — Helm replaces a list, it never merges one. `--env-in-values` writes every namespace's env list into its own `values/` file. |
+| `--prevent-restart [true\|false]` (also `--preventRestart`) | For apps that cannot take a restart: renders the migrated pod template (`spec.template`) byte-for-byte as it runs, so the cutover sync restarts no pods, while labels and annotations on the workload itself — the chart's link annotations included — are still added and edited, as they roll nothing. It replaces `--exact-copy`, which also dropped those annotations. In the template: `portOrder` / `volumeOrder` / `sidecarOrder` in the raw order, and an empty `securityContext: {}` kept because the API server stored it. **By default on for stateful releases only** — a StatefulSet, or a workload mounting a PersistentVolumeClaim (one report line each says so); every other release carries only what the app needs and rolls once on the first sync (the chart renders those lists sorted by name). `--prevent-restart true`: every release. `--prevent-restart false`: none. Every release also pins `fullnameOverride` to its live name: Argo CD renders a release under its Application's name (`postgres-dev`), and without the pin a StatefulSet would come back as a new one with empty volumes. A `kubectl rollout restart` stamp is left out on purpose — Argo CD syncs with ServerSideApply, so the live stamp stays and nothing restarts. Orders that change behaviour are written either way: `initContainerOrder` (run order) and `envFromOrder` (a later ref wins a shared key). `volumeMounts` is written as a list in the deployment's own order, always; `env` is a map and gets `envOrder` under this flag (and whenever a `$(VAR)` needs it). Selector labels are not part of it: a selector is immutable, so they are needed to adopt a live workload at all. Object labels are carried as live too (the chart adds no identity labels unless `chartLabels: true`). |
+| Env per var | `env` is written as a map, `NAME: value` (a ref as `NAME: {secretKeyRef: ...}`, the chart adds `valueFrom`), so each var is placed on its own: in `base/` when it is the same in every namespace (after `--env-group` / `--env-suffixes` templating), otherwise only that var goes to the namespace's `values/` — Helm merges maps key by key, so a later file overrides one var (or deletes it with `NAME: null`). `envOrder` is written only when order matters: a `$(VAR)` that sorting would move ahead of the var it reads, or `--prevent-restart`. `--env-in-values` writes every namespace's whole env map into its own `values/` file. |
 | Root ApplicationSet | One git files generator on `**/defaults.yaml` finds every namespace and variant folder. The values repo, branch and project are YAML anchors (`&repoURL`, `&branch`, `&project`), said once and reused as helm parameters; a commented `exclude` shows how to switch a namespace off. Without `--values-repo-url` it carries the placeholder `<values-repo-url>` to replace by hand. |
 | `--root-set-name`, `--argocd-destination-namespace`, `--argocd-cluster` | Name the root ApplicationSet; alias of `--argocd-namespace`; deploy to a registered cluster *name* instead of `--destination-server`'s URL. |
 | `{{` in source data | Escaped in every values file (`{{ "{{" }}`) so the chart's `tpl` pass leaves an Alertmanager/Go template in a ConfigMap literal. |
@@ -266,14 +266,12 @@ construction" in the converter's own docstring). Check
 each one names the namespace that got a `<namespace>-<name>.yaml` fallback
 instead of sharing the plain `<name>.yaml`.
 
-The image tag and any literal-value (`value:`, not `valueFrom:`) env vars live
-**exclusively** in `<namespace>/values/<slug>.yaml` — the comprehensive
-`base/<slug>.yaml` omits them rather than duplicating them, so a day-2 image
-bump or config tweak only ever touches the per-namespace minimal file, never
-the shared base. `image.repository`, `pullPolicy`, and any `valueFrom`-based
-env (ConfigMap/Secret/field refs — structural wiring, not day-2 tuning) stay
-in the comprehensive `base/` file, since the minimal file has nowhere else to
-apply them from. A per-namespace `defaults.yaml` is deliberately never
+The image tag lives **exclusively** in `<namespace>/values/<slug>.yaml` — the
+comprehensive `base/<slug>.yaml` omits it rather than duplicating it, so a
+day-2 image bump only ever touches the per-namespace minimal file, never the
+shared base. Env vars are split one by one: a var with the same value in every
+namespace is in `base/`, a var that differs is in that namespace's
+`values/<slug>.yaml` only (`--env-in-values` puts the whole env map there). A per-namespace `defaults.yaml` is deliberately never
 subtracted from `base/`, since a delta specific to one namespace's release mix
 may not hold for every other namespace reusing the same base file.
 
@@ -313,9 +311,10 @@ the following over from the source manifest:
 
 - The **existing selector**, as `selectorLabels`. The pod template keeps every
   raw label, including identity labels such as `app`.
-- The **list order** of env and volumeMounts, written as lists exactly as the
-  deployment has them, and of ports, volumes, envFrom and sidecars
-  (`portOrder`, `volumeOrder`, ...). Helm would otherwise render maps sorted.
+- The **list order** of volumeMounts, written as a list exactly as the
+  deployment has it, and of env, ports, volumes, envFrom and sidecars
+  (`envOrder`, `portOrder`, `volumeOrder`, ...). Helm would otherwise render
+  maps sorted.
 - An explicit **empty container `securityContext: {}`**.
 - **No** `serviceAccountName` or `automountServiceAccountToken` the pod didn't
   have. The chart creates no ServiceAccount and no Service unless the values
