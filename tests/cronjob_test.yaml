@@ -155,3 +155,20 @@ tests:
             - { name: STAGE, value: prod }
             - name: DB_PASS
               valueFrom: { secretKeyRef: { name: db, key: password } }
+
+  - it: keeps the container's terminationMessagePath and terminationMessagePolicy
+    set:
+      cronjobs:
+        backup:
+          schedule: "0 2 * * *"
+          jobTemplate:
+            command: ["/bin/backup.sh"]
+            terminationMessagePath: /dev/termination-log
+            terminationMessagePolicy: File
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].terminationMessagePath
+          value: /dev/termination-log
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].terminationMessagePolicy
+          value: File

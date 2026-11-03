@@ -93,3 +93,16 @@ tests:
       - equal:
           path: spec.scaleTargetRef.kind
           value: StatefulSet
+
+  - it: carries the HPA's own labels
+    set:
+      hpa:
+        enabled: true
+        minReplicas: 2
+        maxReplicas: 10
+        labels:
+          app.kubernetes.io/name: payments-gateway
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: payments-gateway

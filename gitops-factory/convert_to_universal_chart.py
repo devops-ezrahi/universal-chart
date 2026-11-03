@@ -3377,6 +3377,9 @@ def handle_hpa(doc: dict, ctx: MicroserviceContext) -> None:
     ann = clean_annotations((doc.get("metadata") or {}).get("annotations"))
     if ann:
         hpa["annotations"] = ann
+    # The HPA's own labels; the chart's hpa.yaml renders hpa.labels.
+    if raw_labels(doc):
+        hpa["labels"] = raw_labels(doc)
     ctx.values["hpa"] = hpa
 
 
@@ -3666,6 +3669,9 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # comment in handle_main_container.
     if main.get("restartPolicy"):
         job_template["containerRestartPolicy"] = main["restartPolicy"]
+    for k in ("terminationMessagePath", "terminationMessagePolicy"):
+        if main.get(k):
+            job_template[k] = main[k]
     if main.get("image"):
         repo, tag, digest = split_image(main["image"])
         # Repository, tag and digest deliberately excluded here — same reasoning
@@ -3772,6 +3778,9 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # See the matching comment in handle_cronjob.
     if main.get("restartPolicy"):
         entry["containerRestartPolicy"] = main["restartPolicy"]
+    for k in ("terminationMessagePath", "terminationMessagePolicy"):
+        if main.get(k):
+            entry[k] = main[k]
     if main.get("image"):
         repo, tag, digest = split_image(main["image"])
         # Repository, tag and digest excluded — see the matching comment in handle_cronjob.
