@@ -3871,6 +3871,8 @@ def build_storageclass_entry(doc: dict) -> dict:
               "parameters", "mountOptions", "allowedTopologies"):
         if doc.get(k) is not None:
             entry[k] = doc[k]
+    if raw_labels(doc):
+        entry["labels"] = raw_labels(doc)  # the template renders $spec.labels
     return entry
 
 
@@ -3889,6 +3891,8 @@ def build_pv_entry(doc: dict) -> dict:
               "azureDisk", "azureFile"):
         if spec.get(k) is not None:
             entry[k] = spec[k]
+    if raw_labels(doc):
+        entry["labels"] = raw_labels(doc)  # the template renders $spec.labels
     return entry
 
 
@@ -3902,6 +3906,8 @@ def build_scc_entry(doc: dict) -> dict:
               "allowedUnsafeSysctls", "forbiddenSysctls"):
         if doc.get(k) is not None:
             entry[k] = doc[k]
+    if raw_labels(doc):
+        entry["labels"] = raw_labels(doc)  # the template renders $spec.labels
     return entry
 
 
