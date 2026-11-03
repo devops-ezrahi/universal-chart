@@ -138,6 +138,5 @@ spec:
     assert _values(out / "base" / "app.yaml")["env"] == {"foo": "bar"}
     assert _values(out / "ns1" / "values" / "app.yaml")["env"] == {"test": "banana"}
     assert _values(out / "ns2" / "values" / "app.yaml")["env"] == {"test": "tapuz"}
-    assert _values(out / "ns2" / "values" / "app.yaml")["env"] == [
-        {"name": "foo", "value": "bar"}, {"name": "test", "value": "tapuz"}]
-    assert "['env'] differ" in (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")
+    # Only the one var that differs is reported and moved, not the whole env.
+    assert "['env.test'] differ" in (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")
