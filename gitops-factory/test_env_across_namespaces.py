@@ -145,6 +145,13 @@ def convert(inp: Path, out: Path, *flags) -> None:
     r = subprocess.run([sys.executable, str(HERE / "convert_to_universal_chart.py"), "--input", str(inp),
                         "--output", str(out), "--chart", str(CHART), *verify, *flags],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(HERE))
+    report_path = out / "report" / "fidelity_report.txt"
+    if r.returncode != 0 and report_path.exists():
+        lines = report_path.read_text(encoding="utf-8").splitlines()
+        start = next((i for i, l in enumerate(lines) if l.startswith("ERROR BREAKDOWN")), 0)
+        issues = [l for l in lines if l.strip().startswith(("ERROR", "LOST", "CHANGED")) or " LOST " in l or " CHANGED " in l]
+        raise AssertionError("fidelity failed:\n" + "\n".join(lines[start:start + 40])
+                             + "\n--- first issue lines ---\n" + "\n".join(issues[:80]))
     assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-4000:]
     if HELM:
         report = (out / "report" / "fidelity_report.txt").read_text(encoding="utf-8")
@@ -180,13 +187,13 @@ def _mutate(doc, rnd):
                     ct["env"] = _mutate_env(ct.get("env"), rnd)
 
 
-def mock_with_prd_copies(tmp: Path, namespaces: list, seed: int) -> Path:
+def mock_with_prd_copies(tmp: Path, namespaces: list, seed: "int | None") -> Path:
     """The mock environment's namespaces, each next to a -prd copy whose env
     differs from it."""
     mock = tmp / "mock"
     subprocess.run([sys.executable, str(HERE / "generate_mock_environment.py"), "--output", str(mock)],
                    check=True, capture_output=True)
-    rnd, inp = random.Random(seed), tmp / "in"
+    rnd, inp = random.Random(seed or 0), tmp / "in"
     for ns in namespaces:
         for f in sorted((mock / ns).rglob("*.yaml")):
             docs = list(yaml.safe_load_all(f.read_text(encoding="utf-8")))
@@ -196,7 +203,8 @@ def mock_with_prd_copies(tmp: Path, namespaces: list, seed: int) -> Path:
                     if isinstance(d, dict) and mutate:
                         if (d.get("metadata") or {}).get("namespace"):
                             d["metadata"]["namespace"] = name
-                        _mutate(d, rnd)
+                        if seed is not None:  # None: an identical copy (baseline)
+                            _mutate(d, rnd)
                 dst = inp / name / f.relative_to(mock / ns)
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_text(yaml.safe_dump_all(out_docs, sort_keys=False), encoding="utf-8")
@@ -264,6 +272,14 @@ def suffix_namespaces(tmp: Path) -> Path:
 # --------------------------------------------------------------------------
 # tests
 # --------------------------------------------------------------------------
+
+def test_mock_namespaces_with_identical_prd_copies(tmp_path):
+    """Baseline: the same mock apps with NO env change between the copies."""
+    inp = mock_with_prd_copies(tmp_path, ["payments-svc", "platform-ops"], None)
+    out = tmp_path / "out"
+    convert(inp, out, "--prevent-restart", "--cluster-scoped")
+    assert assert_every_namespace_keeps_its_env(inp, out) > 100
+
 
 @pytest.mark.parametrize("seed", [1, 2])
 def test_mock_namespaces_with_differing_prd_copies(tmp_path, seed):
