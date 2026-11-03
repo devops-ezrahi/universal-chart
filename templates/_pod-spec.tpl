@@ -405,6 +405,12 @@ containers:
     {{- with .job.containerRestartPolicy }}
     restartPolicy: {{ . }}
     {{- end }}
+    {{- with .job.terminationMessagePath }}
+    terminationMessagePath: {{ . }}
+    {{- end }}
+    {{- with .job.terminationMessagePolicy }}
+    terminationMessagePolicy: {{ . }}
+    {{- end }}
     {{- with .job.command }}
     command:
       {{- toYaml . | nindent 6 }}

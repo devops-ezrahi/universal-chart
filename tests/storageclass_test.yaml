@@ -50,3 +50,15 @@ tests:
       - equal:
           path: parameters.type
           value: gp3
+
+  - it: carries the StorageClass's own labels
+    set:
+      storageClasses:
+        fast-ssd:
+          provisioner: kubernetes.io/no-provisioner
+          labels:
+            app.kubernetes.io/name: fast-ssd
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: fast-ssd
