@@ -9,6 +9,12 @@ workload:
 
 containerName: app
 
+env:
+  COLOR: '{{ .Values.color }}'
+  DB_URL: http://db.{{ .Values.environment }}.svc:5432
+  ENVIRONMENT: '{{ .Values.environment }}'
+  LOG_LEVEL: info
+
 volumes:
   settings-{{ .Values.color }}:
     configMap:

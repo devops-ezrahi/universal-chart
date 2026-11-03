@@ -33,7 +33,10 @@ def workload(env):
 
 
 PLAIN_ENV = [{"name": "ZED", "value": "1"}, {"name": "ALPHA", "value": "2"}]
-REF_ENV = [{"name": "HOST", "value": "db"}, {"name": "URL", "value": "postgres://$(HOST):5432"}]
+# A_URL reads HOST: sorted, A_URL would come first and $(HOST) would no longer
+# expand, so envOrder is written. With URL (sorts after HOST) it is not needed.
+REF_ENV = [{"name": "HOST", "value": "db"}, {"name": "A_URL", "value": "postgres://$(HOST):5432"}]
+SORTED_REF_ENV = [{"name": "HOST", "value": "db"}, {"name": "URL", "value": "postgres://$(HOST):5432"}]
 
 
 def convert(tmp_path, env, *flags):
@@ -59,22 +62,30 @@ def test_clean_by_default(tmp_path):
     # Meaning, not cosmetics: init containers run in order, a later envFrom wins.
     assert v["initContainerOrder"] == ["z-migrate", "a-warm"]
     assert v["envFromOrder"] == ["z-sec", "a-cm"]
-    # env and volumeMounts are lists in the deployment's own order, no order key.
-    assert v["env"] == PLAIN_ENV
+    # env is a NAME: value map; with no $(VAR) between them the chart's sorted
+    # order is harmless, so no envOrder. volumeMounts stays a list.
+    assert v["env"] == {"ZED": "1", "ALPHA": "2"}
     assert v["volumeMounts"] == MOUNTS
     assert "envOrder" not in v and "volumeMountOrder" not in v
 
 
 def test_env_order_kept_when_a_value_reads_another(tmp_path):
     v = convert(tmp_path, REF_ENV)
-    assert v["env"] == REF_ENV
+    assert v["env"] == {"HOST": "db", "A_URL": "postgres://$(HOST):5432"}
+    assert v["envOrder"] == ["HOST", "A_URL"]
+
+
+def test_no_env_order_when_sorting_keeps_the_reference(tmp_path):
+    v = convert(tmp_path, SORTED_REF_ENV)
+    assert "envOrder" not in v
 
 
 @pytest.mark.parametrize("flag", [["--prevent-restart"], ["--prevent-restart", "true"], ["--preventRestart"]])
 def test_prevent_restart_keeps_the_live_template(tmp_path, flag):
     v = convert(tmp_path, PLAIN_ENV, *flag)
     assert v["portOrder"] == ["web", "admin"]
-    assert v["env"] == PLAIN_ENV
+    assert v["env"] == {"ZED": "1", "ALPHA": "2"}
+    assert v["envOrder"] == ["ZED", "ALPHA"]
     assert v["volumeMounts"] == MOUNTS
     assert v["volumeOrder"] == ["z-data", "a-tmp"]
     assert v["sidecarOrder"] == ["z-proxy", "a-log"]

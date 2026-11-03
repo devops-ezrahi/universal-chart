@@ -86,34 +86,34 @@ def _env(docs, kind="Deployment"):
 # --------------------------------------------------------------------------
 
 def _env_by_name(raw):
-    """conv.env_list keeps the deployment's list; index it by name here."""
-    return {e["name"]: {k: v for k, v in e.items() if k != "name"} for e in conv.env_list(raw)}
+    """conv.env_map: NAME -> literal string, or the valueFrom ref."""
+    return conv.env_map(raw)
 
 
 def test_all_three_empty_shapes_normalise_to_an_empty_string_value():
     env = _env_by_name(
         _doc()["spec"]["template"]["spec"]["containers"][0]["env"])
     for name in ("GW_ANALYTICS_TYPE", "GW_EMPTY_MAP", "GW_BARE"):
-        assert env[name] == {"value": ""}, f"{name} -> {env[name]}"
+        assert env[name] == "", f"{name} -> {env[name]}"
 
 
 def test_a_real_value_is_untouched():
     env = _env_by_name(
         _doc()["spec"]["template"]["spec"]["containers"][0]["env"])
-    assert env["GW_REAL"] == {"value": "keep-me"}
+    assert env["GW_REAL"] == "keep-me"
 
 
 def test_no_variable_is_dropped():
     """The decision that matters. An env var set to "" is not the same as an
     absent one, so normalising must never reduce the count."""
     raw = _doc()["spec"]["template"]["spec"]["containers"][0]["env"]
-    assert len(conv.env_list(raw)) == len(raw) == 4
+    assert len(conv.env_map(raw)) == len(raw) == 4
 
 
 def test_a_value_from_reference_is_not_mistaken_for_empty():
     env = _env_by_name([
         {"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "s", "key": "k"}}}])
-    assert "valueFrom" in env["SECRET"] and "value" not in env["SECRET"]
+    assert env["SECRET"] == {"secretKeyRef": {"name": "s", "key": "k"}}
 
 
 # --------------------------------------------------------------------------

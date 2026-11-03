@@ -289,8 +289,9 @@ cosmetic. ports, volumes, envFrom and containers are LISTS in
 Kubernetes: reordering one changes the pod template, so the Deployment rolls a
 new ReplicaSet (or the StatefulSet a new revision) and every pod restarts on the
 first sync after migrating — even though nothing about the workload changed.
-The converter writes the raw manifest's order into the *Order values. (env and
-volumeMounts need none: they are written as lists, see universal-chart.listOrMap.)
+The converter writes the raw manifest's order into the *Order values. (env's
+envOrder only when order matters, see universal-chart.listOrMap; volumeMounts
+are written as a list.)
 Usage: {{- $keys := include "universal-chart.orderedKeys" (dict "map" $m "order" $o) | fromJsonArray }}
 */}}
 {{- define "universal-chart.orderedKeys" -}}
@@ -351,17 +352,28 @@ Usage: {{- include "universal-chart.orderedMapToList" (dict "map" .Values.ports 
 {{- end }}
 
 {{/*
-env / volumeMounts, rendered in the order they are WRITTEN.
+env / volumeMounts.
 
-Given a list — the Kubernetes shape, and what the converter writes — the
-entries render exactly as listed, so the pod template keeps the deployment's
-own order: no restart on the cutover sync, and `$(VAR)` still sees the vars
-defined before it. A list is replaced wholesale by a later values file (Helm
-never merges lists), so an override restates the whole list.
+env is a MAP keyed by var name — what the converter writes — so a later values
+file overrides one var (or deletes it with `NAME: null`) instead of restating
+the whole list:
 
-A map (keyed by name, the older form) still works and renders in sorted key
-order — Helm cannot know the order a map was written in.
-Usage: {{- include "universal-chart.listOrMap" (dict "items" .Values.env "stringValues" true) | nindent 4 }}
+  env:
+    DB_URL: http://db:5432          # scalar  -> value: "http://db:5432"
+    DB_PASS:
+      secretKeyRef:                 # a ref   -> valueFrom: {secretKeyRef: ...}
+        name: db
+        key: password
+  envOrder: [DB_URL, DB_PASS]       # optional render order
+
+A map renders in `order` first (envOrder: the converter writes it only when
+order matters — a `$(VAR)` that needs an earlier var, or --prevent-restart),
+then every other key sorted. The older `NAME: {value: ...}` / `{valueFrom: ...}`
+map form still works unchanged.
+
+A list (the Kubernetes shape) also still works and renders exactly as written;
+a later values file replaces a list wholesale (Helm never merges lists).
+Usage: {{- include "universal-chart.listOrMap" (dict "items" .Values.env "order" .Values.envOrder "stringValues" true "envMap" true) | nindent 4 }}
 */}}
 {{- define "universal-chart.listOrMap" -}}
 {{- if kindIs "slice" .items }}
@@ -381,7 +393,28 @@ Usage: {{- include "universal-chart.listOrMap" (dict "items" .Values.env "string
 {{- end }}
 {{- end }}
 {{- else }}
-{{- include "universal-chart.orderedMapToList" (dict "map" .items "order" list "stringValues" .stringValues) }}
+{{- $items := .items | default dict }}
+{{- if .envMap }}
+{{- /* Normalise each env entry to an EnvVar body: a scalar is the value, a
+       ref (secretKeyRef, configMapKeyRef, fieldRef, resourceFieldRef) goes
+       under valueFrom, and an entry already holding value/valueFrom is kept. */}}
+{{- $norm := dict }}
+{{- range $k, $v := $items }}
+{{- if kindIs "map" $v }}
+{{- if or (hasKey $v "value") (hasKey $v "valueFrom") (hasKey $v "name") (not $v) }}
+{{- $_ := set $norm $k $v }}
+{{- else }}
+{{- $_ := set $norm $k (dict "valueFrom" $v) }}
+{{- end }}
+{{- else if kindIs "invalid" $v }}
+{{- /* `NAME: null` deletes a var a lower values file set. */}}
+{{- else }}
+{{- $_ := set $norm $k (dict "value" (toString $v)) }}
+{{- end }}
+{{- end }}
+{{- $items = $norm }}
+{{- end }}
+{{- include "universal-chart.orderedMapToList" (dict "map" $items "order" (.order | default list) "stringValues" .stringValues) }}
 {{- end }}
 {{- end }}
 

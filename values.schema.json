@@ -55,6 +55,7 @@
     "securityContext":       { "type": ["object", "null"] },
     "portOrder":             { "type": "array", "items": { "type": "string" } },
     "envFromOrder":          { "type": "array", "items": { "type": "string" } },
+    "envOrder":              { "type": "array", "items": { "type": "string" } },
     "volumeOrder":           { "type": "array", "items": { "type": "string" } },
     "sidecarOrder":          { "type": "array", "items": { "type": "string" } },
     "command":               { "type": "array", "items": { "type": "string" } },

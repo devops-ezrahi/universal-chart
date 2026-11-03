@@ -4,10 +4,8 @@ image:
   tag: "dev-latest"
 
 env:
-  - name: QUEUE_URL
-    value: redis://redis-dev:6379
-  - name: LOG_LEVEL
-    value: debug
+  QUEUE_URL: redis://redis-dev:6379
+  LOG_LEVEL: debug
 
 # StatefulSet multi-volumeClaimTemplates — one per pod, auto-provisioned
 volumeClaimTemplates:

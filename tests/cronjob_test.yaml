@@ -135,3 +135,23 @@ tests:
       - equal:
           path: metadata.name
           value: backup
+
+  - it: renders a jobTemplate NAME-value env map, in envOrder, with refs under valueFrom
+    set:
+      cronjobs:
+        backup:
+          schedule: "0 2 * * *"
+          jobTemplate:
+            command: ["/bin/backup.sh"]
+            env:
+              STAGE: prod
+              DB_PASS:
+                secretKeyRef: { name: db, key: password }
+            envOrder: [STAGE, DB_PASS]
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          value:
+            - { name: STAGE, value: prod }
+            - name: DB_PASS
+              valueFrom: { secretKeyRef: { name: db, key: password } }

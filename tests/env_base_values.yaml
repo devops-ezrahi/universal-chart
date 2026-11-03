@@ -1,0 +1,5 @@
+# base/ layer for the env-override test in deployment_test.yaml
+env:
+  DB_URL: http://db.base:5432
+  LOG_LEVEL: info
+  DEBUG: "false"

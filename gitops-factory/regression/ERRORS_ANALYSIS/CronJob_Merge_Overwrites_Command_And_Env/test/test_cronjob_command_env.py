@@ -134,12 +134,12 @@ def test_each_cronjob_keeps_the_command_that_belongs_to_it():
 
 
 # --------------------------------------------------------------------------
-# Issue 10 — env. By default the env list stays in values with everything else
-# (base/ when every namespace agrees); --env-in-values moves it to minimal.
+# Issue 10 — env. By default the env map stays in values with everything else
+# (base/ per var when every namespace agrees); --env-in-values moves it to minimal.
 # --------------------------------------------------------------------------
 
-def _stage(env: list) -> str:
-    return next(e["value"] for e in env if e["name"] == "STAGE")
+def _stage(env: dict) -> str:
+    return env["STAGE"]
 
 
 def test_both_stage_values_survive_capture():
@@ -152,15 +152,15 @@ def test_both_stage_values_survive_capture():
 def test_the_secret_ref_env_stays_on_the_right_cronjob():
     cronjobs = _convert_fixture().values.get("cronjobs", {})
     by_schedule = {e["schedule"]: e["jobTemplate"] for e in cronjobs.values()}
-    env1 = {e["name"]: e for e in by_schedule["0 1 * * *"]["env"]}
-    assert env1["DB_PASSWORD"]["valueFrom"] == SECRET_REF
-    assert "DB_PASSWORD" not in {e["name"] for e in by_schedule["0 3 * * *"]["env"]}
+    # env is NAME: value; a reference is NAME: {secretKeyRef: ...}.
+    assert by_schedule["0 1 * * *"]["env"]["DB_PASSWORD"] == SECRET_REF
+    assert "DB_PASSWORD" not in by_schedule["0 3 * * *"]["env"]
 
 
-def test_env_in_values_moves_the_whole_env_list_to_the_minimal_override():
+def test_env_in_values_moves_the_whole_env_map_to_the_minimal_override():
     ctx = _convert_fixture(env_in_values=True)
-    # The env list is written once, in the deployment's own order: none of it
-    # is left in the structural values to be duplicated into both files.
+    # The env map is written once: none of it is left in the structural
+    # values to be duplicated into both files.
     assert all("env" not in e["jobTemplate"] for e in ctx.values.get("cronjobs", {}).values())
     minimal = conv.build_minimal_values(ctx)
     stages = sorted(_stage(v["jobTemplate"]["env"])

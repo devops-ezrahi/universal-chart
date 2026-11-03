@@ -15,7 +15,7 @@ A practical reference for every feature with real-world examples.
 ### Rule 1 — collections are MAPS keyed by name, not lists
 
 The chart indexes these by name so a values override can target one entry
-(`env.LOG_LEVEL.value`) instead of guessing an array index (`env[3].value`).
+(`env.LOG_LEVEL`) instead of guessing an array index (`env[3].value`).
 
 ```yaml
 # WRONG - schema rejects this: "got array, want object"
@@ -26,10 +26,9 @@ ports:
   - name: http
     containerPort: 8080
 
-# RIGHT - the name becomes the map KEY
+# RIGHT - the name becomes the map KEY (env: the value goes right after it)
 env:
-  LOG_LEVEL:
-    value: debug
+  LOG_LEVEL: debug
 ports:
   http:
     containerPort: 8080
@@ -282,49 +281,46 @@ podManagementPolicy: Parallel       # all pods start/stop simultaneously (faster
 
 ## 4. Environment Variables
 
-All styles supported, as many as you want:
+`env` is a map: `NAME: value`. A reference (ConfigMap, Secret, downward API)
+is written under the name without the `valueFrom:` level — the chart adds it.
 
 ```yaml
 env:
   # Plain value
-  - name: NODE_ENV
-    value: production
+  NODE_ENV: production
 
-  # From another env var / downward API (pod info)
-  - name: POD_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
-
-  - name: POD_IP
-    valueFrom:
-      fieldRef:
-        fieldPath: status.podIP
-
-  - name: NODE_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: spec.nodeName
+  # Downward API (pod info)
+  POD_NAME:
+    fieldRef:
+      fieldPath: metadata.name
+  POD_IP:
+    fieldRef:
+      fieldPath: status.podIP
+  NODE_NAME:
+    fieldRef:
+      fieldPath: spec.nodeName
 
   # From resource limits
-  - name: MEMORY_LIMIT
-    valueFrom:
-      resourceFieldRef:
-        resource: limits.memory
+  MEMORY_LIMIT:
+    resourceFieldRef:
+      resource: limits.memory
 
   # From a ConfigMap key
-  - name: DB_HOST
-    valueFrom:
-      configMapKeyRef:
-        name: backend-config
-        key: db-host
+  DB_HOST:
+    configMapKeyRef:
+      name: backend-config
+      key: db-host
 
   # From a Secret key
-  - name: DB_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: backend-secret
-        key: password
+  DB_PASSWORD:
+    secretKeyRef:
+      name: backend-secret
+      key: password
+
+  # Uses another var: $(VAR) only expands vars rendered BEFORE it, and the map
+  # renders sorted by name — so pin the order with envOrder
+  DB_URL: postgres://$(DB_HOST):5432
+envOrder: [DB_HOST, DB_URL]   # listed names first, the rest sorted
 
 # Inject an entire ConfigMap or Secret as env vars (all keys → env vars)
 envFrom:
@@ -333,6 +329,18 @@ envFrom:
   - secretRef:
       name: backend-secret
 ```
+
+Because `env` is a map, a later values file (e.g. a namespace's
+`values/<app>.yaml` over `base/<app>.yaml`) changes only the vars it names:
+
+```yaml
+env:
+  NODE_ENV: staging   # overrides this one var
+  DB_HOST: null       # deletes a var the lower file set
+```
+
+The older forms still render: a Kubernetes-style list (replaced whole by a
+later file, never merged) and `NAME: {value: ...}` / `NAME: {valueFrom: ...}`.
 
 ---
 
@@ -1672,8 +1680,7 @@ image:
   tag: "3.1"
 
 env:
-  - name: JAVA_TOOL_OPTIONS
-    value: "-javaagent:/otel/javaagent.jar"
+  JAVA_TOOL_OPTIONS: "-javaagent:/otel/javaagent.jar"
 
 sidecars:
   - name: native-processor
