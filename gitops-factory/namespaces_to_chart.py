@@ -145,6 +145,7 @@ def main() -> int:
                 sys.exit(f"'{args.oc}' is not on PATH — install it, pass --oc kubectl, or use --from-yaml")
             ni.run_oc = live_oc(args.oc, args.kubeconfig)
             by_ns = {ns: None for ns in wanted}
+            ni.prefetch_namespaces(wanted)
         for ns, docs in by_ns.items():
             print(f"==> pulling namespace {ns}", flush=True)
             if docs is not None:

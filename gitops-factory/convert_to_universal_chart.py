@@ -4850,10 +4850,45 @@ def argo_release_name(namespace: str, release: str) -> str:
     return f"{release}-{app_name_suffix(namespace)}"
 
 
-def helm_template(chart: Path, release: str, namespace: str, value_files: list[Path]) -> list[dict]:
+_RENDER_CACHE: dict[tuple, tuple[int, str, str]] = {}
+_RENDER_MEMO = True      # reuse a render already done this run (verify -> fidelity)
+_RENDER_WORKERS = min(8, (__import__('os').cpu_count() or 1))  # >1: render a check's releases concurrently up front
+
+
+def _helm_cmd(chart: Path, release: str, namespace: str, value_files: list[Path]) -> list[str]:
     cmd = ["helm", "template", release, str(chart), "--namespace", k8s_ns(namespace)]
     for vf in value_files:
         cmd += ["-f", str(vf)]
+    return cmd
+
+
+def _helm_run(cmd: list[str]) -> tuple[int, str, str]:
+    key = tuple(cmd)
+    hit = _RENDER_CACHE.get(key)
+    if hit is not None:
+        return hit
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    out = (r.returncode, r.stdout, r.stderr)
+    if _RENDER_MEMO or _RENDER_WORKERS > 1:
+        _RENDER_CACHE[key] = out
+    return out
+
+
+def prerender(jobs: list[tuple[Path, str, str, list[Path]]]) -> None:
+    """Runs the `helm template` calls a check is about to make, concurrently.
+    Only fills _RENDER_CACHE: the check then walks its releases in its own
+    order exactly as before, so every report line and error comes out in the
+    same order (and a failing render raises at the same point)."""
+    cmds = [c for c in dict.fromkeys(tuple(_helm_cmd(*j)) for j in jobs) if c not in _RENDER_CACHE]
+    if _RENDER_WORKERS <= 1 or len(cmds) < 2:
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=_RENDER_WORKERS) as pool:
+        list(pool.map(lambda c: _helm_run(list(c)), cmds))
+
+
+def helm_template(chart: Path, release: str, namespace: str, value_files: list[Path]) -> list[dict]:
+    cmd = _helm_cmd(chart, release, namespace, value_files)
     # encoding="utf-8" is NOT optional, and its absence was a real data-corruption
     # bug rather than a cosmetic one. `text=True` alone decodes the child's stdout
     # with locale.getpreferredencoding() — on Windows that is the ANSI codepage
@@ -4869,11 +4904,10 @@ def helm_template(chart: Path, release: str, namespace: str, value_files: list[P
     # `errors="replace"` matches the known-good pattern in convert_and_verify.py: a byte
     # sequence that is genuinely not UTF-8 should surface as U+FFFD in the diff,
     # not abort a 25-release verification run.
-    result = subprocess.run(cmd, capture_output=True, text=True,
-                            encoding="utf-8", errors="replace")
-    if result.returncode != 0:
-        raise RuntimeError(f"helm template failed for {release}: {result.stderr}")
-    return [d for d in yaml.load_all(result.stdout, Loader=_HelmOutputLoader) if d]
+    returncode, stdout, stderr = _helm_run(cmd)
+    if returncode != 0:
+        raise RuntimeError(f"helm template failed for {release}: {stderr}")
+    return [d for d in yaml.load_all(stdout, Loader=_HelmOutputLoader) if d]
 
 
 def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozenset()) -> tuple[int, list[str]]:
@@ -4904,6 +4938,19 @@ def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozens
     rendered = 0
 
     base_dir = output_dir / BASE_DIR_NAME
+    jobs = []
+    for namespace, ns_dir in namespace_dirs_of(output_dir):
+        values_dir = ns_dir / VALUES_DIR_NAME
+        if not values_dir.is_dir():
+            continue
+        for vf in values_files(values_dir):
+            chain = [base_file_for(base_dir, values_dir, vf), ns_dir / DEFAULTS_FILE_NAME, vf]
+            if vf not in skip and all(f.exists() for f in chain):
+                jobs.append((chart, argo_release_name(namespace, vf.stem), namespace, chain))
+    cs_vf = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME / "cluster-shared-values.yaml"
+    if cs_vf.exists() and cs_vf not in skip:
+        jobs.append((chart, "cluster-shared-resources", "platform-shared", [cs_vf]))
+    prerender(jobs)
     for namespace, ns_dir in namespace_dirs_of(output_dir):
         values_dir = ns_dir / VALUES_DIR_NAME
         if not values_dir.is_dir():
@@ -5790,6 +5837,21 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
     # namespace (see the dedupe note in this section's header comment).
     cluster_index: dict[tuple[str, str], dict] = {}
     cluster_shared_vf = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME / "cluster-shared-values.yaml"
+    jobs = []
+    if cluster_shared_vf.exists() and cluster_shared_vf not in skip:
+        jobs.append((chart, "cluster-shared-resources", "platform-shared", [cluster_shared_vf]))
+    _raw_ns = {k8s_ns(k) for k, _ in namespace_dirs_of(input_dir, is_input_ns)}
+    for key, d in namespace_dirs_of(output_dir):
+        ns = k8s_ns(key)
+        if ns not in _raw_ns:
+            continue
+        values_dir = d / VALUES_DIR_NAME
+        for vf in values_files(values_dir):
+            if vf in skip:
+                continue
+            chain = [f for f in (base_file_for(base_dir, values_dir, vf), d / DEFAULTS_FILE_NAME, vf) if f.exists()]
+            jobs.append((chart, argo_release_name(ns, vf.stem), ns, chain))
+    prerender(jobs)
     if cluster_shared_vf.exists() and cluster_shared_vf not in skip:
         try:
             for doc in helm_template(chart, "cluster-shared-resources", "platform-shared", [cluster_shared_vf]):

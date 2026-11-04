@@ -1470,7 +1470,66 @@ def print_run_summary(namespace, all_workloads, shared_sink):
         print("  no fetch failures.", file=sys.stderr)
 
 
+_OC_MEMO = {}
+OC_WORKERS = 8
+
+
+def _namespace_list_calls(namespace):
+    """The list calls handle_full_namespace is about to make, as run_oc args
+    (built exactly as fetch_all_in_namespace / discover_externalsecrets_and_stores build them)."""
+    calls = [["get", t, "-n", namespace, "-o", "yaml"]
+             for t in PRIMARY_RESOURCE_TYPES + ["services", "routes"]]
+    calls += [["get", f"{t}.{g}" if g else t, "-n", namespace, "-o", "yaml"] for t, g in NAMESPACE_SCAN_SPEC]
+    calls.append(["get", f"{EXTERNAL_SECRET_PLURAL}.{EXTERNAL_SECRET_GROUP}", "-n", namespace, "-o", "yaml"])
+    return calls
+
+
+def _memo_oc(inner):
+    def cached(args):
+        key = (inner, tuple(args))
+        hit = _OC_MEMO.get(key)
+        if hit is None:
+            try:
+                hit = (True, inner(list(args)))
+            except subprocess.CalledProcessError as e:
+                hit = (False, e)
+            _OC_MEMO[key] = hit
+        if not hit[0]:
+            raise hit[1]
+        return hit[1]
+    cached.memo_of = inner
+    return cached
+
+
+def _swallow(oc, args):
+    try:
+        oc(args)
+    except subprocess.CalledProcessError:
+        pass  # memoised; re-raised to the real caller, which reports it as before
+
+
+def prefetch_namespaces(namespaces):
+    """Issues every namespace's list calls concurrently. Only fills _OC_MEMO;
+    the pull then reads them in its usual order, so output and messages are unchanged."""
+    from concurrent.futures import ThreadPoolExecutor
+    oc = _memo_oc(getattr(run_oc, "memo_of", run_oc))
+    calls = [c for ns in namespaces for c in _namespace_list_calls(ns)]
+    with ThreadPoolExecutor(max_workers=OC_WORKERS) as pool:
+        list(pool.map(lambda c: _swallow(oc, c), calls))
+
+
 def handle_full_namespace(namespace, args):
+    global run_oc
+    inner = getattr(run_oc, "memo_of", run_oc)
+    run_oc = _memo_oc(inner)
+    try:
+        prefetch_namespaces([namespace])
+        return _handle_full_namespace(namespace, args)
+    finally:
+        run_oc = inner
+
+
+def _handle_full_namespace(namespace, args):
     if not args.output:
         print("Error: --output is required when using --namespace", file=sys.stderr)
         sys.exit(1)
