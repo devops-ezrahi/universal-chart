@@ -1,7 +1,8 @@
 """--prevent-restart: the list-order keys and the empty securityContext that only
 keep the pod template byte-identical (so the cutover restarts nothing) are
-written under the flag alone. Orders that change behaviour are kept always.
-Workload labels/annotations are outside the template and stay editable."""
+written for a StatefulSet by default, under --prevent-restart, or for anything
+under --exact-copy. Orders that change behaviour are kept always. Workload
+labels/annotations are outside the template and stay editable."""
 import subprocess
 import sys
 from pathlib import Path
@@ -39,10 +40,23 @@ REF_ENV = [{"name": "HOST", "value": "db"}, {"name": "A_URL", "value": "postgres
 SORTED_REF_ENV = [{"name": "HOST", "value": "db"}, {"name": "URL", "value": "postgres://$(HOST):5432"}]
 
 
-def convert(tmp_path, env, *flags):
+def statefulset():
+    w = workload(PLAIN_ENV)
+    w["kind"] = "StatefulSet"
+    w["spec"]["serviceName"] = "api"
+    return w
+
+
+def pvc_deployment():
+    w = workload(PLAIN_ENV)
+    w["spec"]["template"]["spec"]["volumes"][0] = {"name": "z-data", "persistentVolumeClaim": {"claimName": "api-data"}}
+    return w
+
+
+def convert(tmp_path, env, *flags, doc=None):
     ns = tmp_path / "in" / "shop-dev"
     ns.mkdir(parents=True)
-    (ns / "api.yaml").write_text(yaml.safe_dump(workload(env)), encoding="utf-8")
+    (ns / "api.yaml").write_text(yaml.safe_dump(doc or workload(env)), encoding="utf-8")
     out = tmp_path / "out"
     r = subprocess.run([sys.executable, str(HERE / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
                         "--output", str(out), "--skip-verify", *flags],
@@ -80,9 +94,7 @@ def test_no_env_order_when_sorting_keeps_the_reference(tmp_path):
     assert "envOrder" not in v
 
 
-@pytest.mark.parametrize("flag", [["--prevent-restart"], ["--prevent-restart", "true"], ["--preventRestart"]])
-def test_prevent_restart_keeps_the_live_template(tmp_path, flag):
-    v = convert(tmp_path, PLAIN_ENV, *flag)
+def assert_live_template(v):
     assert v["portOrder"] == ["web", "admin"]
     assert v["env"] == {"ZED": "1", "ALPHA": "2"}
     assert v["envOrder"] == ["ZED", "ALPHA"]
@@ -90,6 +102,35 @@ def test_prevent_restart_keeps_the_live_template(tmp_path, flag):
     assert v["volumeOrder"] == ["z-data", "a-tmp"]
     assert v["sidecarOrder"] == ["z-proxy", "a-log"]
     assert v["securityContext"] == {}
+
+
+@pytest.mark.parametrize("flag", [["--prevent-restart"], ["--prevent-restart", "true"], ["--preventRestart"]])
+def test_prevent_restart_keeps_the_live_template(tmp_path, flag):
+    v = convert(tmp_path, PLAIN_ENV, *flag)
+    assert_live_template(v)
     # Only the pod template is frozen: the chart's link annotations on the
     # workload metadata stay on (they restart nothing).
     assert "links" not in v
+
+
+def test_statefulset_keeps_the_live_template(tmp_path):
+    assert_live_template(convert(tmp_path, PLAIN_ENV, doc=statefulset()))
+
+
+@pytest.mark.parametrize("flag", [["--exact-copy"], ["--exact-copy", "true"]])
+def test_exact_copy_keeps_a_deployments_live_template(tmp_path, flag):
+    v = convert(tmp_path, PLAIN_ENV, *flag)
+    assert_live_template(v)
+    # One-to-one: no link annotations either.
+    assert v["links"] == {"objects": False}
+
+
+def test_exact_copy_false_is_the_regular_conversion(tmp_path):
+    v = convert(tmp_path, PLAIN_ENV, "--exact-copy", "false")
+    assert not [k for k in COSMETIC if k in v], v
+
+
+def test_deployment_mounting_a_pvc_is_clean_by_default(tmp_path):
+    v = convert(tmp_path, PLAIN_ENV, doc=pvc_deployment())
+    assert not [k for k in COSMETIC if k in v], v
+    assert "securityContext" not in v

@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: registry.example.org/ms1:1.0.0
+          image: nginxinc/nginx-unprivileged:1.27-alpine
           env:
             - name: ENVIRONMENT
               value: prd
@@ -34,3 +34,22 @@ spec:
     - name: http
       port: 8080
       targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ms1
+  namespace: prd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: ms1-prd.homelab.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ms1
+                port:
+                  number: 8080

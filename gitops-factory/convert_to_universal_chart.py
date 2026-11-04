@@ -375,6 +375,31 @@ def folder_values(key: str, groups: list) -> dict:
     return out
 
 
+# A namespace's own cluster (--namespace-cluster), written to its folders'
+# defaults.yaml under this key: the root ApplicationSet's git files generator
+# reads every defaults.yaml, so the folder itself says where it deploys, and
+# moving a namespace to another cluster is an edit to that one file.
+CLUSTER_KEY = "cluster"
+
+
+def parse_namespace_clusters(specs) -> dict:
+    """['shop-dev=https://api.a:6443', 'shop-prd=prod-east'] ->
+    {'shop-dev': {'server': 'https://api.a:6443'}, 'shop-prd': {'name': 'prod-east'}}.
+    A URL is the cluster's API server; anything else is the name Argo CD
+    registered it under."""
+    out: dict = {}
+    for spec in specs:
+        ns, _, cluster = spec.partition("=")
+        ns, cluster = ns.strip(), cluster.strip()
+        if not ns or not cluster or "/" in ns:
+            sys.exit(f"--namespace-cluster {spec!r}: use NAMESPACE=CLUSTER, CLUSTER an API URL "
+                     f"(https://...) or a registered cluster name")
+        if ns in out:
+            sys.exit(f"--namespace-cluster {spec!r}: '{ns}' is given twice")
+        out[ns] = {"server": cluster} if re.match(r"https?://", cluster) else {"name": cluster}
+    return out
+
+
 def combine_values(per_ns: dict, groups: list) -> "tuple[str, dict] | None":
     """Express per-namespace strings {namespace: value} as one template.
 
@@ -995,9 +1020,20 @@ CHART_LINK_SHAPES = {
 }
 
 
+# What a cluster writes on an object itself. No chart can own these, so even
+# --exact-copy leaves them out; the live values stay in place.
+CLUSTER_OWNED_ANNOTATIONS = (
+    "kubectl.kubernetes.io/last-applied-configuration",
+    "deployment.kubernetes.io/revision",
+    "argocd.argoproj.io/tracking-id",
+)
+
+
 def clean_annotations(ann: Optional[dict]) -> dict:
     if not ann:
         return {}
+    if EXACT_COPY:
+        return {k: v for k, v in ann.items() if not k.startswith(CLUSTER_OWNED_ANNOTATIONS)}
     linked = "universal-chart/argocd-application" in ann or "universal-chart/application" in ann
 
     def chart_link(k: str, v) -> bool:
@@ -2232,7 +2268,16 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
     # and it is very hard to diagnose after the fact.
     #
     # So: drop the stale VALUES, preserve the INTENT.
-    if any(k.startswith("checksum/") for k in (pod_meta.get("annotations") or {})):
+    #
+    # --prevent-restart keeps the hashes instead: the chart's own would change the
+    # pod template and roll every pod on the cutover sync. The price is that a
+    # config change no longer rolls them, which has to be said out loud.
+    live_checksums = sorted(k for k in (pod_meta.get("annotations") or {}) if k.startswith("checksum/"))
+    if live_checksums and PREVENT_RESTART:
+        ctx.warnings.append(
+            f"[P2] {kind}: {', '.join(live_checksums)} kept as frozen values so the cutover restarts nothing — "
+            f"a config change will NOT roll these pods until you set checksums.enabled: true (that rolls them once)")
+    elif live_checksums:
         v.setdefault("checksums", {})["enabled"] = True
 
     if pod_spec.get("securityContext"):
@@ -2333,7 +2378,7 @@ def pod_template_labels(pod_meta: dict) -> dict:
     gets the same exclusions by construction.
     """
     return {k: v for k, v in (pod_meta.get("labels") or {}).items()
-            if k not in POD_TEMPLATE_CHART_LABELS}
+            if k not in POD_TEMPLATE_CHART_LABELS or (PREVENT_RESTART and k == "helm.sh/chart")}
 
 
 def pod_template_annotations(pod_meta: dict) -> dict:
@@ -2342,10 +2387,11 @@ def pod_template_annotations(pod_meta: dict) -> dict:
     Those are content hashes a deploying tool regenerates (see folder 19); the
     rest — `sidecar.istio.io/inject`, `prometheus.io/scrape`, vault agent
     annotations — are load-bearing and were being dropped from every CronJob and
-    Job for the same reason the labels were.
+    Job for the same reason the labels were. Under --prevent-restart the hashes
+    are kept too: dropping one changes the pod template, and that rolls the pods.
     """
     return {k: v for k, v in (pod_meta.get("annotations") or {}).items()
-            if not k.startswith("checksum/") and k not in RESTART_STAMP_ANNOTATIONS}
+            if (PREVENT_RESTART or not k.startswith("checksum/")) and k not in RESTART_STAMP_ANNOTATIONS}
 
 
 # Stamped on the pod template by `oc rollout restart` / `kubectl rollout
@@ -2407,7 +2453,8 @@ def raw_labels(doc: dict) -> dict:
     chart-owned.
     """
     labels = ((doc.get("metadata") or {}).get("labels") or {})
-    return {k: v for k, v in labels.items() if k not in CHART_OWNED_LABELS}
+    return {k: v for k, v in labels.items()
+            if k not in CHART_OWNED_LABELS or (EXACT_COPY and k == "helm.sh/chart")}
 
 
 # name/instance/version/managed-by/app are CARRIED now: the chart's default
@@ -2750,6 +2797,11 @@ PREVENT_RESTART = False
 # default) for the stateful ones only (is_stateful). build_microservice sets
 # PREVENT_RESTART from it per release.
 PREVENT_RESTART_FLAG: bool | None = None
+# --exact-copy: every release one-to-one with what runs now. Every pod template
+# is frozen (--prevent-restart for all), and the objects' own metadata is kept as
+# live too: no link annotations, and only what the cluster itself writes is
+# left out (CLUSTER_OWNED_ANNOTATIONS, argocd.argoproj.io/instance).
+EXACT_COPY = False
 # Order keys whose only job is the byte-identical pod template above.
 COSMETIC_ORDER_KEYS = frozenset({"portOrder", "volumeOrder", "sidecarOrder"})
 
@@ -4004,19 +4056,14 @@ def handle_cluster_scoped(doc: dict, kind: str, cluster_registry: ClusterRegistr
 # ---------------------------------------------------------------------------
 
 def is_stateful(docs: list[dict]) -> str | None:
-    """Why a release is stateful, or None: a StatefulSet, or a workload whose
-    pods mount a PersistentVolumeClaim. Those are the ones a cutover restart
-    hurts — a database's pods come back one by one, an RWO volume has to
-    detach and re-attach — so by default they are converted with
-    --prevent-restart and the first sync restarts nothing."""
+    """Why a release is stateful, or None: it runs a StatefulSet. Those are the
+    ones a cutover restart hurts — a database's pods come back one by one — so
+    by default they are converted with --prevent-restart and the first sync
+    restarts nothing. A Deployment mounting a PersistentVolumeClaim is not one:
+    those are nearly always stateless apps with a shared volume."""
     for d in docs:
-        kind = d.get("kind")
-        if kind == "StatefulSet":
+        if d.get("kind") == "StatefulSet":
             return f"StatefulSet/{(d.get('metadata') or {}).get('name')}"
-        if kind in WORKLOAD_KINDS:
-            pod = (((d.get("spec") or {}).get("template") or {}).get("spec") or {})
-            if any(isinstance(v, dict) and "persistentVolumeClaim" in v for v in pod.get("volumes") or []):
-                return f"{kind}/{(d.get('metadata') or {}).get('name')} mounts a PersistentVolumeClaim"
     return None
 
 
@@ -4024,11 +4071,12 @@ def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regist
                        cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                        owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     """_build_microservice with PREVENT_RESTART set for this release: as the flag
-    says, or — no flag — on for a stateful one (is_stateful)."""
+    says, or — no flag — on for a stateful one (is_stateful). --exact-copy
+    freezes every release."""
     global PREVENT_RESTART
     reason = is_stateful(docs)
-    PREVENT_RESTART = PREVENT_RESTART_FLAG if PREVENT_RESTART_FLAG is not None else reason is not None
-    if PREVENT_RESTART_FLAG is None and reason:
+    PREVENT_RESTART = EXACT_COPY or (PREVENT_RESTART_FLAG if PREVENT_RESTART_FLAG is not None else reason is not None)
+    if PREVENT_RESTART_FLAG is None and reason and not EXACT_COPY:
         warnings.append(f"{ms_name}: stateful ({reason}) — converted as --prevent-restart, so the "
                         f"cutover sync restarts none of its pods (--prevent-restart false to turn off)")
     try:
@@ -4044,7 +4092,11 @@ def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regis
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
     # --prevent-restart freezes the pod TEMPLATE only. Object metadata (labels,
     # annotations, the links.* ms-applicationSet hands the chart) is outside it
-    # and restarts nothing, so it is rendered as usual either way.
+    # and restarts nothing, so it is rendered as usual either way. --exact-copy
+    # renders every object as it runs now: none of the navigation annotations
+    # ms-applicationSet would otherwise hand the chart.
+    if EXACT_COPY:
+        ctx.values["links"] = {"objects": False}
     # No nameOverride: the Argo CD Application that deploys the release already
     # names it, so the chart's fullname needs nothing from the values file.
     #
@@ -4616,7 +4668,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               destination_server: str = "https://kubernetes.default.svc",
                               destination_name: str = "", auto_sync: bool = False,
                               argocd_url: str = "", console_url: str = "",
-                              repo_web_url: str = "") -> str:
+                              repo_web_url: str = "", per_namespace_cluster: bool = False) -> str:
     """One Application per namespace folder in this tree, as YAML text.
 
     Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
@@ -4632,6 +4684,11 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     &project) say each value once, so retargeting the tree is one edit, and
     the commented exclude shows how to switch a namespace off without deleting
     its folder.
+
+    per_namespace_cluster: some folders' defaults.yaml name their own cluster
+    (cluster.server or cluster.name, from --namespace-cluster). The generator
+    reads those files, so the destination is looked up there per folder and
+    falls back to the tree's one destination for the rest.
     """
     q = _yaml_scalar
     segments = [p for p in values_path.split("/") if p]
@@ -4643,8 +4700,9 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         ("originBranch", "*branch"),
         *([("originPath", q(values_path))] if values_path else []),
         ("project", "*project"),
-        ("destinationServer", q(destination_server)),
-        *([("destinationName", q(destination_name))] if destination_name else []),
+        *(_cluster_params(destination_server, destination_name) if per_namespace_cluster else [
+            ("destinationServer", q(destination_server)),
+            *([("destinationName", q(destination_name))] if destination_name else [])]),
         *[(k, q(v)) for k, v in (("chartRepoURL", chart_repo_url), ("chartRevision", chart_revision),
                                   ("chartPath", chart_path)) if v != APPSET_CHART_DEFAULTS[k]],
         # The microservice Applications the chart renders: manual sync unless
@@ -4708,6 +4766,20 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         "        - ServerSideApply=true",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _cluster_params(server: str, name: str) -> list:
+    """The destination helm parameters, read from each folder's defaults.yaml
+    (see CLUSTER_KEY). The chart lets destinationName win over the server, so a
+    folder that names its own server sends no name, whatever the tree's default
+    name is."""
+    def own(key: str, fallback: str) -> str:
+        return f'dig "{CLUSTER_KEY}" "{key}" {json.dumps(fallback)} .'
+    return [
+        ("destinationServer", _yaml_scalar(f"{{{{ {own('server', server)} }}}}")),
+        ("destinationName", _yaml_scalar(f"{{{{ if {own('server', '')} }}}}{{{{ else }}}}"
+                                         f"{{{{ {own('name', name)} }}}}{{{{ end }}}}")),
+    ]
 
 
 def _destination(server: str, name: str, namespace: str) -> dict:
@@ -6293,6 +6365,13 @@ def main() -> None:
                      help="cluster API URL every generated Application deploys to. The default is "
                           "the in-cluster address, correct when ArgoCD manages its own cluster; "
                           "point it at a registered remote cluster's URL otherwise.")
+    ap.add_argument("--namespace-cluster", action="append", default=[], metavar="NAMESPACE=CLUSTER",
+                     help="deploy one namespace to a cluster of its own: CLUSTER is its API URL "
+                          "(https://...) or the name Argo CD registered it under. Repeat for each "
+                          "namespace; the others keep --destination-server / --argocd-cluster. "
+                          "Written to the namespace's defaults.yaml as cluster.server / "
+                          "cluster.name, which the root ApplicationSet reads, so moving a "
+                          "namespace later is an edit to that file.")
     # Variant sub-folders in the input are detected on their own now.
     ap.add_argument("--variants", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--cluster-scoped", action="store_true",
@@ -6381,11 +6460,16 @@ def main() -> None:
                           "sidecarOrder and keeps an empty securityContext: {}. Labels and annotations "
                           "on the workload itself (and the chart's link annotations) are still added "
                           "and edited — they restart nothing. Default: "
-                          "on for stateful releases only (a StatefulSet, or a workload mounting a "
-                          "PersistentVolumeClaim), the rest get cleaner values and roll once on the "
+                          "on for stateful releases only (a StatefulSet), the rest get cleaner "
+                          "values and roll once on the "
                           "first sync. true: every release. false: none. Orders that change "
                           "behaviour (init containers, envFrom) are kept either way, and env / "
                           "volumeMounts are always lists in the deployment's own order.")
+    ap.add_argument("--exact-copy", nargs="?", const=True, default=False, type=_bool_arg,
+                     metavar="true|false",
+                     help="render every release one-to-one as it runs now: every pod template "
+                          "byte-for-byte (--prevent-restart for all), so the cutover sync restarts no "
+                          "pods, and the objects' labels and annotations as live, with no links.")
     ap.add_argument("--interactive", action="store_true",
                      help="with --env-group, ask before each combination (needs a terminal).")
     ap.add_argument("--no-interactive", action="store_false", dest="interactive",
@@ -6424,18 +6508,22 @@ def main() -> None:
 
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
         INCLUDE_PATTERNS
-    global ENV_IN_VALUES, PREVENT_RESTART, PREVENT_RESTART_FLAG
+    global ENV_IN_VALUES, PREVENT_RESTART, PREVENT_RESTART_FLAG, EXACT_COPY
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
     ENV_IN_VALUES = args.env_in_values
     PREVENT_RESTART_FLAG = args.prevent_restart
+    EXACT_COPY = args.exact_copy
+    if EXACT_COPY and PREVENT_RESTART_FLAG is False:
+        sys.exit("--exact-copy renders every pod template as it runs, so it cannot take --prevent-restart false")
     PREVENT_RESTART = bool(PREVENT_RESTART_FLAG)
     EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
         for opt in (args.exclude, args.keep, args.include))
     chart_keys = set((yaml.safe_load((Path(args.chart) / "values.yaml").read_text(encoding="utf-8"))
                       if (Path(args.chart) / "values.yaml").is_file() else None) or {})
-    env_groups = [parse_env_group(spec, chart_keys) for spec in args.env_group]
+    env_groups = [parse_env_group(spec, chart_keys | {CLUSTER_KEY}) for spec in args.env_group]
+    namespace_clusters = parse_namespace_clusters(args.namespace_cluster)
     suffixes = [t.strip() for t in args.env_suffixes.split(",") if t.strip()]
     if suffixes:
         KNOWN_ENV_SUFFIXES.clear()  # the list replaces the default trailing-suffix rule
@@ -6833,6 +6921,9 @@ def main() -> None:
     # files at the tree root are the entire wiring, and a namespace directory
     # is discovered by the root ApplicationSet simply by existing.
     out_keys = set(out_ms) | set(per_namespace_shared) | {k for k, d in namespace_dirs if is_input_ns(d)}
+    unknown = sorted(set(namespace_clusters) - {k8s_ns(k) for k in out_keys})
+    if unknown:
+        all_warnings.append(f"--namespace-cluster: no namespace {', '.join(unknown)} in this run — ignored")
     for namespace in sorted(out_keys):
         out_ns_dir = output_dir / namespace
         ms_contexts = out_ms.get(namespace, [])
@@ -6884,6 +6975,8 @@ def main() -> None:
                         else:
                             extra.pop(k)
         namespace_defaults.update(folder_values(namespace, env_groups))
+        if k8s_ns(namespace) in namespace_clusters:
+            namespace_defaults[CLUSTER_KEY] = namespace_clusters[k8s_ns(namespace)]
 
         out_ns_dir.mkdir(parents=True, exist_ok=True)
         header_ns_defaults = (
@@ -6963,6 +7056,10 @@ def main() -> None:
             "workload:\n  type: none\nservice:\n  enabled: false\n\n"
         )
         (cluster_dir / "cluster-shared-values.yaml").write_text(header + dump_yaml(helm_safe_values(cluster_values), spaced=True), encoding="utf-8")
+    if has_cluster_values and namespace_clusters:
+        all_warnings.append(
+            "--cluster-scoped with --namespace-cluster: the cluster-shared release is deployed once, "
+            "to --destination-server / --argocd-cluster, not to each namespace's own cluster")
     if has_cluster_values and ARGOCD_MANIFESTS:
         app = build_cluster_shared_application(
             args.cluster_shared_namespace, args.chart_repo_url, args.chart_path, args.chart_revision,
@@ -7017,7 +7114,7 @@ def main() -> None:
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
             auto_sync=args.auto_sync, argocd_url=args.argocd_url, console_url=args.console_url,
-            repo_web_url=args.repo_web_url)
+            repo_web_url=args.repo_web_url, per_namespace_cluster=bool(namespace_clusters))
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"

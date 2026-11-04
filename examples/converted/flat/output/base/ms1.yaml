@@ -24,6 +24,17 @@ service:
     app: ms1
   type: ClusterIP
 
+ingress:
+  className: traefik
+  enabled: true
+  hosts:
+  - host: ms1-{{ .Values.environment }}.homelab.localhost
+    paths:
+    - path: /
+      pathType: Prefix
+      portNumber: 8080
+  serviceName: ms1
+
 fullnameOverride: ms1
 
 selectorLabels:

@@ -11,7 +11,7 @@
   },
   "totals": {
     "microservices": 4,
-    "warnings": 4
+    "warnings": 5
   },
   "env_group_combinations": [
     {
@@ -29,6 +29,17 @@
       "release": "ms1",
       "path": "env.ENVIRONMENT",
       "template": "{{ .Values.environment }}",
+      "injection": {
+        "environment": {
+          "dev": "dev",
+          "prd": "prd"
+        }
+      }
+    },
+    {
+      "release": "ms1",
+      "path": "ingress.hosts",
+      "template": "[{\"host\": \"ms1-{{ .Values.environment }}.homelab.localhost\", \"paths\": [{\"path\": \"/\", \"pathType\": \"Prefix\", \"portNumber\": 8080}]}]",
       "injection": {
         "environment": {
           "dev": "dev",

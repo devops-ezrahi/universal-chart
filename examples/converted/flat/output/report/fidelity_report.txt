@@ -1,9 +1,9 @@
 Round-trip fidelity report — raw input vs `helm template` of the converted output.
 
 RUN IDENTITY — counts below describe THIS run and no other.
-  run id:         3cb597d102ad-d6d5235e78f8
-  converter:      3cb597d102ad  (convert_to_universal_chart.py)
-  input:          d6d5235e78f8  (../examples/converted/flat/input)
+  run id:         7d5df377a249-d2bc3d5c8e9f
+  converter:      7d5df377a249  (convert_to_universal_chart.py)
+  input:          d2bc3d5c8e9f  (../examples/converted/flat/input)
   output:         ../examples/converted/flat/output
   Compare two fidelity reports ONLY when their run ids match. A differing
   run id means the converter, the input, or both changed — so a count that
@@ -23,11 +23,11 @@ own metadata labels) are excluded by design — see _fidelity_ignored_path.
 Fields the render ADDED are counted but not listed: a Helm chart filling in a
 Kubernetes default the raw dump omitted is normal and harmless.
 
-objects matched:            8
+objects matched:            10
   of those, relocated:      0
 fields LOST (raw -> render): 0
 fields CHANGED:             0
-fields ADDED (chart default, informational): 36
+fields ADDED (chart default, informational): 38
 objects in raw but rendered by nothing:      0
 objects rendered with no raw source:         0
 render failures:            0
@@ -36,6 +36,6 @@ dangling references (rename lost a reference): 0
 ERROR BREAKDOWN BY CATEGORY (generated from the lines below): none
 
 
-=== dev — 4 raw objects vs 4 rendered ===
+=== dev — 5 raw objects vs 5 rendered ===
 
-=== prd — 4 raw objects vs 4 rendered ===
+=== prd — 5 raw objects vs 5 rendered ===
