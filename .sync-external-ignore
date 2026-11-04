@@ -1,0 +1,13 @@
+# Paths NOT published by scripts/sync-to-external.sh (shell globs, relative to
+# the repo root, one per line). Read from the release being published.
+
+# CI is internal: it checks out the private whitening-packer repo and runs
+# semantic-release, which would fail or cut its own versions in the other org.
+.github/workflows
+
+# Local tooling
+.claude
+
+# This sync tooling itself
+.sync-external-ignore
+scripts/sync-to-external.*
