@@ -298,11 +298,16 @@ def test_exact_copy_renders_no_link_annotations(tmp_path):
           "spec": {"serviceName": "db", "selector": {"matchLabels": {"app": "db"}},
                    "template": {"metadata": {"labels": {"app": "db"}},
                                 "spec": {"containers": [{"name": "db", "image": "reg/db:1"}]}}}}
-    r, out = _convert(tmp_path, {"db": [db], "web": [_deploy("web")]})
+    # A StatefulSet keeps its pod template by default, but links are metadata and
+    # restart nothing, so it does not opt out.
+    r, default = _convert(tmp_path / "default", {"db": [db]})
     assert r.returncode == 0, r.stderr[-2000:]
-    # Stateful = exact copy by default: it opts out; the plain Deployment does not.
+    assert "links" not in yaml.safe_load((default / "base" / "db.yaml").read_text())
+    # --exact-copy opts every release out, the plain Deployment too.
+    r, out = _convert(tmp_path, {"db": [db], "web": [_deploy("web")]}, "app", "--exact-copy")
+    assert r.returncode == 0, r.stderr[-2000:]
     assert yaml.safe_load((out / "base" / "db.yaml").read_text())["links"] == {"objects": False}
-    assert "links" not in yaml.safe_load((out / "base" / "web.yaml").read_text())
+    assert yaml.safe_load((out / "base" / "web.yaml").read_text())["links"] == {"objects": False}
     # Whatever ms-applicationSet passes, the exact copy renders no annotation.
     files = [out / "base" / "db.yaml", out / "app" / "defaults.yaml", out / "app" / "values" / "db.yaml"]
     args = ["helm", "template", "db", str(CHART_DIR), "-n", "app",

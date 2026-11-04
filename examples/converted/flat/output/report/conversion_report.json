@@ -11,13 +11,24 @@
   },
   "totals": {
     "microservices": 4,
-    "warnings": 2
+    "warnings": 3
   },
   "env_group_combinations": [
     {
       "release": "ms1",
       "path": "env",
       "template": "[{\"name\": \"ENVIRONMENT\", \"value\": \"{{ .Values.environment }}\"}, {\"name\": \"DB_URL\", \"value\": \"http://db.{{ .Values.environment }}.svc:5432\"}]",
+      "injection": {
+        "environment": {
+          "dev": "dev",
+          "prd": "prd"
+        }
+      }
+    },
+    {
+      "release": "ms1",
+      "path": "ingress.hosts",
+      "template": "[{\"host\": \"ms1-{{ .Values.environment }}.homelab.localhost\", \"paths\": [{\"path\": \"/\", \"pathType\": \"Prefix\", \"portNumber\": 8080}]}]",
       "injection": {
         "environment": {
           "dev": "dev",

@@ -1,5 +1,6 @@
-"""Stateful releases are converted as --exact-copy by default, so the cutover
-sync restarts none of their pods.
+"""A StatefulSet's pod template is frozen as it runs, so the cutover sync
+restarts none of its pods. --exact-copy does that for every release, and keeps
+the objects' metadata as live too.
 
 Kubernetes rolls a workload when its pod template changes — list ORDER
 included (the template hash / controller revision is computed over it) — and
@@ -12,9 +13,8 @@ lists in order, server-defaulted fields included. Argo CD syncs with
 ServerSideApply, so the one field allowed to come from the live object instead
 is a `kubectl rollout restart` stamp, which the chart never sets (after_sync).
 
-Negative controls make sure a pass means something: a stateless Deployment
-still gets the clean (sorted, restart-once) values by default, and
-`--exact-copy false` makes the same StatefulSet come out different."""
+The negative control makes sure a pass means something: a Deployment, with or
+without a PersistentVolumeClaim, gets the clean (sorted, restart-once) values."""
 import copy
 import shutil
 import subprocess
@@ -151,11 +151,11 @@ def convert(tmp_path, namespaces, *flags):
     return live, out, r
 
 
-def render(out: Path, ns: str, release: str, kind: str) -> dict:
+def render(out: Path, ns: str, release: str, kind: str, *helm_args) -> dict:
     """The workload as Argo CD would apply it: ms-applicationSet's valueFiles
     chain, in its order."""
     files = [out / "base" / f"{release}.yaml", out / ns / "defaults.yaml", out / ns / "values" / f"{release}.yaml"]
-    cmd = ["helm", "template", f"{release}-{ns.rsplit('-', 1)[-1]}", str(HERE.parent), "--namespace", ns]
+    cmd = ["helm", "template", f"{release}-{ns.rsplit('-', 1)[-1]}", str(HERE.parent), "--namespace", ns, *helm_args]
     for f in files:
         assert f.exists(), f
         cmd += ["-f", str(f)]
@@ -197,7 +197,7 @@ def server_defaults(obj: dict) -> dict:
     `resources` (a plain struct, always present), the pod's `securityContext`
     (defaulted to {} when nil) and a volumeClaimTemplate's apiVersion/kind.
     A container's `securityContext` is NOT here — a nil pointer stays nil, so
-    exact copy has to keep the `{}`."""
+    a frozen template has to keep the `{}`."""
     out = copy.deepcopy(obj)
     pod = out["spec"]["template"]["spec"]
     pod.setdefault("securityContext", {})
@@ -217,7 +217,7 @@ def assert_identical(live: dict, rendered: dict):
 
 
 def _sorted(x):
-    """Lists sorted, the way the clean (non exact-copy) values render them;
+    """Lists sorted, the way the clean values render them;
     the empty container securityContext dropped likewise."""
     if isinstance(x, dict):
         return {k: _sorted(v) for k, v in x.items() if not (k == "securityContext" and v == {} and "image" in x)}
@@ -228,13 +228,13 @@ def _sorted(x):
 
 def assert_identical_but_order(live: dict, rendered: dict):
     """A negative control must differ for the right reason: only by list
-    order and the dropped `securityContext: {}` — what exact copy is for."""
+    order and the dropped `securityContext: {}` — what freezing the template is for."""
     synced = server_defaults(after_sync(live, rendered))
     assert _sorted(synced["spec"]) == _sorted(live["spec"]), "\n".join(diff(_sorted(live["spec"]),
                                                                              _sorted(synced["spec"]))[:20])
 
 
-STATEFUL = {"postgres": "StatefulSet", "files": "Deployment"}
+STATEFUL = {"postgres": "StatefulSet"}
 NAMESPACES = ["shop-dev", "shop-prd"]
 
 
@@ -245,41 +245,113 @@ def test_stateful_releases_render_exactly_as_live_by_default(tmp_path, namespace
         for release, kind in STATEFUL.items():
             assert_identical(live[(ns, release)], render(out, ns, release, kind))
     report = (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")
-    assert "postgres: stateful (StatefulSet/postgres) — converted as --exact-copy" in report
-    assert "files: stateful (Deployment/files mounts a PersistentVolumeClaim)" in report
+    assert "postgres: stateful (StatefulSet/postgres) — pod template kept exactly as live" in report
+    assert "files: stateful" not in report
     assert "web: stateful" not in report
 
 
-def test_stateless_release_stays_clean_by_default(tmp_path):
-    """Negative control: the stateless web Deployment keeps the readable
-    values, so its rendered template DOES differ (sorted lists) — the
-    comparison above would see it."""
+@pytest.mark.parametrize("release", ["web", "files"], ids=["stateless", "mounts-a-pvc"])
+def test_deployment_stays_clean_by_default(tmp_path, release):
+    """Negative control: a Deployment keeps the readable values, a mounted
+    PersistentVolumeClaim or not, so its rendered template DOES differ (sorted
+    lists) — the comparison above would see it."""
     live, out, _ = convert(tmp_path, ["shop-dev"])
-    base = yaml.safe_load((out / "base" / "web.yaml").read_text(encoding="utf-8"))
+    base = yaml.safe_load((out / "base" / f"{release}.yaml").read_text(encoding="utf-8"))
     assert not {"portOrder", "volumeOrder", "sidecarOrder"} & set(base)
-    rendered = render(out, "shop-dev", "web", "Deployment")
-    w = live[("shop-dev", "web")]
+    rendered = render(out, "shop-dev", release, "Deployment")
+    w = live[("shop-dev", release)]
     assert server_defaults(after_sync(w, rendered))["spec"]["template"] != w["spec"]["template"]
     assert_identical_but_order(w, rendered)
 
 
-def test_exact_copy_false_turns_it_off(tmp_path):
-    live, out, r = convert(tmp_path, ["shop-dev"], "--exact-copy", "false")
-    for release, kind in STATEFUL.items():
-        w = live[("shop-dev", release)]
-        rendered = render(out, "shop-dev", release, kind)
-        assert server_defaults(after_sync(w, rendered))["spec"]["template"] != w["spec"]["template"], release
-        assert_identical_but_order(w, rendered)
-    assert "converted as --exact-copy" not in (out / "report" / "conflicts_and_warnings.txt").read_text(
-        encoding="utf-8")
+LINKS = ["--set", "links.argocd=https://argocd.example.com/applications/argocd/postgres-dev",
+         "--set", "links.console=https://console.example.com"]
+LINK_ANNOTATIONS = {"app.openshift.io/edit-url", "link.argocd.argoproj.io/external-link"}
+CLUSTER_WRITTEN = {"kubectl.kubernetes.io/last-applied-configuration": "{}", "deployment.kubernetes.io/revision": "3"}
+
+
+def helm_installed(w: dict) -> dict:
+    """A workload a Helm chart installed: the old chart stamped on the object and
+    its pods, and the chart's config hash on its pods."""
+    w = copy.deepcopy(w)
+    w["metadata"]["labels"] = {**w["metadata"]["labels"], "helm.sh/chart": "postgres-1.2.3"}
+    w["metadata"]["annotations"] = {"openshift.io/generated-by": "OpenShiftNewApp", **CLUSTER_WRITTEN}
+    pod = w["spec"]["template"]["metadata"]
+    pod["labels"] = {**pod["labels"], "helm.sh/chart": "postgres-1.2.3"}
+    pod["annotations"] = {"checksum/config": "0123abcd"}
+    return w
+
+
+def convert_helm_installed(tmp_path, release="postgres", *flags):
+    src = tmp_path / "in"
+    live = write_input(src, ["shop-dev"])
+    w = helm_installed(live[("shop-dev", release)])
+    path = src / "shop-dev" / f"{release}.yaml"
+    path.write_text(yaml.safe_dump_all([w if d["kind"] == w["kind"] else d
+                                        for d in yaml.safe_load_all(path.read_text(encoding="utf-8"))]),
+                    encoding="utf-8")
+    out = tmp_path / "out"
+    r = subprocess.run([sys.executable, str(HERE / "convert_to_universal_chart.py"), "--input", str(src),
+                        "--output", str(out), "--chart", str(HERE.parent), "--verify-fidelity", "--fidelity-strict",
+                        *flags], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-4000:]
+    return w, out
+
+
+def test_helm_installed_statefulset_keeps_its_pod_template(tmp_path):
+    """The pod template is what rolls the pods, so what a clean conversion
+    drops from it stays here: the old chart's label and the config hash."""
+    w, out = convert_helm_installed(tmp_path)
+    base = yaml.safe_load((out / "base" / "postgres.yaml").read_text(encoding="utf-8"))
+    assert "checksums" not in base, "the chart's own hashes would replace the live one"
+    rendered = render(out, "shop-dev", "postgres", "StatefulSet")
+    assert server_defaults(rendered)["spec"] == w["spec"], diff(w["spec"], server_defaults(rendered)["spec"])[:20]
+    report = (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")
+    assert "checksum/config" in report, "a frozen hash must be reported: config changes no longer roll the pods"
+
+
+def test_helm_installed_statefulset_drops_the_old_chart_from_its_metadata(tmp_path):
+    """Object metadata is free to change: nothing restarts."""
+    _, out = convert_helm_installed(tmp_path)
+    rendered = render(out, "shop-dev", "postgres", "StatefulSet")
+    assert "helm.sh/chart" not in rendered["metadata"]["labels"]
+
+
+def test_statefulset_gets_the_links(tmp_path):
+    """Links are object metadata, so they cost no restart: a StatefulSet gets
+    them like any other workload, with its spec still exactly as live."""
+    live, out, _ = convert(tmp_path, ["shop-dev"])
+    rendered = render(out, "shop-dev", "postgres", "StatefulSet", *LINKS)
+    assert LINK_ANNOTATIONS <= set(rendered["metadata"]["annotations"])
+    assert_identical(live[("shop-dev", "postgres")], rendered)
 
 
 @pytest.mark.parametrize("flag", [["--exact-copy"], ["--exact-copy", "true"]])
-def test_exact_copy_true_covers_every_release(tmp_path, flag):
+def test_exact_copy_covers_every_release(tmp_path, flag):
     live, out, _ = convert(tmp_path, NAMESPACES, *flag)
     for ns in NAMESPACES:
-        for release, kind in {**STATEFUL, "web": "Deployment"}.items():
+        for release, kind in {**STATEFUL, "files": "Deployment", "web": "Deployment"}.items():
             assert_identical(live[(ns, release)], render(out, ns, release, kind))
+
+
+@pytest.mark.parametrize("release, kind", [("postgres", "StatefulSet"), ("web", "Deployment")])
+def test_exact_copy_is_one_to_one(tmp_path, release, kind):
+    """Whatever ms-applicationSet passes: the spec, the labels and the annotations
+    as live, and only what the cluster writes itself left out."""
+    w, out = convert_helm_installed(tmp_path, release, "--exact-copy")
+    rendered = render(out, "shop-dev", release, kind, *LINKS)
+    assert server_defaults(rendered)["spec"] == w["spec"], diff(w["spec"], server_defaults(rendered)["spec"])[:20]
+    assert rendered["metadata"]["labels"] == w["metadata"]["labels"]
+    assert rendered["metadata"]["annotations"] == {"openshift.io/generated-by": "OpenShiftNewApp"}
+
+
+def test_regular_conversion_drops_what_exact_copy_keeps(tmp_path):
+    """Negative control for the test above."""
+    _, out = convert_helm_installed(tmp_path)
+    rendered = render(out, "shop-dev", "postgres", "StatefulSet", *LINKS)
+    assert "helm.sh/chart" not in rendered["metadata"]["labels"]
+    assert "openshift.io/generated-by" not in rendered["metadata"]["annotations"]
+    assert LINK_ANNOTATIONS <= set(rendered["metadata"]["annotations"])
 
 
 def test_through_namespaces_to_chart(tmp_path):

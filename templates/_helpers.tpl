@@ -156,7 +156,7 @@ Usage: {{- with include "universal-chart.annotations" (dict "root" $ "own" $spec
 {{- $out := merge (dict) (.root.Values.commonAnnotations | default dict) (.own | default dict) (.extra | default dict) }}
 {{- $links := .root.Values.links | default dict }}
 {{- $nav := dict }}
-{{- /* links.objects: false (the converter's exact copy) renders none of them. */}}
+{{- /* links.objects: false (the converter's --exact-copy) renders none of them. */}}
 {{- if ne (toString $links.objects) "false" }}
 {{- if .consoleRef }}
 {{- with $links.argocd }}{{- $_ := set $nav "app.openshift.io/edit-url" . }}{{- end }}

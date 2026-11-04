@@ -375,6 +375,31 @@ def folder_values(key: str, groups: list) -> dict:
     return out
 
 
+# A namespace's own cluster (--namespace-cluster), written to its folders'
+# defaults.yaml under this key: the root ApplicationSet's git files generator
+# reads every defaults.yaml, so the folder itself says where it deploys, and
+# moving a namespace to another cluster is an edit to that one file.
+CLUSTER_KEY = "cluster"
+
+
+def parse_namespace_clusters(specs) -> dict:
+    """['shop-dev=https://api.a:6443', 'shop-prd=prod-east'] ->
+    {'shop-dev': {'server': 'https://api.a:6443'}, 'shop-prd': {'name': 'prod-east'}}.
+    A URL is the cluster's API server; anything else is the name Argo CD
+    registered it under."""
+    out: dict = {}
+    for spec in specs:
+        ns, _, cluster = spec.partition("=")
+        ns, cluster = ns.strip(), cluster.strip()
+        if not ns or not cluster or "/" in ns:
+            sys.exit(f"--namespace-cluster {spec!r}: use NAMESPACE=CLUSTER, CLUSTER an API URL "
+                     f"(https://...) or a registered cluster name")
+        if ns in out:
+            sys.exit(f"--namespace-cluster {spec!r}: '{ns}' is given twice")
+        out[ns] = {"server": cluster} if re.match(r"https?://", cluster) else {"name": cluster}
+    return out
+
+
 def combine_values(per_ns: dict, groups: list) -> "tuple[str, dict] | None":
     """Express per-namespace strings {namespace: value} as one template.
 
@@ -998,9 +1023,20 @@ CHART_LINK_SHAPES = {
 }
 
 
+# What a cluster writes on an object itself. No chart can own these, so even
+# --exact-copy leaves them out; the live values stay in place.
+CLUSTER_OWNED_ANNOTATIONS = (
+    "kubectl.kubernetes.io/last-applied-configuration",
+    "deployment.kubernetes.io/revision",
+    "argocd.argoproj.io/tracking-id",
+)
+
+
 def clean_annotations(ann: Optional[dict]) -> dict:
     if not ann:
         return {}
+    if EXACT_COPY:
+        return {k: v for k, v in ann.items() if not k.startswith(CLUSTER_OWNED_ANNOTATIONS)}
     linked = "universal-chart/argocd-application" in ann or "universal-chart/application" in ann
 
     def chart_link(k: str, v) -> bool:
@@ -1906,10 +1942,10 @@ def set_order(v: dict, key: str, order_key: str) -> None:
     A single entry has no order to keep, so nothing is written for it.
 
     The cosmetic ones (COSMETIC_ORDER_KEYS — only the restart cares) are
-    written under --exact-copy alone; envFrom/initContainer order is meaning
+    written on a frozen pod template only; envFrom/initContainer order is meaning
     and always kept.
     """
-    if order_key in COSMETIC_ORDER_KEYS and not EXACT_COPY:
+    if order_key in COSMETIC_ORDER_KEYS and not FREEZE_POD_TEMPLATE:
         return
     m = v.get(key)
     if isinstance(m, dict) and len(m) > 1:
@@ -1970,11 +2006,11 @@ def handle_main_container(c: dict, ctx: MicroserviceContext) -> None:
             v[probe] = c[probe]
     if c.get("lifecycle"):
         v["lifecycle"] = c["lifecycle"]
-    # Under --exact-copy, `in` rather than truthiness: an explicit empty
+    # On a frozen pod template, `in` rather than truthiness: an explicit empty
     # `securityContext: {}` is stored by the API server as given, and dropping
     # it changes the pod template, which restarts the pods on the first sync
     # after migrating. Otherwise an empty one says nothing and is left out.
-    if c.get("securityContext") or (EXACT_COPY and isinstance(c.get("securityContext"), dict)):
+    if c.get("securityContext") or (FREEZE_POD_TEMPLATE and isinstance(c.get("securityContext"), dict)):
         v["securityContext"] = c["securityContext"]
     if c.get("volumeMounts"):
         # A list in the deployment's own order (see env_list).
@@ -2171,7 +2207,16 @@ def handle_workload(doc: dict, ctx: MicroserviceContext, kind: str) -> None:
     # and it is very hard to diagnose after the fact.
     #
     # So: drop the stale VALUES, preserve the INTENT.
-    if any(k.startswith("checksum/") for k in (pod_meta.get("annotations") or {})):
+    #
+    # A frozen pod template keeps the hashes instead: the chart's own would change the
+    # pod template and roll every pod on the cutover sync. The price is that a
+    # config change no longer rolls them, which has to be said out loud.
+    live_checksums = sorted(k for k in (pod_meta.get("annotations") or {}) if k.startswith("checksum/"))
+    if live_checksums and FREEZE_POD_TEMPLATE:
+        ctx.warnings.append(
+            f"[P2] {kind}: {', '.join(live_checksums)} kept as frozen values so the cutover restarts nothing — "
+            f"a config change will NOT roll these pods until you set checksums.enabled: true (that rolls them once)")
+    elif live_checksums:
         v.setdefault("checksums", {})["enabled"] = True
 
     if pod_spec.get("securityContext"):
@@ -2272,7 +2317,7 @@ def pod_template_labels(pod_meta: dict) -> dict:
     gets the same exclusions by construction.
     """
     return {k: v for k, v in (pod_meta.get("labels") or {}).items()
-            if k not in POD_TEMPLATE_CHART_LABELS}
+            if k not in POD_TEMPLATE_CHART_LABELS or (FREEZE_POD_TEMPLATE and k == "helm.sh/chart")}
 
 
 def pod_template_annotations(pod_meta: dict) -> dict:
@@ -2281,10 +2326,11 @@ def pod_template_annotations(pod_meta: dict) -> dict:
     Those are content hashes a deploying tool regenerates (see folder 19); the
     rest — `sidecar.istio.io/inject`, `prometheus.io/scrape`, vault agent
     annotations — are load-bearing and were being dropped from every CronJob and
-    Job for the same reason the labels were.
+    Job for the same reason the labels were. A frozen template keeps the hashes too:
+    dropping one changes the pod template, and that rolls the pods.
     """
     return {k: v for k, v in (pod_meta.get("annotations") or {}).items()
-            if not k.startswith("checksum/") and k not in RESTART_STAMP_ANNOTATIONS}
+            if (FREEZE_POD_TEMPLATE or not k.startswith("checksum/")) and k not in RESTART_STAMP_ANNOTATIONS}
 
 
 # Stamped on the pod template by `oc rollout restart` / `kubectl rollout
@@ -2346,7 +2392,8 @@ def raw_labels(doc: dict) -> dict:
     chart-owned.
     """
     labels = ((doc.get("metadata") or {}).get("labels") or {})
-    return {k: v for k, v in labels.items() if k not in CHART_OWNED_LABELS}
+    return {k: v for k, v in labels.items()
+            if k not in CHART_OWNED_LABELS or (EXACT_COPY and k == "helm.sh/chart")}
 
 
 # name/instance/version/managed-by/app are CARRIED now: the chart's default
@@ -2672,20 +2719,24 @@ VALUES_REPO_PLACEHOLDER = "<values-repo-url>"
 # differs carries it in values/. --env-in-values writes every namespace's env
 # list into its own values/ file instead.
 ENV_IN_VALUES = False
-# --exact-copy: render every migrated pod template byte-for-byte as it is live,
-# so the cutover sync restarts no pods. That costs readability — list-order
-# keys nobody wrote (portOrder, volumeOrder, sidecarOrder) and an empty
-# `securityContext: {}` kept only because the API server stored it — so it is
-# for workloads that cannot take a restart. Off, the values say what the app
-# needs and the first sync rolls the pods once. Orders that carry MEANING are
+# On for a StatefulSet's release, or for every release under --exact-copy
+# (build_microservice sets it per release): render its pod template
+# byte-for-byte as it is live, so the cutover
+# sync restarts no pods. That costs readability — list-order keys nobody wrote
+# (portOrder, volumeOrder, sidecarOrder) and an empty `securityContext: {}` kept
+# only because the API server stored it — so every other release leaves it off:
+# the values say what the app needs and the first sync may roll the pods once.
+# Orders that carry MEANING are
 # kept either way: initContainerOrder (run order) and envFromOrder (the later
 # ref wins a shared key). env and volumeMounts are lists, always in the
-# deployment's own order.
+# deployment's own order. Only the pod template is frozen: what restarts nothing
+# (the object's own metadata) is converted as for any other release.
+FREEZE_POD_TEMPLATE = False
+# --exact-copy: every release one-to-one with what runs now. Every pod template
+# is frozen, and the objects' metadata is kept as live too: no link annotations,
+# and only what the cluster itself writes is left out (CLUSTER_OWNED_ANNOTATIONS,
+# argocd.argoproj.io/instance).
 EXACT_COPY = False
-# The --exact-copy flag as given: True / False for every release, None (the
-# default) for the stateful ones only (is_stateful). build_microservice sets
-# EXACT_COPY from it per release.
-EXACT_COPY_FLAG: bool | None = None
 # Order keys whose only job is the byte-identical pod template above.
 COSMETIC_ORDER_KEYS = frozenset({"portOrder", "volumeOrder", "sidecarOrder"})
 
@@ -3577,8 +3628,8 @@ def handle_cronjob(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # not merely an override.
     if pod_tpl_spec.get("securityContext"):
         job_template["podSecurityContext"] = pod_tpl_spec["securityContext"]
-    # An explicit {} only under --exact-copy — see handle_main_container.
-    if main.get("securityContext") or (EXACT_COPY and isinstance(main.get("securityContext"), dict)):
+    # An explicit {} only on a frozen pod template — see handle_main_container.
+    if main.get("securityContext") or (FREEZE_POD_TEMPLATE and isinstance(main.get("securityContext"), dict)):
         job_template["securityContext"] = main["securityContext"]
     carry_job_pod_fields(pod_tpl_spec, main, job_template)
     # `parallelism` and `completions` join the list rather than being captured
@@ -3690,8 +3741,8 @@ def handle_job(doc: dict, ctx: MicroserviceContext, name: str) -> None:
     # See the matching comment in handle_cronjob.
     if pod_spec.get("securityContext"):
         entry["podSecurityContext"] = pod_spec["securityContext"]
-    # An explicit {} only under --exact-copy — see handle_main_container.
-    if main.get("securityContext") or (EXACT_COPY and isinstance(main.get("securityContext"), dict)):
+    # An explicit {} only on a frozen pod template — see handle_main_container.
+    if main.get("securityContext") or (FREEZE_POD_TEMPLATE and isinstance(main.get("securityContext"), dict)):
         entry["securityContext"] = main["securityContext"]
     carry_job_pod_fields(pod_spec, main, entry)
     # Same list as handle_cronjob, and kept in step with it deliberately: a Job
@@ -3925,46 +3976,41 @@ def handle_cluster_scoped(doc: dict, kind: str, cluster_registry: ClusterRegistr
 # ---------------------------------------------------------------------------
 
 def is_stateful(docs: list[dict]) -> str | None:
-    """Why a release is stateful, or None: a StatefulSet, or a workload whose
-    pods mount a PersistentVolumeClaim. Those are the ones a cutover restart
-    hurts — a database's pods come back one by one, an RWO volume has to
-    detach and re-attach — so by default they are converted with
-    --exact-copy and the first sync restarts nothing."""
+    """Why a release is stateful, or None: it runs a StatefulSet. Those are the
+    ones a cutover restart hurts — a database's pods come back one by one — so
+    their pod template is frozen (FREEZE_POD_TEMPLATE) and the first sync restarts
+    nothing. A Deployment mounting a PersistentVolumeClaim is not one: those are
+    nearly always stateless apps with a shared volume."""
     for d in docs:
-        kind = d.get("kind")
-        if kind == "StatefulSet":
+        if d.get("kind") == "StatefulSet":
             return f"StatefulSet/{(d.get('metadata') or {}).get('name')}"
-        if kind in WORKLOAD_KINDS:
-            pod = (((d.get("spec") or {}).get("template") or {}).get("spec") or {})
-            if any(isinstance(v, dict) and "persistentVolumeClaim" in v for v in pod.get("volumes") or []):
-                return f"{kind}/{(d.get('metadata') or {}).get('name')} mounts a PersistentVolumeClaim"
     return None
 
 
 def build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_registry: NamespaceRegistry,
                        cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                        owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
-    """_build_microservice with EXACT_COPY set for this release: as the flag
-    says, or — no flag — on for a stateful one (is_stateful)."""
-    global EXACT_COPY
+    """_build_microservice with FREEZE_POD_TEMPLATE set for this release: on for
+    a stateful one (is_stateful), and for every one under --exact-copy."""
+    global FREEZE_POD_TEMPLATE
     reason = is_stateful(docs)
-    EXACT_COPY = EXACT_COPY_FLAG if EXACT_COPY_FLAG is not None else reason is not None
-    if EXACT_COPY_FLAG is None and reason:
-        warnings.append(f"{ms_name}: stateful ({reason}) — converted as --exact-copy, so the "
-                        f"cutover sync restarts none of its pods (--exact-copy false to turn off)")
+    FREEZE_POD_TEMPLATE = EXACT_COPY or reason is not None
+    if reason:
+        warnings.append(f"{ms_name}: stateful ({reason}) — pod template kept exactly as live, so the "
+                        f"cutover sync restarts none of its pods")
     try:
         return _build_microservice(namespace, ms_name, docs, ns_registry, cluster_registry, cluster_values,
                                    warnings, owner_label, known_pv_names)
     finally:
-        EXACT_COPY = bool(EXACT_COPY_FLAG)
+        FREEZE_POD_TEMPLATE = False
 
 
 def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_registry: NamespaceRegistry,
                         cluster_registry: ClusterRegistry, cluster_values: dict, warnings: list,
                         owner_label: str, known_pv_names: set[str] | None = None) -> MicroserviceContext:
     ctx = MicroserviceContext(namespace=namespace, name=ms_name)
-    # An exact copy renders every object as it runs now: none of the navigation
-    # annotations ms-applicationSet would otherwise hand the chart (links.*).
+    # One-to-one: none of the navigation annotations ms-applicationSet would
+    # otherwise hand the chart (links.*).
     if EXACT_COPY:
         ctx.values["links"] = {"objects": False}
     # No nameOverride: the Argo CD Application that deploys the release already
@@ -4538,7 +4584,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               destination_server: str = "https://kubernetes.default.svc",
                               destination_name: str = "", auto_sync: bool = False,
                               argocd_url: str = "", console_url: str = "",
-                              repo_web_url: str = "") -> str:
+                              repo_web_url: str = "", per_namespace_cluster: bool = False) -> str:
     """One Application per namespace folder in this tree, as YAML text.
 
     Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
@@ -4554,6 +4600,11 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
     &project) say each value once, so retargeting the tree is one edit, and
     the commented exclude shows how to switch a namespace off without deleting
     its folder.
+
+    per_namespace_cluster: some folders' defaults.yaml name their own cluster
+    (cluster.server or cluster.name, from --namespace-cluster). The generator
+    reads those files, so the destination is looked up there per folder and
+    falls back to the tree's one destination for the rest.
     """
     q = _yaml_scalar
     segments = [p for p in values_path.split("/") if p]
@@ -4565,8 +4616,9 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         ("originBranch", "*branch"),
         *([("originPath", q(values_path))] if values_path else []),
         ("project", "*project"),
-        ("destinationServer", q(destination_server)),
-        *([("destinationName", q(destination_name))] if destination_name else []),
+        *(_cluster_params(destination_server, destination_name) if per_namespace_cluster else [
+            ("destinationServer", q(destination_server)),
+            *([("destinationName", q(destination_name))] if destination_name else [])]),
         *[(k, q(v)) for k, v in (("chartRepoURL", chart_repo_url), ("chartRevision", chart_revision),
                                   ("chartPath", chart_path)) if v != APPSET_CHART_DEFAULTS[k]],
         # The microservice Applications the chart renders: manual sync unless
@@ -4630,6 +4682,20 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         "        - ServerSideApply=true",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _cluster_params(server: str, name: str) -> list:
+    """The destination helm parameters, read from each folder's defaults.yaml
+    (see CLUSTER_KEY). The chart lets destinationName win over the server, so a
+    folder that names its own server sends no name, whatever the tree's default
+    name is."""
+    def own(key: str, fallback: str) -> str:
+        return f'dig "{CLUSTER_KEY}" "{key}" {json.dumps(fallback)} .'
+    return [
+        ("destinationServer", _yaml_scalar(f"{{{{ {own('server', server)} }}}}")),
+        ("destinationName", _yaml_scalar(f"{{{{ if {own('server', '')} }}}}{{{{ else }}}}"
+                                         f"{{{{ {own('name', name)} }}}}{{{{ end }}}}")),
+    ]
 
 
 def _destination(server: str, name: str, namespace: str) -> dict:
@@ -6209,6 +6275,13 @@ def main() -> None:
                      help="cluster API URL every generated Application deploys to. The default is "
                           "the in-cluster address, correct when ArgoCD manages its own cluster; "
                           "point it at a registered remote cluster's URL otherwise.")
+    ap.add_argument("--namespace-cluster", action="append", default=[], metavar="NAMESPACE=CLUSTER",
+                     help="deploy one namespace to a cluster of its own: CLUSTER is its API URL "
+                          "(https://...) or the name Argo CD registered it under. Repeat for each "
+                          "namespace; the others keep --destination-server / --argocd-cluster. "
+                          "Written to the namespace's defaults.yaml as cluster.server / "
+                          "cluster.name, which the root ApplicationSet reads, so moving a "
+                          "namespace later is an edit to that file.")
     # Variant sub-folders in the input are detected on their own now.
     ap.add_argument("--variants", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--cluster-scoped", action="store_true",
@@ -6248,6 +6321,13 @@ def main() -> None:
                           "autoSync parameter) and the cluster-shared one wait for a manual Sync. "
                           "The root Application and root ApplicationSet always reconcile, so a "
                           "new namespace folder still appears in Argo CD on its own.")
+    ap.add_argument("--exact-copy", nargs="?", const=True, default=False, type=_bool_arg,
+                     metavar="true|false",
+                     help="render every release one-to-one as it runs now: every pod template "
+                          "byte-for-byte, so the cutover sync restarts no pods, and the objects' "
+                          "labels and annotations as live, with no links. Default: StatefulSets keep "
+                          "their pod template and restart nothing, Deployments get cleaner values "
+                          "and may roll once on the first sync.")
     ap.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
                      help="skip whole stacks: a microservice file with any object whose name or "
                           "label/annotation VALUE contains PATTERN (case-insensitive) is skipped "
@@ -6290,16 +6370,6 @@ def main() -> None:
                      help="write each namespace's env list into its own values/ file. Default "
                           "false: the env list is treated like any other value — in base/ when it "
                           "is the same in every namespace, in values/ only where it differs.")
-    ap.add_argument("--exact-copy", nargs="?", const=True, default=None, type=_bool_arg,
-                     metavar="true|false",
-                     help="render migrated pod templates byte-for-byte as they run now, so the "
-                          "cutover sync restarts no pods: writes portOrder/volumeOrder/sidecarOrder "
-                          "and keeps an empty securityContext: {}. Default: "
-                          "on for stateful releases only (a StatefulSet, or a workload mounting a "
-                          "PersistentVolumeClaim), the rest get cleaner values and roll once on the "
-                          "first sync. true: every release. false: none. Orders that change "
-                          "behaviour (init containers, envFrom) are kept either way, and env / "
-                          "volumeMounts are always lists in the deployment's own order.")
     ap.add_argument("--interactive", action="store_true",
                      help="with --env-group, ask before each combination (needs a terminal).")
     ap.add_argument("--no-interactive", action="store_false", dest="interactive",
@@ -6338,18 +6408,18 @@ def main() -> None:
 
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
         INCLUDE_PATTERNS
-    global ENV_IN_VALUES, EXACT_COPY, EXACT_COPY_FLAG
+    global ENV_IN_VALUES, EXACT_COPY
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
     ENV_IN_VALUES = args.env_in_values
-    EXACT_COPY_FLAG = args.exact_copy
-    EXACT_COPY = bool(EXACT_COPY_FLAG)
+    EXACT_COPY = args.exact_copy
     EXCLUDE_PATTERNS, KEEP_PATTERNS, INCLUDE_PATTERNS = (
         [p.strip() for arg in opt for p in arg.split(",") if p.strip()]
         for opt in (args.exclude, args.keep, args.include))
     chart_keys = set((yaml.safe_load((Path(args.chart) / "values.yaml").read_text(encoding="utf-8"))
                       if (Path(args.chart) / "values.yaml").is_file() else None) or {})
-    env_groups = [parse_env_group(spec, chart_keys) for spec in args.env_group]
+    env_groups = [parse_env_group(spec, chart_keys | {CLUSTER_KEY}) for spec in args.env_group]
+    namespace_clusters = parse_namespace_clusters(args.namespace_cluster)
     suffixes = [t.strip() for t in args.env_suffixes.split(",") if t.strip()]
     if suffixes:
         KNOWN_ENV_SUFFIXES.clear()  # the list replaces the default trailing-suffix rule
@@ -6747,6 +6817,9 @@ def main() -> None:
     # files at the tree root are the entire wiring, and a namespace directory
     # is discovered by the root ApplicationSet simply by existing.
     out_keys = set(out_ms) | set(per_namespace_shared) | {k for k, d in namespace_dirs if is_input_ns(d)}
+    unknown = sorted(set(namespace_clusters) - {k8s_ns(k) for k in out_keys})
+    if unknown:
+        all_warnings.append(f"--namespace-cluster: no namespace {', '.join(unknown)} in this run — ignored")
     for namespace in sorted(out_keys):
         out_ns_dir = output_dir / namespace
         ms_contexts = out_ms.get(namespace, [])
@@ -6798,6 +6871,8 @@ def main() -> None:
                         else:
                             extra.pop(k)
         namespace_defaults.update(folder_values(namespace, env_groups))
+        if k8s_ns(namespace) in namespace_clusters:
+            namespace_defaults[CLUSTER_KEY] = namespace_clusters[k8s_ns(namespace)]
 
         out_ns_dir.mkdir(parents=True, exist_ok=True)
         header_ns_defaults = (
@@ -6877,6 +6952,10 @@ def main() -> None:
             "workload:\n  type: none\nservice:\n  enabled: false\n\n"
         )
         (cluster_dir / "cluster-shared-values.yaml").write_text(header + dump_yaml(helm_safe_values(cluster_values), spaced=True), encoding="utf-8")
+    if has_cluster_values and namespace_clusters:
+        all_warnings.append(
+            "--cluster-scoped with --namespace-cluster: the cluster-shared release is deployed once, "
+            "to --destination-server / --argocd-cluster, not to each namespace's own cluster")
     if has_cluster_values and ARGOCD_MANIFESTS:
         app = build_cluster_shared_application(
             args.cluster_shared_namespace, args.chart_repo_url, args.chart_path, args.chart_revision,
@@ -6931,7 +7010,7 @@ def main() -> None:
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
             auto_sync=args.auto_sync, argocd_url=args.argocd_url, console_url=args.console_url,
-            repo_web_url=args.repo_web_url)
+            repo_web_url=args.repo_web_url, per_namespace_cluster=bool(namespace_clusters))
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"
