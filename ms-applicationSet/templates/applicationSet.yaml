@@ -60,7 +60,13 @@
 {{- $fileUrl = printf "%s/blob/%s/PATH" $web $branch -}}
 {{- end -}}
 {{- end -}}
-{{- $baseFile := printf "%sbase{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $prefix $folder -}}
+{{- /* A values file holding `BaseFile: x` (or `x.yaml`) reads base/x.yaml, so
+       one base serves every copy of a release deployed side by side in one
+       namespace, whatever the copies are called. Argo CD's git files generator
+       hands the template each file's own top-level keys. Any other file reads
+       the base of its own name. */ -}}
+{{- $baseName := "{{ if hasKey . \"BaseFile\" }}{{ .BaseFile | toString | trimSuffix \".yaml\" }}.yaml{{ else }}{{ .path.filename }}{{ end }}" -}}
+{{- $baseFile := printf "%sbase{{ .path.path | trimPrefix \"%s%s/values\" }}/%s" $prefix $prefix $folder $baseName -}}
 {{- $defaultsFile := printf "%s%s/defaults.yaml" $prefix $folder -}}
 {{- $valuesFile := "{{ .path.path }}/{{ .path.filename }}" -}}
 {{/*
@@ -75,6 +81,12 @@
     <folder>/values/<file>         instance - image tag + literal env + this folder's tweaks
   The filename is the same in base/ and values/, which is what keeps the chain
   self-consistent for a given release.
+
+  Instances: one release deployed several times in the same namespace
+  (x-1, x-2, x-3, or alpha, beta, gamma) shares ONE base. Each values file
+  carries `BaseFile: x` - which base it layers, read here by Argo CD - and
+  `instance: <id>` - what base/ fills in as {{ .Values.instance }}, read by
+  Helm. Each file is still its own Application and Helm release.
 
   values/ may hold sub-folders for grouping (values/group1/ms1.yaml): a release
   is still named after its file, and base/ mirrors the sub-folder, so it reads

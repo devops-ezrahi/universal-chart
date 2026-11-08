@@ -814,6 +814,28 @@ $Values/<folder>/values/{{ .path.filename }}
 Adding a microservice is adding a file; adding a namespace is adding a
 directory. Neither needs a new manifest.
 
+**Instances — one release deployed several times in one namespace.** When
+several releases are copies of the same thing (`x-1`, `x-2`, `x-3`, or `alpha`,
+`beta`, `gamma`), they share one base file instead of each getting their own
+or a variant folder each. Each copy's values file carries two keys:
+
+```
+base/x.yaml                    # fullnameOverride: "{{ .Values.instance }}", ...
+<namespace>/values/alpha.yaml  # BaseFile: x       <- Argo CD: layer base/x.yaml under this file
+                               # instance: alpha   <- Helm: what base/x.yaml fills in
+<namespace>/values/beta.yaml   # BaseFile: x
+                               # instance: beta
+```
+
+`BaseFile` (`x` or `x.yaml`) is read by the ApplicationSet: a file that has it
+reads `base/<BaseFile>` instead of the base of its own name. `instance` is an
+ordinary value the chart renders wherever `base/` says `{{ .Values.instance }}`,
+so `alpha` renders `alpha`, `alpha-config`, ... Each copy is still its own
+Application and Helm release. The converter writes this layout with
+`--instances x` or `--instances x=alpha,beta,gamma` (see
+`gitops-factory/README.md`), and `values_editor.py new --name delta --base-file x`
+adds another copy by hand.
+
 ```bash
 helm template appset ms-applicationSet \
   --set namespace=payments-dev \
