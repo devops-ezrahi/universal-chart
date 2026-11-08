@@ -60,7 +60,12 @@
 {{- $fileUrl = printf "%s/blob/%s/PATH" $web $branch -}}
 {{- end -}}
 {{- end -}}
-{{- $baseFile := printf "%sbase{{ .path.path | trimPrefix \"%s%s/values\" }}/{{ .path.filename }}" $prefix $prefix $folder -}}
+{{- /* An instance file (values/x-2.yaml holding `instance: "2"`) reads the base
+       named without its "-<instance>" (base/x.yaml), so one base serves every
+       copy of a release deployed side by side in one namespace. Any other file
+       reads the base of its own name. */ -}}
+{{- $baseName := "{{ if hasKey . \"instance\" }}{{ .path.filename | trimSuffix \".yaml\" | trimSuffix (printf \"-%v\" .instance) }}.yaml{{ else }}{{ .path.filename }}{{ end }}" -}}
+{{- $baseFile := printf "%sbase{{ .path.path | trimPrefix \"%s%s/values\" }}/%s" $prefix $prefix $folder $baseName -}}
 {{- $defaultsFile := printf "%s%s/defaults.yaml" $prefix $folder -}}
 {{- $valuesFile := "{{ .path.path }}/{{ .path.filename }}" -}}
 {{/*
@@ -75,6 +80,12 @@
     <folder>/values/<file>         instance - image tag + literal env + this folder's tweaks
   The filename is the same in base/ and values/, which is what keeps the chain
   self-consistent for a given release.
+
+  Instances: one release deployed several times in the same namespace
+  (x-1, x-2, x-3) shares ONE base. Each values file carries `instance: "<id>"`
+  and is named <base>-<id>.yaml, so values/x-2.yaml reads base/x.yaml; base/
+  templates what differs per copy with {{ .Values.instance }}. Each file is
+  still its own Application and Helm release.
 
   values/ may hold sub-folders for grouping (values/group1/ms1.yaml): a release
   is still named after its file, and base/ mirrors the sub-folder, so it reads

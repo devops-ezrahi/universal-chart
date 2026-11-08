@@ -297,6 +297,48 @@ already in it, gets its own name: `pay-shared` for `pay-dev` + `pay-prd`, or
 that differed in a single env word was forked into one
 `<namespace>-shared.yaml` per namespace.
 
+## Instances — the same release several times in one namespace (`--instances`)
+
+Variant folders (`--env-group`) give each copy of a release its own folder,
+`defaults.yaml` and ApplicationSet. That is right for a few colours. For one
+deployment installed 8 times side by side in the same namespace it's too much.
+Instances keep every copy in the namespace's own `values/` and share one base:
+
+```bash
+python namespaces_to_chart.py -n shop-dev -o out --instances x
+```
+
+Releases named `x-<id>` (`x-1`, `x-2`, `x-3`, or `x-eu`, `x-us`) become:
+
+```
+base/x.yaml                  # one file: what differs per copy is {{ .Values.instance }}
+                             #   fullnameOverride: x-{{ .Values.instance }}
+                             #   configMaps: { x-{{ .Values.instance }}-config: ... }
+shop-dev/values/x-1.yaml     # instance: "1"  + image tag, replicas, anything else
+shop-dev/values/x-2.yaml     # instance: "2"    that differs for this copy only
+shop-dev/values/x-3.yaml     # instance: "3"
+```
+
+`instance` is what wires it up: ms-applicationSet layers `base/x.yaml`
+under any values file named `x-<id>.yaml` that holds `instance: "<id>"`. So keep
+the key, and keep the file name matching it. Each copy is still its own Argo CD
+Application and Helm release (`x-1-dev`, `x-2-dev`, ...). The templating is
+the same as `--env-group`: a value is templated only when the copies differ by
+nothing but their id, and the render-verify and `--verify-fidelity` checks
+render each copy back to its source. Anything else that differs stays in that
+copy's values file. It combines with `--env-suffixes` / `--env-group`, so
+`x-1..x-3` in `shop-dev` and `shop-prd` still make one `base/x.yaml`.
+
+Copies are combined only when it is safe. There must be at least two different
+ids, and no release named plain `x` (it owns `base/x.yaml`). Otherwise the copies
+stay separate releases and the report says why. `--instances a,b` (or the flag
+repeated) handles several such releases at once.
+
+To add a copy later, run
+`values_editor.py new --app-dir out --namespace shop-dev --name x-4 --instance 4 --image registry/x:1.1`.
+It reuses `base/x.yaml` and writes only `values/x-4.yaml`. The browser UI reads
+an instance's base the same way.
+
 ## Cutting a live app over from its old ArgoCD apps
 
 The aim is that the cutover restarts no pods. The only difference should be

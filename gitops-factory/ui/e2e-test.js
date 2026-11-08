@@ -230,6 +230,25 @@ class NodeDirHandle {
     "a folder whose defaults.yaml pins a tag keeps using it");
   console.log("image tag moved out of the shared base: OK");
 
+  // Instances: dev/values/ms2-2.yaml holding `instance: "2"` is a second copy
+  // of ms2 in the same namespace and reads base/ms2.yaml, like the chart does.
+  // Saving its base view writes base/ms2.yaml, never base/ms2-2.yaml.
+  const instPath = path.join(appDirPath, "dev/values/ms2-2.yaml");
+  fs.writeFileSync(instPath, win.jsyaml.dump({ instance: "2", replicaCount: 1 }));
+  win.__state.apps[0] = await win.readAppTree(new NodeDirHandle(appDirPath));
+  const inst = win.__state.apps[0].namespaces["dev"].microservices["ms2-2"];
+  assert.strictEqual(inst.baseName, "ms2", "an instance file reads its base's name");
+  assert.deepStrictEqual(inst.values, win.__state.apps[0].base["ms2"], "and that base's values");
+  win.__state.activeNamespace = "dev";
+  win.__state.activeMicroservice = "ms2-2";
+  await win.saveRawValues("ms2-2", "values", { ...inst.values, e2eInstanceMark: true });
+  assert.strictEqual(fs.existsSync(path.join(appDirPath, "base/ms2-2.yaml")), false,
+    "an instance never gets a base/ file of its own");
+  assert.strictEqual(win.jsyaml.load(fs.readFileSync(path.join(appDirPath, "base/ms2.yaml"), "utf8")).e2eInstanceMark, true);
+  assert.strictEqual(win.__state.apps[0].namespaces["dev"].microservices["ms2"].values.e2eInstanceMark, true,
+    "the other copy sees the base it shares");
+  console.log("instance reads and writes its shared base: OK");
+
   console.log("\nAll e2e checks passed.");
 })().catch((e) => {
   console.error("E2E TEST FAILED:", e);

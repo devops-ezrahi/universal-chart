@@ -189,9 +189,20 @@ def test_every_value_file_the_chart_references_is_actually_on_disk(tmp_path):
         for vf in source["helm"]["valueFiles"]:
             rel = vf.split("$Values/", 1)[1]
             for values_file in sorted(values_dir.glob("*.yaml")):
+                # An instance file (`instance: "2"` in values/x-2.yaml) reads
+                # base/x.yaml; any other file the base of its own name.
+                inst = (yaml.safe_load(values_file.read_text(encoding="utf-8")) or {}).get("instance")
+
+                def pick(m, stem=values_file.stem, inst=inst):
+                    if inst in (None, ""):
+                        return m.group(2)
+                    sfx = f"-{inst}"
+                    return (stem[:-len(sfx)] if stem.endswith(sfx) else stem) + ".yaml"
+                rel_file = re.sub(r'\{\{ if hasKey \. "instance" \}\}(.*?)\{\{ else \}\}(.*?)\{\{ end \}\}',
+                                  pick, rel)
                 # ArgoCD's git files generator: .path.path is the file's folder
                 # (repo-relative), .path.filename its name.
-                resolved = re.sub(r"\{\{\s*\.path\.filename\s*\}\}", values_file.name, rel)
+                resolved = re.sub(r"\{\{\s*\.path\.filename\s*\}\}", values_file.name, rel_file)
                 # base/ reads `.path.path | trimPrefix "<folder>/values"` to
                 # mirror a values/ sub-folder; evaluate that pipe too.
                 path = values_file.parent.relative_to(out).as_posix()

@@ -814,6 +814,24 @@ $Values/<folder>/values/{{ .path.filename }}
 Adding a microservice is adding a file; adding a namespace is adding a
 directory. Neither needs a new manifest.
 
+**Instances — one release deployed several times in one namespace.** When
+`x-1`, `x-2`, `x-3` are copies of the same thing, they share one base file
+instead of each getting their own or needing a variant folder each. A values
+file that holds `instance: "<id>"` and is named `<base>-<id>.yaml` reads
+`base/<base>.yaml`. `base/` writes what differs per copy as
+`{{ .Values.instance }}`:
+
+```
+base/x.yaml                    # fullnameOverride: x-{{ .Values.instance }}, ...
+<namespace>/values/x-1.yaml    # instance: "1"  (+ image tag, replicas, ...)
+<namespace>/values/x-2.yaml    # instance: "2"
+<namespace>/values/x-3.yaml    # instance: "3"
+```
+
+Each copy is still its own Application and Helm release. The converter writes
+this layout with `--instances x` (see `gitops-factory/README.md`), and
+`values_editor.py new --name x-4 --instance 4` adds another copy by hand.
+
 ```bash
 helm template appset ms-applicationSet \
   --set namespace=payments-dev \

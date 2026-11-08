@@ -71,8 +71,10 @@ import yaml
 from convert_to_universal_chart import (  # noqa: E402  (reuse, never redefine)
     BASE_DIR_NAME,
     DEFAULTS_FILE_NAME,
+    INSTANCE_KEY,
     VALUES_DIR_NAME,
     base_file_for,
+    instance_base_name,
     dump_yaml,
     k8s_ns,
     namespace_dirs_of,
@@ -231,15 +233,20 @@ def cmd_new(args: argparse.Namespace) -> None:
     values_path, minimal_path = microservice_paths(app_dir, namespace, name)
     if minimal_path.exists():
         sys.exit(f"{namespace}/{name} already exists — use `set` to edit it, not `new`.")
+    if args.instance:
+        # One more copy of a release (x-4 next to x-1..x-3): it reads base/x.yaml.
+        if instance_base_name(name, args.instance) == name:
+            sys.exit(f"--instance {args.instance}: the name must be <base>-{args.instance}, got '{name}'")
+        values_path = values_path.with_name(instance_base_name(name, args.instance) + ".yaml")
     reuse_base = values_path.exists()
     if reuse_base:
-        print(f"Note: {values_path} already exists (shared by another namespace) — reusing it "
+        print(f"Note: {values_path} already exists (shared by another namespace or instance) — reusing it "
               f"as-is; structural args (--workload-type/--port/--service-port/--route-host/"
               f"--cpu-request/etc.) are ignored. Edit {values_path} directly if it needs to "
               f"change — that affects every namespace that reuses it.")
 
     values: dict = {}
-    minimal: dict = {}
+    minimal: dict = {INSTANCE_KEY: str(args.instance)} if args.instance else {}
 
     if args.workload_type:
         set_path(values, "workload.type", args.workload_type)
@@ -252,7 +259,8 @@ def cmd_new(args: argparse.Namespace) -> None:
         # immutable pin to whatever the chart's appVersion tag resolves to. See
         # split_image's docstring in convert_to_universal_chart.py.
         repo, tag, digest = split_image(args.image)
-        set_path(values, "image.repository", repo)
+        # A reused base/ is not written, so the repository rides with the tag.
+        set_path(minimal if reuse_base else values, "image.repository", repo)
         if tag:
             set_path(minimal, "image.tag", tag)
         if digest:
@@ -460,6 +468,9 @@ def main() -> None:
     p_new.add_argument("--app-dir", required=True)
     p_new.add_argument("--namespace", required=True)
     p_new.add_argument("--name", required=True)
+    p_new.add_argument("--instance", metavar="ID",
+                       help="one more copy of a release deployed side by side: --name x-4 --instance 4 "
+                            "reads base/x.yaml and writes 'instance: \"4\"' into values/x-4.yaml")
     p_new.add_argument("--image", help="repository[:tag]")
     p_new.add_argument("--workload-type", choices=["deployment", "statefulset", "daemonset", "none"])
     p_new.add_argument("--replicas", type=int)
