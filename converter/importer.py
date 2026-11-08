@@ -981,7 +981,7 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
         for rt, names in per_workload_refs.items():
             if rt not in all_refs:
                 all_refs[rt] = {}
-            for name in names:
+            for name in sorted(names):  # sorted: set order changes per process (hash seed)
                 if name not in all_refs[rt]:
                     all_refs[rt][name] = set()
                 all_refs[rt][name].add(workload_name)
@@ -1100,7 +1100,7 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
     # Distribute shared resources
     shared_resources = []
     for rt in REFERENCED_RESOURCE_TYPES:
-        for name in shared_refs[rt]:
+        for name in sorted(shared_refs[rt]):  # sorted: set order changes per process
             kind = RESOURCE_PLURAL_TO_KIND.get(rt, rt)
             resource = resource_index.get((kind, name))
             if resource:

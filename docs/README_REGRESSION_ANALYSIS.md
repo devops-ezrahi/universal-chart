@@ -103,7 +103,7 @@ Eight causes. None of them is "someone reverted the fix".
 
 ### RC-1 — The validation corpus exercises none of these defects
 
-`namespaces-showcase/` is what every previous-round fix was validated against,
+`examples/showcase/` is what every previous-round fix was validated against,
 and what the fidelity report is generated from. Its complete inventory:
 
 ```
@@ -154,7 +154,7 @@ folder.
 
 Each previous folder built a fixture under its own `test/fixture/` to prove its
 fix in isolation. That is correct for proving the fix and useless for detecting
-its loss. Nothing added those fixtures to `namespaces-showcase/`, so the next
+its loss. Nothing added those fixtures to `examples/showcase/`, so the next
 full run still cannot see the field, and no future run can detect it going
 missing again.
 
@@ -234,7 +234,7 @@ are absent because **they were genuinely fixed last round** — every one has a
 it is good news that was simply never recorded.
 
 The same logic dissolves `Extra_And_Relocated_Objects`' "0 vs 90"
-contradiction: 0 is the post-fix run on `namespaces-showcase`, 90 is the
+contradiction: 0 is the post-fix run on `examples/showcase`, 90 is the
 `rakia-*` corpus. Both are true of their own run.
 
 ### RC-6 — No idempotence guard in the collision renamer
@@ -336,8 +336,8 @@ the folders **and** closes the mechanism.
 
 ### Principle 1 — Every fix lands in the shared corpus, not only in its own `test/`
 
-For each folder whose defect is invisible to `namespaces-showcase`, add the
-smallest raw manifest that exercises it **to `namespaces-showcase/` itself**,
+For each folder whose defect is invisible to `examples/showcase`, add the
+smallest raw manifest that exercises it **to `examples/showcase/` itself**,
 not only to that folder's `test/fixture/`. A defect the corpus cannot express is
 a defect the next run cannot catch.
 

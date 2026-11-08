@@ -106,5 +106,5 @@ pins the reason they cannot drift apart.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ConfigMap_Secret_References_Prefixed_With_Release/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ConfigMap_Secret_References_Prefixed_With_Release/test -v
 ```

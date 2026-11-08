@@ -65,7 +65,7 @@ but not block-scalar clipping.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/namespaces-showcase/shop-web/shared.yaml` | 66–95 | CA bundle: one placeholder certificate → three, with comment headers and blank lines |
+| `universal/examples/showcase/shop-web/shared.yaml` | 66–95 | CA bundle: one placeholder certificate → three, with comment headers and blank lines |
 
 No converter change and no chart change. That is the finding.
 
@@ -144,5 +144,5 @@ $ python convert_to_universal_chart.py --input namespaces-showcase --output <tmp
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/CA_Bundle_Certificate_Line_Reflow/test/test_ca_bundle.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/CA_Bundle_Certificate_Line_Reflow/test/test_ca_bundle.py -v
 ```

@@ -118,8 +118,12 @@ universal-chart/
 │   ├── extra_deploy_test.yaml
 │   └── validation_test.yaml
 │
-├── gitops-factory/                   # Raw manifest dump -> values tree converter
-│                                     # (excluded from the chart via .helmignore)
+├── convert_to_universal_chart.py     # The converter: namespaces -> values tree (docs/converter.md)
+├── converter/                        # Its engine, importer and sources
+├── tools/                            # convert_and_verify, values_editor, mock generators
+├── tests/converter/                  # The converter's pytest suite and regression fixtures
+├── docs/                             # converter.md and the bug-fix reports
+│                                     # (all of the above excluded from the chart via .helmignore)
 │
 ├── ui/                               # Browser-based values.yaml generator
 │   ├── index.html                    # Single-file UI app (open in browser)
@@ -833,7 +837,7 @@ ordinary value the chart renders wherever `base/` says `{{ .Values.instance }}`,
 so `alpha` renders `alpha`, `alpha-config`, ... Each copy is still its own
 Application and Helm release. The converter writes this layout with
 `--instances x` or `--instances x=alpha,beta,gamma` (see
-`gitops-factory/README.md`), and `values_editor.py new --name delta --base-file x`
+`docs/converter.md`), and `values_editor.py new --name delta --base-file x`
 adds another copy by hand.
 
 ```bash
@@ -921,10 +925,9 @@ same delete removes every workload. `cluster-shared-resources` (from
 Application object.
 
 Values repos in this shape are produced by
-[gitops-factory](gitops-factory/) (in this repo), which
-converts raw per-namespace manifest dumps into exactly this layout
-(NetworkPolicies and ServiceMonitors in the dump are deliberately not
-converted).
+[`convert_to_universal_chart.py`](docs/converter.md) (in this repo), which
+converts running namespaces (or manifest dumps) into exactly this layout
+(ServiceMonitors in the dump are deliberately not converted).
 
 ### Every value goes through `tpl`
 

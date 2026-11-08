@@ -30,29 +30,29 @@ is backed by tests that were shown RED before the change and GREEN after.
 
 ```powershell
 # the whole accumulated regression suite (all folders completed so far)
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS -q
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS -q
 
 # the chart's own suite (must stay at 234)
 helm unittest universal/Universal-chart
 
 # regenerate the showcase with the fidelity check
-cd universal/gitops-factory
+cd tests/converter   # from the universal-chart root
 python convert_to_universal_chart.py `
-  --input namespaces-showcase --output output-showcase `
+  --input examples/showcase --output .generated/output-showcase `
   --chart ../Universal-chart --verify-fidelity `
   --values-repo-url https://github.com/devops-ezrahi/homelab.git `
   --values-revision checker `
-  --values-path universal/gitops-factory/output-showcase
+  --values-path universal/.generated/output-showcase
 ```
 
 Current state: **331 tests pass**, chart's own **234 tests pass**, `helm lint`
 clean, fidelity report **0 lost / 0 changed / 0 missing / 0 extra**.
 
-Two standing whole-showcase sweeps, runnable from `universal/gitops-factory`:
+Two standing whole-showcase sweeps, runnable from the repo root:
 
 ```powershell
-python output-showcase/ERRORS_ANALYSIS/Main_Container_Name_Forced_To_Release_Name/test/compare_all_container_names.py
-python output-showcase/ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname/test/compare_all_object_names.py
+python .generated/output-showcase/ERRORS_ANALYSIS/Main_Container_Name_Forced_To_Release_Name/test/compare_all_container_names.py
+python .generated/output-showcase/ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname/test/compare_all_object_names.py
 ```
 
 ---
@@ -125,7 +125,7 @@ raw-vs-rendered diff. The converter copies the raw value verbatim instead, so
 `Retain` survives where declared and nothing is fabricated where it isn't. Both
 behaviours are pinned by tests.
 
-Also fixed a side effect I caused: my fixtures under `output-showcase/` made the
+Also fixed a side effect I caused: my fixtures under `.generated/output-showcase/` made the
 converter's stale-output scanner report them as stale generated files, so
 `ERRORS_ANALYSIS` joined `report` in `NON_NAMESPACE_OUTPUT_DIRS` (line 231).
 

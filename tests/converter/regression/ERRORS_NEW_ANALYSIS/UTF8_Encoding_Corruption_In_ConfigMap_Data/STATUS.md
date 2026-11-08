@@ -45,10 +45,10 @@ almost certainly the culprit" — and named the fix pattern already in this repo
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 2725–2739 | `helm_template`: `encoding="utf-8", errors="replace"` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 291–316 | `dump_yaml`: `allow_unicode=True` |
-| `universal/gitops-factory/namespaces-showcase/platform-data/redis.yaml` | 69–81 (new) | ConfigMap key `init-config.sh` carrying Ľ, š, á and an em-dash |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/convert_to_universal_chart.py` | 2725–2739 | `helm_template`: `encoding="utf-8", errors="replace"` |
+| `universal/convert_to_universal_chart.py` | 291–316 | `dump_yaml`: `allow_unicode=True` |
+| `universal/examples/showcase/platform-data/redis.yaml` | 69–81 (new) | ConfigMap key `init-config.sh` carrying Ľ, š, á and an em-dash |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### Why `errors="replace"` and not the default
 
@@ -177,7 +177,7 @@ encoding bug.
 
 `error.txt`: *"the bug affects 100% of non-ASCII content, so the true blast
 radius equals however much of it there is."* Before this folder,
-`namespaces-showcase` contained **zero** non-ASCII bytes across every manifest —
+`examples/showcase` contained **zero** non-ASCII bytes across every manifest —
 so the measured blast radius was zero and the round-trip check was structurally
 incapable of detecting the corruption. It now carries one deliberate instance,
 and `test_every_corpus_file_is_valid_utf8` guards the at-rest half.
@@ -223,9 +223,9 @@ and `test_every_corpus_file_is_valid_utf8` guards the at-rest half.
 ## 12. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/UTF8_Encoding_Corruption_In_ConfigMap_Data/test/test_utf8_encoding.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/UTF8_Encoding_Corruption_In_ConfigMap_Data/test/test_utf8_encoding.py -v
 
 # see the readable, block-scalar form in the generated values
-cd universal/gitops-factory
-Select-String output-showcase/base/redis.yaml -Pattern "Maintainer"
+cd tests/converter   # from the universal-chart root
+Select-String .generated/output-showcase/base/redis.yaml -Pattern "Maintainer"
 ```

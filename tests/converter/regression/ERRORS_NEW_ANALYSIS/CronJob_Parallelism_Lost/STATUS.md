@@ -45,13 +45,13 @@ that pattern is while already editing the list. Four folders in this batch
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~2099–2113 | `handle_cronjob`: `parallelism`, `completions` added to the `jobTemplate.spec` list |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~2207–2216 | `handle_job`: same list, kept in step |
+| `universal/convert_to_universal_chart.py` | ~2099–2113 | `handle_cronjob`: `parallelism`, `completions` added to the `jobTemplate.spec` list |
+| `universal/convert_to_universal_chart.py` | ~2207–2216 | `handle_job`: same list, kept in step |
 | `universal/Universal-chart/templates/cronjob.yaml` | 50–58 (new) | render both via `hasKey` |
 | `universal/Universal-chart/templates/job.yaml` | 31–38 (new) | render both via `hasKey` |
-| `universal/gitops-factory/namespaces-showcase/background-jobs/db-migrate.yaml` | 6–17 | `parallelism: 4`, `completions: 4` |
-| `universal/gitops-factory/namespaces-showcase/background-jobs/nightly-report.yaml` | 12–17 | `parallelism: 2` on the jobTemplate |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/examples/showcase/background-jobs/db-migrate.yaml` | 6–17 | `parallelism: 4`, `completions: 4` |
+| `universal/examples/showcase/background-jobs/nightly-report.yaml` | 12–17 | `parallelism: 2` on the jobTemplate |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### `hasKey`, not `with`
 
@@ -162,5 +162,5 @@ exactly why that rating could not be checked from the report.
 ## 10. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/CronJob_Parallelism_Lost/test/test_parallelism.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/CronJob_Parallelism_Lost/test/test_parallelism.py -v
 ```

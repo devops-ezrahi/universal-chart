@@ -120,15 +120,15 @@ copy, that copy was renamed, and the reference did not follow.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 94 | `import ast` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3251–3300 (new) | `_REFERENCE_PATH_TAILS`, `_is_followed_rename()`, `collect_object_references()` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3590 | `dangling_refs` stat |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3753–3772 | CHANGED-reference downgrade |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3795–3840 (new) | the reference-integrity pass |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~4085, ~4100 | report line + `problems` total |
-| `universal/gitops-factory/namespaces-showcase/background-jobs/db-migrate.yaml` | 24–26, 55–72 | `envFrom` + `ConfigMap/job-defaults` |
-| `universal/gitops-factory/namespaces-showcase/background-jobs/nightly-report.yaml` | 42–48, 119–131 | `envFrom` + a *differing* `ConfigMap/job-defaults` |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/convert_to_universal_chart.py` | 94 | `import ast` |
+| `universal/convert_to_universal_chart.py` | ~3251–3300 (new) | `_REFERENCE_PATH_TAILS`, `_is_followed_rename()`, `collect_object_references()` |
+| `universal/convert_to_universal_chart.py` | ~3590 | `dangling_refs` stat |
+| `universal/convert_to_universal_chart.py` | ~3753–3772 | CHANGED-reference downgrade |
+| `universal/convert_to_universal_chart.py` | ~3795–3840 (new) | the reference-integrity pass |
+| `universal/convert_to_universal_chart.py` | ~4085, ~4100 | report line + `problems` total |
+| `universal/examples/showcase/background-jobs/db-migrate.yaml` | 24–26, 55–72 | `envFrom` + `ConfigMap/job-defaults` |
+| `universal/examples/showcase/background-jobs/nightly-report.yaml` | 42–48, 119–131 | `envFrom` + a *differing* `ConfigMap/job-defaults` |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### The corpus collision
 
@@ -214,10 +214,10 @@ downgrade cannot become a way of hiding the defect it was built to classify.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Secret_ConfigMap_Rename_Reference_Inconsistency/test/test_reference_integrity.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Secret_ConfigMap_Rename_Reference_Inconsistency/test/test_reference_integrity.py -v
 
 # watch the check catch an un-followed rename
 python <scratch>/make_red12.py
-python <scratch>/red12.py --input namespaces-showcase --output <tmp> `
+python <scratch>/red12.py --input examples/showcase --output <tmp> `
   --chart ../Universal-chart --verify-fidelity --cluster-scoped
 ```

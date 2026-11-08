@@ -76,7 +76,7 @@ Two consequences worth knowing:
 Before any template reads `.Values`, the chart runs every string value through
 Helm's `tpl` once (`universal-chart.renderValues`; `extraDeploy` is rendered by
 its own template). So values may use `{{ .Release.Namespace }}` or any other
-value, which is how a gitops-factory `base/` file says
+value, which is how a converted `base/` file says
 `host: api.{{ .Values.environment }}.example.org` and each folder's
 `defaults.yaml` sets `environment: dev`.
 
@@ -91,7 +91,7 @@ configMaps:
 ```
 
 A rendered value is always a string (`"3"`, `"true"`), as if quoted.
-gitops-factory's converter does this escaping for you.
+The converter (`convert_to_universal_chart.py`) does this escaping for you.
 
 ### Values keys added recently — quick reference
 
@@ -1440,9 +1440,8 @@ pdb:
 
 ## 27. NetworkPolicy
 
-> gitops-factory's converter does **not** generate `networkPolicies` from a raw
-> dump — NetworkPolicies in the source are deliberately dropped (one line each in
-> `conflicts_and_warnings.txt`). The key below is for values you write yourself.
+> The converter turns each NetworkPolicy in the source into a `networkPolicies`
+> entry (its spec as written). The key below works the same for values you write yourself.
 
 Restrict traffic at the pod level:
 
@@ -1539,7 +1538,7 @@ rbac:
 
 ## 29. ServiceMonitor
 
-> gitops-factory's converter does **not** generate `serviceMonitor` from a raw
+> The converter does **not** generate `serviceMonitor` from a raw
 > dump — ServiceMonitors in the source are deliberately dropped. The key below is
 > for values you write yourself.
 
@@ -2100,11 +2099,11 @@ clusterSecretStores:
 > reasoning as `storageClasses`/`scc` elsewhere in this chart) — only put an entry
 > here if THIS release is genuinely meant to own that cluster-wide definition (e.g.
 > a platform/namespace-shared release), not per application microservice. If you're
-> generating values with [`gitops-factory`](gitops-factory/)'s `convert_to_universal_chart.py`, route
+> generating values with [`convert_to_universal_chart.py`](docs/converter.md), route
 > `ClusterSecretStore` through its cluster-scoped dedup path (`--cluster-scoped`)
 > rather than declaring it per microservice.
 >
-> `gitops-factory/namespace_importer.py` pulls the store an `ExternalSecret`
+> `converter/importer.py` pulls the store an `ExternalSecret`
 > references (`spec.secretStoreRef`) together with its Vault CA
 > (`caProvider` ConfigMap/Secret) and its `auth.kubernetes.serviceAccountRef`
 > ServiceAccount, and files them in the namespace's `shared.yaml` when more than

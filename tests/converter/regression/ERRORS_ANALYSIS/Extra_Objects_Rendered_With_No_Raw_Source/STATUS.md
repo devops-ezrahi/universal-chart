@@ -115,5 +115,5 @@ header arithmetic.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Missing_Objects_Not_Rendered_By_Any_Release/test/test_missing_and_extra_objects.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Missing_Objects_Not_Rendered_By_Any_Release/test/test_missing_and_extra_objects.py -v
 ```

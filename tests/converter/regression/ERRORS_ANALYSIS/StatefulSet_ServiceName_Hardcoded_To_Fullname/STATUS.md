@@ -29,7 +29,7 @@ than inventing one.
 
 | File | Line | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 686–702 (new) | Capture `spec.serviceName` in the StatefulSet block (comment 686–700, code 701–702) |
+| `universal/convert_to_universal_chart.py` | 686–702 (new) | Capture `spec.serviceName` in the StatefulSet block (comment 686–700, code 701–702) |
 | `universal/Universal-chart/templates/statefulset.yaml` | 14 | `serviceName: {{ .Values.serviceName \| default (include "universal-chart.fullname" .) }}` |
 | `universal/Universal-chart/values.yaml` | 42–49 (new) | Declare `serviceName: ""` (line 49) with the headless-Service rationale |
 | `universal/Universal-chart/values.schema.json` | 34 (new) | `"serviceName": { "type": "string" }` |
@@ -69,7 +69,7 @@ pins this choice so it cannot be quietly "optimised" back.
 `ERRORS_ANALYSIS/StatefulSet_ServiceName_Hardcoded_To_Fullname/test/`
 
 - `fixture/platform-data/redis.yaml` — derived from the real
-  `namespaces-showcase/platform-data/redis.yaml`, with one change: the governing
+  `examples/showcase/platform-data/redis.yaml`, with one change: the governing
   Service is a dedicated `redis-cache-headless` alongside the regular ClusterIP
   `redis-cache`. That is the pattern error.txt describes for jaeger-es-master
   and zookeeper.
@@ -115,7 +115,7 @@ $ python -m pytest test_serviceName.py -q
 ### Accumulated regression suite (folders 1–2)
 
 ```
-$ python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS -q
+$ python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS -q
 ......................                                                   [100%]
 22 passed in 4.68s
 ```
@@ -156,15 +156,15 @@ PASS
 Before the fix, RENDERED read `redis`.
 
 **4. Fidelity report before vs after: unchanged** — `git diff` on
-`output-showcase/report/` is empty. This defect class was 0 before and 0 after
+`.generated/output-showcase/report/` is empty. This defect class was 0 before and 0 after
 (§6), and no other count moved.
 
 **5. Generated-output diff** — exactly two lines, both pinning a real value:
 
 ```
---- a/universal/gitops-factory/output-showcase/base/postgres.yaml
+--- a/universal/.generated/output-showcase/base/postgres.yaml
 +serviceName: postgres
---- b/universal/gitops-factory/output-showcase/base/redis.yaml
+--- b/universal/.generated/output-showcase/base/redis.yaml
 +serviceName: redis-cache
 ```
 
@@ -241,6 +241,6 @@ Raw manifests were **not** modified.
 ## 10. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/StatefulSet_ServiceName_Hardcoded_To_Fullname/test/test_serviceName.py -v
-& universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/StatefulSet_ServiceName_Hardcoded_To_Fullname/test/render_check.ps1
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/StatefulSet_ServiceName_Hardcoded_To_Fullname/test/test_serviceName.py -v
+& universal/.generated/output-showcase/ERRORS_ANALYSIS/StatefulSet_ServiceName_Hardcoded_To_Fullname/test/render_check.ps1
 ```

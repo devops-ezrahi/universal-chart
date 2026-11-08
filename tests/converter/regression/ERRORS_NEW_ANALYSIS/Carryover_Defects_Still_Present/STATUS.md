@@ -82,8 +82,8 @@ whose loss is irreversible.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/namespaces-showcase/platform-data/postgres.yaml` | 9–18 (new) | declare `persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}` |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence of the above |
+| `universal/examples/showcase/platform-data/postgres.yaml` | 9–18 (new) | declare `persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}` |
+| `universal/.generated/output-showcase/**` | regenerated | consequence of the above |
 
 `Retain` on a Postgres StatefulSet is what the field is for, so this is a
 realistic manifest rather than a test hook wearing a manifest's clothes.
@@ -162,7 +162,7 @@ caught my own bad assumption, see §9.
 ### GREEN
 
 ```
-$ python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Carryover_Defects_Still_Present/test/test_carryover_guards.py -q
+$ python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Carryover_Defects_Still_Present/test/test_carryover_guards.py -q
 ..............................                                           [100%]
 30 passed in 0.20s
 ```
@@ -195,7 +195,7 @@ kind: StatefulSet
 ```
 
 **3. Regeneration churn is fully attributable.** Diffed the regenerated
-`output-showcase/` against the pre-change baseline captured at the start of
+`.generated/output-showcase/` against the pre-change baseline captured at the start of
 Phase 2. Every difference is accounted for:
 
 | File | Change | Cause |
@@ -210,7 +210,7 @@ Every other generated file is **byte-identical**.
 **4. Full new-analysis suite and the chart's own suite:**
 
 ```
-$ python -m pytest output-showcase/ERRORS_NEW_ANALYSIS -q
+$ python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS -q
 50 passed in 0.38s
 
 $ helm unittest Universal-chart
@@ -259,11 +259,11 @@ carryover is about.
 ## 12. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Carryover_Defects_Still_Present/test/test_carryover_guards.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Carryover_Defects_Still_Present/test/test_carryover_guards.py -v
 
-cd universal/gitops-factory
-python convert_to_universal_chart.py --input namespaces-showcase --output output-showcase `
+cd tests/converter   # from the universal-chart root
+python convert_to_universal_chart.py --input examples/showcase --output .generated/output-showcase `
   --chart ../Universal-chart --verify-fidelity --cluster-scoped `
   --values-repo-url https://github.com/devops-ezrahi/homelab.git `
-  --values-revision checker --values-path universal/gitops-factory/output-showcase
+  --values-revision checker --values-path universal/.generated/output-showcase
 ```

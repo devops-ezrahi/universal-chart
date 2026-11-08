@@ -87,5 +87,5 @@ no generated-output churn, `helm lint` 0 failed, chart's 234 green.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/SecretStore_Spec_Conditions_Not_Rendered/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/SecretStore_Spec_Conditions_Not_Rendered/test -v
 ```

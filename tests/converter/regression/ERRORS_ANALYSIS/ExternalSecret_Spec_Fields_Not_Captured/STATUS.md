@@ -76,7 +76,7 @@ across namespaces, so one namespace's labels are not the shared object's to set.
 ## 3. Tests
 
 `ExternalSecret_Spec_Fields_Not_Captured/test/` — 11 tests. Fixture derives from
-`namespaces-showcase/identity-auth/session-store.yaml` (same namespace, same file
+`examples/showcase/identity-auth/session-store.yaml` (same namespace, same file
 name, same SecretStore + ExternalSecret pair, same Vault provider block) with
 everything the report names added.
 
@@ -146,5 +146,5 @@ Accumulated: `216 passed`.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ExternalSecret_Spec_Fields_Not_Captured/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ExternalSecret_Spec_Fields_Not_Captured/test -v
 ```

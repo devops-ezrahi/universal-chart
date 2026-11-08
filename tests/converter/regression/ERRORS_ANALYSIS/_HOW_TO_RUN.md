@@ -47,7 +47,7 @@ never by line number. Record the real location in STATUS.md.
 
 ```powershell
 cd C:\repos\homelab\universal\gitops-factory
-python convert_and_verify.py
+python tools/convert_and_verify.py
 ```
 
 That is the whole interface. It runs four steps in order and stops at the first real
@@ -60,11 +60,11 @@ STEP 3  CHECK FIELDS did any field get lost or changed?
 STEP 4  SANITIZE     anonymized, phone-screen-sized reports safe to send outside
 ```
 
-Defaults: `--input namespaces-showcase --output output-showcase --chart ../Universal-chart`.
+Defaults: `--input examples/showcase --output .generated/output-showcase --chart ../Universal-chart`.
 
 **Nothing is ever deleted.** Every step only writes new files. Raw manifests are never
 touched. `--prune` is off by default, so your `ERRORS_ANALYSIS/` folder inside
-`output-showcase/` is safe across re-runs.
+`.generated/output-showcase/` is safe across re-runs.
 
 ### Exit code
 `0` = everything passed. `1` = names changed, fidelity issues found, or a step failed.
@@ -72,10 +72,10 @@ This is your regression gate.
 
 ### Other useful forms (verified flags)
 ```powershell
-python convert_and_verify.py --cluster-scoped          # if STEP 1 reports a CLUSTER CONFLICT
-python convert_and_verify.py --skip-convert            # re-check + re-sanitize existing output only
-python convert_and_verify.py --input namespaces --output output          # the other input set
-python convert_and_verify.py --seed 42                 # reproducible anonymizer aliases, for diffing runs
+python tools/convert_and_verify.py --cluster-scoped          # if STEP 1 reports a CLUSTER CONFLICT
+python tools/convert_and_verify.py --skip-convert            # re-check + re-sanitize existing output only
+python tools/convert_and_verify.py --input namespaces --output output          # the other input set
+python tools/convert_and_verify.py --seed 42                 # reproducible anonymizer aliases, for diffing runs
 ```
 
 ---
@@ -87,8 +87,8 @@ python convert_and_verify.py --seed 42                 # reproducible anonymizer
 ```powershell
 cd C:\repos\homelab\universal\gitops-factory
 python convert_to_universal_chart.py `
-    --input  namespaces-showcase `
-    --output output-showcase `
+    --input  examples/showcase `
+    --output .generated/output-showcase `
     --chart  ..\Universal-chart `
     --verify-fidelity
 ```
@@ -180,7 +180,7 @@ folder such as `dev\yellow`, and `values\` may hold grouping sub-folders).
 A single `-f` does not reproduce it. To see which files exist:
 
 ```powershell
-Get-ChildItem output-showcase -Recurse -Filter *.yaml | Select-Object FullName
+Get-ChildItem .generated/output-showcase -Recurse -Filter *.yaml | Select-Object FullName
 ```
 
 Lint:
@@ -213,7 +213,7 @@ python -m pytest output-showcase\ERRORS_ANALYSIS\<Folder>\test\ -v
 python -m pytest output-showcase\ERRORS_ANALYSIS\ -v
 
 # 5. full pipeline; exit code 0 is the gate
-python convert_and_verify.py
+python tools/convert_and_verify.py
 echo "exit=$LASTEXITCODE"
 
 # 6. strict fidelity gate for this specific defect
@@ -232,7 +232,7 @@ python -m pytest output-showcase\ERRORS_ANALYSIS\<Folder>\test\test_<name>.py -v
 
 ## 7. Isolated fixture runs (recommended for unit-level defects)
 
-Rather than converting all of `namespaces-showcase` on every iteration, point the
+Rather than converting all of `examples/showcase` on every iteration, point the
 converter at a minimal fixture holding only the manifest that reproduces the defect.
 Fast, and the fidelity report contains nothing but your defect:
 
@@ -250,7 +250,7 @@ The fixture must mirror the real input layout: `fixture\<namespace>\<microservic
 The existing folders already follow this — e.g.
 `Annotations_Lost\test\fixture\shop-web\api...yaml`.
 
-Write to `$env:TEMP`, never over `output-showcase`, so a fixture run cannot disturb the
+Write to `$env:TEMP`, never over `.generated/output-showcase`, so a fixture run cannot disturb the
 real output tree or the ERRORS_ANALYSIS work in progress.
 
 ---

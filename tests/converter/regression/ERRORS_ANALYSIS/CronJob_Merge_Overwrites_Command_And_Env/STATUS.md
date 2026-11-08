@@ -97,7 +97,7 @@ folder 13 only guarded in passing, plus the refutation above.
 `CronJob_Merge_Overwrites_Command_And_Env/test/` — 8 tests + `render_check.ps1`.
 
 `fixture/background-jobs/db-migrate.yaml` is derived from
-`namespaces-showcase/background-jobs/db-migrate.yaml` — same namespace, same
+`examples/showcase/background-jobs/db-migrate.yaml` — same namespace, same
 microservice file name, same Secret, same secretKeyRef-into-a-job pattern. Added:
 two CronJobs reducing to the key `backup`, carrying error.txt's verbatim
 commands and its named `STAGE` variable. `fixture/background-jobs-prd/` mirrors
@@ -225,6 +225,6 @@ folder's STATUS §2 for why this chart cannot render a bare `backup`.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/CronJob_Merge_Overwrites_Command_And_Env/test/test_cronjob_command_env.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/CronJob_Merge_Overwrites_Command_And_Env/test/test_cronjob_command_env.py -v
 & universal\gitops-factory\output-showcase\ERRORS_ANALYSIS\CronJob_Merge_Overwrites_Command_And_Env\test\render_check.ps1
 ```

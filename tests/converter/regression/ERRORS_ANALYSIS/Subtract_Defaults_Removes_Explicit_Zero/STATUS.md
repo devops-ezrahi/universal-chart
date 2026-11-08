@@ -92,7 +92,7 @@ and makes `kubectl diff` against an existing cluster noisier for no gain.
 `Subtract_Defaults_Removes_Explicit_Zero/test/` — 10 tests + `render_check.ps1`.
 
 Fixtures derive from the two real showcase manifests that already carry these
-fields — `namespaces-showcase/background-jobs/nightly-report.yaml` (CronJob,
+fields — `examples/showcase/background-jobs/nightly-report.yaml` (CronJob,
 `backoffLimit: 2`) and `.../db-migrate.yaml` (Job + Secret, `backoffLimit: 1`).
 Each limit is changed to an explicit, meaningful 0:
 
@@ -225,6 +225,6 @@ directly, is the one that actually exercises the hoist.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Subtract_Defaults_Removes_Explicit_Zero/test/test_explicit_zero.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Subtract_Defaults_Removes_Explicit_Zero/test/test_explicit_zero.py -v
 & universal\gitops-factory\output-showcase\ERRORS_ANALYSIS\Subtract_Defaults_Removes_Explicit_Zero\test\render_check.ps1
 ```

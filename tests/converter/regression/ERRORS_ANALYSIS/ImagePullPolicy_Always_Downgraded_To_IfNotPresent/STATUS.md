@@ -146,5 +146,5 @@ longer re-pointed at a mutable tag, and a job that wanted to re-pull still does.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ImagePullPolicy_Always_Downgraded_To_IfNotPresent/test/test_image_pull_policy.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ImagePullPolicy_Always_Downgraded_To_IfNotPresent/test/test_image_pull_policy.py -v
 ```

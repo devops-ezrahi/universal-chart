@@ -3,7 +3,7 @@
 **Result: FIXED — idempotence guard added, zero churn.** Severity was disputed
 three ways in one session; the dispute is resolved below and the answer is
 "neither Critical nor benign". The doubling reproduced exactly, the fix removes
-it, and the regenerated `output-showcase` is **byte-identical** — names that
+it, and the regenerated `.generated/output-showcase` is **byte-identical** — names that
 were already sensible are untouched. 15 new tests RED→GREEN, showcase fidelity
 0 lost / 0 changed, chart's 234 green.
 
@@ -74,7 +74,7 @@ touched this function, which is a different code path serving every other kind.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~537–560 | `NamespaceRegistry.claim`: idempotent prefix + free-name walk |
+| `universal/convert_to_universal_chart.py` | ~537–560 | `NamespaceRegistry.claim`: idempotent prefix + free-name walk |
 
 One function, no template change, no corpus change (see §6).
 
@@ -125,7 +125,7 @@ The third line is the one that makes this safe to ship.
 
 ## 5. Zero churn — verified at corpus scale
 
-Regenerated `output-showcase` diffed against the previous folder's run:
+Regenerated `.generated/output-showcase` diffed against the previous folder's run:
 
 ```
 $ diff -r <f09> <f10>
@@ -146,7 +146,7 @@ oversight.
 
 Triggering the doubling needs a namespace where two microservices declare the
 same-kind, same-named object *and* one of those microservices is itself named
-after the object. In `namespaces-showcase` that means writing something like
+after the object. In `examples/showcase` that means writing something like
 "`db-migrate.yaml` declares `ConfigMap/nightly-report`" — a manifest no real
 cluster would contain, added solely to trip a code path. That makes the corpus
 less representative of real input, which is the thing that gives it its value.
@@ -223,6 +223,6 @@ states its own premise instead of hardcoding a miscounted constant.
 ## 12. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Helm_Naming_Prefix_Collisions/test/test_naming_idempotence.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Helm_Naming_Prefix_Collisions/test/test_naming_idempotence.py -v
 python <scratch>/probe_naming.py
 ```

@@ -6,7 +6,7 @@ Compares every `metadata.name` in the RAW manifests against every
 namespace. Exit code 0 means zero naming changes.
 
 Usage:
-    python name_fidelity_check.py --input namespaces-showcase --output <tmp> \\
+    python name_fidelity_check.py --input examples/showcase --output <tmp> \\
         --chart ..
 """
 import argparse

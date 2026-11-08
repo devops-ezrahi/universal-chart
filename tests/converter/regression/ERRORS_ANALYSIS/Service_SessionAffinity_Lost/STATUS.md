@@ -69,7 +69,7 @@ missing block and it is documented in both.
 ## 4. Tests
 
 `Service_SessionAffinity_Lost/test/` — 6 tests. Fixture derives from
-`namespaces-showcase/shop-web/storefront.yaml` with **two** Services, both
+`examples/showcase/shop-web/storefront.yaml` with **two** Services, both
 carrying `sessionAffinity: ClientIP` plus a `sessionAffinityConfig` timeout —
 the non-None case the report never counted.
 
@@ -122,5 +122,5 @@ moved. That contrast is the evidence for where the defect actually was.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Service_SessionAffinity_Lost/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Service_SessionAffinity_Lost/test -v
 ```

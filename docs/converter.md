@@ -1,18 +1,24 @@
-# GitOps Factory — Raw Manifests → Universal Helm Chart → ArgoCD ApplicationSets
+# The converter — namespaces → Universal Chart values → Argo CD
 
-Converts raw per-namespace/per-microservice Kubernetes/OpenShift YAML dumps
-into [Universal Chart](https://github.com/devops-ezrahi/universal-chart) values files and ArgoCD
-`ApplicationSet`s, and includes a mock-environment generator used to
-stress-test the conversion at scale (5 namespaces x 70 microservices).
+One command, `convert_to_universal_chart.py` at the repo root, turns running
+Kubernetes / OpenShift namespaces (or manifest files, or a tree an earlier run
+wrote) into [Universal Chart](https://github.com/devops-ezrahi/universal-chart)
+values files and the Argo CD wiring that deploys them. It renders every release
+with `helm template` against the chart beside it and proves no two releases
+claim the same object before it reports success.
 
-This folder lives inside the Universal Chart repo, whose root is the chart
-itself — so `--chart` defaults to `..` and nothing else needs cloning.
-(It used to be the separate, now archived, `devops-ezrahi/gitops-factory` repo.)
+```bash
+python convert_to_universal_chart.py -n shop-dev -n shop-prd -o out
+```
 
-`output/`, `output-showcase/` and `output-live-demo/` are generated and are not
-committed; `python3 convert_and_verify.py` rebuilds the showcase from `namespaces-showcase/`.
-The large mock dump `namespaces/` is not committed either — generate it with
-`python generate_mock_environment.py --output namespaces --seed 42`.
+The chart is the repo root, so `--chart` defaults to it and nothing else needs
+cloning. (This used to be the separate, now archived, `devops-ezrahi/gitops-factory` repo,
+and later the `gitops-factory/` folder.)
+
+Everything the tools generate lands in `.generated/` (gitignored):
+`python tools/convert_and_verify.py` rebuilds the showcase from
+`examples/showcase/`, and `python tools/generate_mock_environment.py --output
+.generated/namespaces --seed 42` makes the large mock dump.
 
 ### Converter options added in the fork merge
 
@@ -42,104 +48,113 @@ The large mock dump `namespaces/` is not committed either — generate it with
 | Shared promotion | ConfigMaps/Secrets/etc. declared byte-identically by several microservices move into the namespace `shared` release under their original name (Services/Routes excluded). Recorded in `report/renames.json`. |
 | One placement across namespaces | An object (kind + name, env words aside) is in `shared` only if it is shared in **every** namespace that has it. If it sits in a microservice's file in any namespace, it goes to that microservice (the most common owner) everywhere: out of `shared.yaml` in the namespaces where the importer filed it there, and not promoted where several files declare it identically — the owner keeps its copy, the others reference it by name. That is what lets `base/` see it as one object instead of per-namespace copies. A namespace without that microservice keeps the old placement and says so in the report. Services/Routes are not moved. |
 | Cross-reference warnings | Pods referencing a ConfigMap/Secret/SA nobody creates, an SA with no RoleBinding, or a missing NetworkAttachmentDefinition. Report-only. |
-| NetworkPolicy / ServiceMonitor | **Not converted.** Dropped at load time with one line per object in `report/conflicts_and_warnings.txt` (`NetworkPolicy/<name>: dropped — ...`); never in values or `extraDeploy`, and the fidelity / name checks do not count them as lost. The chart's own `networkPolicies` / `serviceMonitor` keys still work for hand-written values. `namespace_importer.py` no longer fetches them. |
+| NetworkPolicy / ServiceMonitor | A NetworkPolicy becomes a `networkPolicies.<name>` entry of the release that owns it (its spec as written). A ServiceMonitor is **not converted**: dropped at load time with one line per object in `report/conflicts_and_warnings.txt`, never in values or `extraDeploy`, and not counted as lost by the fidelity / name checks. The chart's own `serviceMonitor` key still works for hand-written values. |
 | Unused ServiceAccount | A ServiceAccount in a microservice file that none of its pods runs as (e.g. a SecretStore's Vault SA) goes to `extraDeploy` instead of becoming the chart's `serviceAccount` — which would move the pods onto it. Pods on `default` stay there (`serviceAccount.create: false`). |
 | Other | PDB and NetworkAttachmentDefinition pass through `extraDeploy` verbatim; `initContainerOrder` preserves init container order; a PVC `volumeName` whose PV is not in the dump is dropped; redis/emptyDir/nodePort lint warnings; multi-line strings render as `\|` blocks. |
 
 ## Files
 
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `namespace_importer.py` | Pulls a namespace (or one app / one resource / a list of topology URLs) from a live cluster with `oc` and writes the converter's input: `<output>/<namespace>/<microservice>.yaml` + `shared.yaml`, cleaned of runtime metadata. An ExternalSecret brings its SecretStore/ClusterSecretStore (`spec.secretStoreRef`) along, with the store's Vault CA ConfigMap/Secret (`caProvider`) and ServiceAccount (`auth.kubernetes.serviceAccountRef`); each goes to `shared.yaml` only when more than one microservice file needs it, otherwise into that microservice's file — written once either way. |
-| `convert_to_universal_chart.py` | The whole pipeline in one script: raw YAML in, Helm values + the two root ArgoCD manifests out, then (unless `--skip-verify`) every generated release is rendered for real with `helm template` and checked so no two releases claim the same Kubernetes resource. |
-| `values_editor.py` | Values-authoring/editing CLI for microservices you're adding or tuning **by hand** (not converted from a raw dump) — defaults.yaml-aware, so it never asks you to duplicate what a lower layer already covers. See [values_editor.py — hand-authoring microservices](#values_editorpy--hand-authoring-microservices). |
-| `ui/multi-app-manager.html` | The same idea as `values_editor.py`, as a browser UI — open multiple apps' output trees side by side, browse/edit visually, no install. See [ui/multi-app-manager.html — browser UI](#uimulti-app-managerhtml--browser-ui). |
-| `generate_mock_environment.py` | Generates a large, deliberately messy mock raw-dump fixture. |
-| `namespaces_to_chart.py` | Namespaces in, values tree out: pulls each `-n` namespace with `namespace_importer.py`, runs the converter over the dump, and passes every other flag to it (`--env-suffixes`, `--env-group`, `--argocd-manifests`, …). `-o` gets only the tree and nothing else is left behind (`--report DIR` / `--dump DIR` keep those). `--oc kubectl` for plain Kubernetes; `--from-yaml` answers the importer from manifest files instead of a cluster. |
-| `convert_and_verify.py` | Convert + name check + fidelity check + sanitize, in one command. The default entry point. |
-| `regression/` | The pytest regression suite — one folder per fixed defect (`STATUS.md`, `error.txt`, fixtures, a test). `pytest` runs it; see `pytest.ini`. |
-| `docs/` | `BUGFIX-REPORT.md` (what was fixed in the chart and the converter) and `README_REGRESSION_ANALYSIS.md` (cross-reference of the two analysis rounds). |
+| `convert_to_universal_chart.py` | **The command.** Reads a source (`-n`, `--link`, `--from-yaml`, `--input`, `--upgrade`), converts, verifies. `--help` lists every option. |
+| `converter/engine.py` | The conversion itself: dump in, `base/` + per-folder `defaults.yaml` / `values/` (+ Argo CD wiring) out, then render-verification and the opt-in fidelity check. |
+| `converter/importer.py` | Pulls a namespace (or one app / one resource) through `oc` and writes the dump: `<dump>/<namespace>/<microservice>.yaml` + `shared.yaml`, cleaned of runtime metadata. An ExternalSecret brings its SecretStore/ClusterSecretStore along, with the store's Vault CA and ServiceAccount. |
+| `converter/sources.py` | The sources the command reads, all ending in that dump. |
+| `tools/convert_and_verify.py` | Showcase convert + name check + fidelity check + sanitize, in one command. |
+| `tools/values_editor.py` | Values-authoring CLI for microservices you add or tune **by hand** — defaults.yaml-aware. See [values_editor.py](#values_editorpy--hand-authoring-microservices). |
+| `ui/multi-app-manager.html` | The same as a browser UI. See [ui/multi-app-manager.html](#uimulti-app-managerhtml--browser-ui). |
+| `tools/generate_mock_environment.py` | A large, deliberately messy mock dump. |
+| `tests/converter/` | The pytest suite: one `regression/` folder per fixed defect (`STATUS.md`, fixtures, a test) plus the end-to-end tests. Run `python -m pytest -q` there. |
+| `examples/showcase/`, `examples/live-demo/` | Raw demo namespaces (dump layout). |
+| `docs/` | This file, `BUGFIX-REPORT.md`, `README_REGRESSION_ANALYSIS.md`. |
 
-## namespaces_to_chart.py — namespaces in, chart out
-
-The shortest path from a running namespace to a values tree: one command runs
-`namespace_importer.py` over every namespace you name, then
-`convert_to_universal_chart.py` over what it pulled, and leaves **only the
-chart tree** in `-o`. No dump folder, no report, nothing beside it.
+## convert_to_universal_chart.py — any source in, chart out
 
 ```bash
 # Live cluster (oc on PATH, logged in)
-python namespaces_to_chart.py -n shop-dev -n shop-prd -o out
+python convert_to_universal_chart.py -n shop-dev -n shop-prd -o out
 
 # Plain Kubernetes
-python namespaces_to_chart.py -n shop-dev,shop-prd -o out --oc kubectl --kubeconfig ~/.kube/lab
+python convert_to_universal_chart.py -n shop-dev,shop-prd -o out --oc kubectl --kubeconfig ~/.kube/lab
 
-# No cluster: answer the importer from manifest files or folders
-python namespaces_to_chart.py --from-yaml dump/ extra.yaml -o out
+# OpenShift console links: a namespace page, a topology app, or one resource (pulled with its app)
+python convert_to_universal_chart.py -o out \
+    --link "https://console.apps.ocp.example.com/topology/ns/shop-dev?selectId=group%3Astorefront" \
+    --link "https://console.apps.ocp.example.com/k8s/ns/shop-prd/deployments/web"
+
+# No cluster: manifest files or folders (everything in them is converted)
+python convert_to_universal_chart.py --from-yaml dump/ extra.yaml -o out
+
+# A dump already in <namespace>/<microservice>.yaml layout
+python convert_to_universal_chart.py --input dump/ -o out
+
+# Pull now, review or edit the dump, convert later
+python convert_to_universal_chart.py -n shop-dev --pull-only -o dump/
+python convert_to_universal_chart.py --input dump/ -o out
 ```
 
 ### What it does
 
-1. **Pull.** Each `-n` namespace goes through the importer's own
-   full-namespace mode — the same as `namespace_importer.py -n <ns>`:
-   workloads grouped into microservices (`part-of` → `app` → workload name),
-   the ConfigMaps/Secrets/SAs/claims they reference, `shared.yaml` for what
-   several of them use, runtime metadata stripped. An Ingress travels with the
-   microservice whose Service it routes to.
-2. **Convert.** The converter runs over that pull. **Every option this script
-   does not know is handed to the converter unchanged**, so anything in
-   `convert_to_universal_chart.py --help` works here too.
-3. **Verify.** Unless you pass `--skip-verify`, every release is rendered with
-   `helm template` against the chart this script ships beside, and checked so
-   no two releases claim the same object. It works from any directory.
-4. **Clean up.** The pull and the converter's report are deleted. `-o` holds
-   `base/` and one folder per namespace (plus the ArgoCD wiring, if you asked
-   for it).
+1. **Pull.** Every source ends in the same dump. `-n` and `--link` go through
+   the importer's own modes (whole namespace / topology app): workloads grouped
+   into microservices (`part-of` → `app` → workload name), the
+   ConfigMaps/Secrets/SAs/claims they reference, `shared.yaml` for what several
+   of them use, runtime metadata stripped. `--from-yaml` answers the same reads
+   from the files, then also files everything the workloads did not reference
+   (given YAML is all app: Roles, a ConfigMap nobody mounts, cluster-scoped
+   objects). `--input` skips the pull.
+2. **Convert.** The engine turns the dump into `base/`, per-folder
+   `defaults.yaml` and `values/`, plus the Argo CD wiring if asked.
+3. **Verify.** Unless `--skip-verify`, every release is rendered with
+   `helm template` against the chart and checked so no two releases claim the
+   same object.
+4. **Report.** `<output>/report/` (or `--report DIR`) holds the conversion
+   report, render conflicts and, when the pull could not bring something in,
+   `pull_warnings.txt`. A pull's temp dump is deleted (`--dump DIR` keeps it).
 
-### Options
+### Source options
 
 | Option | Meaning |
 |---|---|
 | `-n NS` | Namespace to pull. Repeat it, or comma-separate: `-n a -n b,c`. |
-| `-o DIR` | Where the values tree is written. Required. |
-| `--oc CLI` | Cluster CLI to call. Default `oc`; `kubectl` works for plain Kubernetes (OpenShift-only kinds like Routes are then just not found). |
-| `--kubeconfig FILE` | Passed to every `oc`/`kubectl` call. |
-| `--from-yaml PATH…` | Read manifests from files/folders instead of a cluster (`kubectl get -o yaml` output, a `List`, several documents per file — anything). Documents are grouped by their own `metadata.namespace`; with `-n`, only those namespaces are kept. |
-| `--default-namespace NS` | With `--from-yaml`: the namespace for documents that name none (what `helm template` renders). Without it, such a document is an error. |
-| `--dump DIR` | Keep the importer's pull here instead of a temp dir. Must be empty or new. Useful to hand-edit the pull and then run the converter on it yourself. |
-| `--report DIR` | Keep the converter's report (`conflicts_and_warnings.txt`, `conversion_report.json`, `renames.json`) here. |
-| anything else | Passed to the converter: `--env-suffixes`, `--env-group`, `--argocd-manifests`, `--values-repo-url`, `--chart-revision`, `--skip-verify`, … |
+| `--link URL` | OpenShift console link: a namespace page, a topology app (`…/topology/ns/<ns>?selectId=group:<app>`) or a resource page (`…/k8s/ns/<ns>/<kind>/<name>`, pulled with the app it belongs to). Repeatable; mixes with `-n`. |
+| `--from-yaml PATH…` | Manifests from files/folders instead of a cluster (`kubectl get -o yaml` output, a `List`, `helm template` output — anything). Each document goes to its own `metadata.namespace`; with `-n`, only those namespaces are kept. |
+| `--default-namespace NS` | With `--from-yaml`: the namespace of documents that name none. Without it, a cluster-scoped one goes with the first namespace and anything else is an error. |
+| `--input DIR` | A dump already in the converter's layout. The default source (`namespaces/`) when no other is given. |
+| `--oc CLI`, `--kubeconfig FILE` | The cluster CLI (default `oc`; `kubectl` works for plain Kubernetes) and the kubeconfig every call uses. |
+| `--pull-only` | Stop after the pull; the dump is written to `-o`. |
+| `--dump DIR`, `--report DIR` | Keep the pulled dump; write the report somewhere other than `<output>/report`. |
+| `--warnings-file FILE` | Also write the pull's warnings as a JSON list (what the devops-portal reads). |
+| `-o DIR` | Where the values tree is written. |
 
-`--input` and `--output` are the script's own business and are refused.
+Everything else in `--help` is a conversion option and works with every source.
 
 ### Common recipes
 
 ```bash
 # Environment suffixes stripped from names, colour variants grouped,
-# ArgoCD wiring written, report kept for review
-python namespaces_to_chart.py -n pay-dev,pay-stg,pay-prd -o values \
+# Argo CD wiring written, report kept outside the tree
+python convert_to_universal_chart.py -n pay-dev,pay-stg,pay-prd -o values \
     --env-suffixes dev,stg,prd --env-group color=black,yellow \
     --argocd-manifests true --values-repo-url https://git.example.com/gitops/pay-values.git \
     --report values-report
 
 # A packaged chart, rendered first, converted like any other manifests
 helm template shop ./shop-chart -n shop-dev > shop.yaml
-python namespaces_to_chart.py --from-yaml shop.yaml --default-namespace shop-dev -o out
+python convert_to_universal_chart.py --from-yaml shop.yaml --default-namespace shop-dev -o out
 ```
 
 ### What it prints
 
 - `==> pulling namespace <ns>` per namespace, then the importer's own fetch
   summary.
-- `warning: nothing was pulled from '<ns>'` for a namespace with no workloads
-  — it is left out of the tree rather than failing the run.
-- `==> N referenced object(s) could not be fetched` — a Secret, ConfigMap or
-  store some workload references that the cluster (or the YAML) does not have.
-  The tree is still written; the reference is left as it was.
-- The converter's summary, and — without `--report` — a note that the report
-  path it names is gone.
+- `==> N pull warning(s)` — a namespace with nothing in it, a link that could
+  not be read, a referenced Secret/ConfigMap the cluster (or the YAML) does
+  not have. The tree is still written; the warnings are also in
+  `report/pull_warnings.txt`.
+- The converter's summary and the render-verification result.
 
-The exit code is the converter's: `0` means converted **and** verified.
+The exit code is the conversion's: `0` means converted **and** verified.
 
 ### What it does not carry
 
@@ -310,9 +325,9 @@ Two ways to say which releases are copies:
 
 ```bash
 # numbered: every release named x-<id>
-python namespaces_to_chart.py -n shop-dev -o out --instances x
+python convert_to_universal_chart.py -n shop-dev -o out --instances x
 # any names: exactly these releases are copies of x
-python namespaces_to_chart.py -n shop-dev -o out --instances x=alpha,beta,gamma
+python convert_to_universal_chart.py -n shop-dev -o out --instances x=alpha,beta,gamma
 ```
 
 Either way the output is one base plus one small values file per copy:
@@ -519,12 +534,12 @@ supplies.
 ```bash
 # See what's already in an app: namespaces, microservices, how many keys
 # each defaults.yaml already covers.
-python values_editor.py list --app-dir output/payments-app
+python tools/values_editor.py list --app-dir output/payments-app
 
 # Print the fully-merged EFFECTIVE values for one microservice — global
 # base/ -> namespace defaults -> this namespace's values/,
 # exactly what would actually deploy.
-python values_editor.py show --app-dir output/payments-app \
+python tools/values_editor.py show --app-dir output/payments-app \
     --namespace dev --name checkout
 
 # Scaffold a brand-new microservice. Anything you set here that's already
@@ -533,7 +548,7 @@ python values_editor.py show --app-dir output/payments-app \
 # already exists (another namespace already runs a "checkout"), the
 # structural flags below are ignored and that shared base is reused as-is —
 # only this namespace's values/checkout.yaml gets written.
-python values_editor.py new --app-dir output/payments-app \
+python tools/values_editor.py new --app-dir output/payments-app \
     --namespace dev --name checkout \
     --image my-registry/checkout:1.0.0 \
     --port http:8080 \
@@ -547,15 +562,15 @@ python values_editor.py new --app-dir output/payments-app \
 # file automatically, matching the same split convert_to_universal_chart.py
 # itself uses — everything else goes to the shared base/ file (and so
 # affects every other namespace reusing it).
-python values_editor.py set --app-dir output/payments-app \
+python tools/values_editor.py set --app-dir output/payments-app \
     --namespace dev --name checkout \
     --key resources.limits.memory --value 512Mi
 
 # Validate every microservice's merged values against the chart's schema,
 # and (with --chart) render each one for real to catch what the schema
 # can't.
-python values_editor.py validate --app-dir output/payments-app \
-    --schema ../values.schema.json --chart ..
+python tools/values_editor.py validate --app-dir output/payments-app \
+    --schema values.schema.json --chart .
 ```
 
 `new` and `set` both use `--set`/generic `--key`/`--value` flags for a
@@ -725,12 +740,12 @@ hatch for anything unrecognized).
 ## Running the full end-to-end verification
 
 ```bash
-cd gitops-factory        # inside the universal-chart repo
+# from the universal-chart repo root
 pip install pyyaml
 
 # 1. Generate the mock raw-dump fixture: 5 namespaces x 70 microservices,
 #    with deliberately planted naming conflicts and edge cases.
-python generate_mock_environment.py --output namespaces --seed 42
+python tools/generate_mock_environment.py --output namespaces --seed 42
 
 # 2. Convert it AND verify it in one call. This does everything:
 #      - builds Helm values + the root ArgoCD manifests from the raw manifests
@@ -738,7 +753,7 @@ python generate_mock_environment.py --output namespaces --seed 42
 #      - renders every generated release for real with `helm template` and
 #        checks no two releases claim the same Kubernetes object
 python convert_to_universal_chart.py --input namespaces --output output \
-    --chart .. --argocd-manifests true \
+    --argocd-manifests true \
     --chart-repo-url  https://github.com/devops-ezrahi/universal-chart.git \
     --values-repo-url https://git.example.com/gitops/microservices-values.git
 ```
@@ -811,7 +826,7 @@ Both scripts are idempotent given the same `--seed`/input. To start over:
 
 ```bash
 rm -rf namespaces output
-python generate_mock_environment.py --output namespaces --seed 42
+python tools/generate_mock_environment.py --output namespaces --seed 42
 python convert_to_universal_chart.py --input namespaces --output output
 ```
 
@@ -820,15 +835,15 @@ python convert_to_universal_chart.py --input namespaces --output output
 The mock fixture above exists to stress-test the converter at scale; onboarding a
 real app follows the exact same input contract, just with real data:
 
-> Steps 1 and 3 in one command, with verification and nothing left beside
-> the tree: [`namespaces_to_chart.py`](#namespaces_to_chartpy--namespaces-in-chart-out).
+> Steps 1 and 3 in one command, with verification:
+> `python convert_to_universal_chart.py -n <namespace> -o out` ([details](#convert_to_universal_chartpy--any-source-in-chart-out)).
 
 1. **Dump the namespace's desired state.** The easy way is
-   `namespace_importer.py`, which splits the namespace into per-microservice
+   `converter/importer.py`, which splits the namespace into per-microservice
    files and a `shared.yaml` for you (and brings each ExternalSecret's
    SecretStore, Vault CA and ServiceAccount along):
    ```bash
-   python namespace_importer.py -n <namespace> -o namespaces [--kubeconfig <file>]
+   python convert_to_universal_chart.py -n <namespace> --pull-only -o namespaces [--kubeconfig <file>]
    ```
    By hand, for each namespace you're onboarding:
    ```bash
@@ -864,7 +879,7 @@ real app follows the exact same input contract, just with real data:
    `--input` at your real `namespaces/` tree:
    ```bash
    python convert_to_universal_chart.py --input namespaces --output output \
-       --chart .. \
+       --chart . \
        --chart-repo-url  https://<your-git-host>/gitops/universal-chart.git \
        --values-repo-url https://<your-git-host>/gitops/microservices-values.git
    ```

@@ -36,7 +36,7 @@ protocol, and inventing one would mislabel the port.
 ## 3. Grep proof: this repo's data does not exercise it
 
 ```
-$ grep -rh "appProtocol" namespaces namespaces-showcase namespaces-live-demo | wc -l
+$ grep -rh "appProtocol" namespaces examples/showcase examples/live-demo | wc -l
 0
 ```
 
@@ -47,7 +47,7 @@ the object the report names, is not in this repo.
 ## 4. Tests
 
 `Service_AppProtocol_Lost/test/` — 8 tests. Fixture derives from
-`namespaces-showcase/shop-web/api-gateway.yaml` (same namespace, same file name,
+`examples/showcase/shop-web/api-gateway.yaml` (same namespace, same file name,
 same Deployment + Service pair) with `appProtocol` added and a **second**
 Service so both templates are covered.
 
@@ -103,5 +103,5 @@ AssertionError: raw {'api-gateway': {'http': 'http', 'otlp-grpc': 'grpc'},
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Service_AppProtocol_Lost/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Service_AppProtocol_Lost/test -v
 ```

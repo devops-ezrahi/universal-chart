@@ -157,6 +157,6 @@ not modified; the fixture is a copy with digests substituted.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Image_Digest_Replaced_With_Mutable_Tag/test/test_image_digest.py -v
-& universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Image_Digest_Replaced_With_Mutable_Tag/test/render_check.ps1
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Image_Digest_Replaced_With_Mutable_Tag/test/test_image_digest.py -v
+& universal/.generated/output-showcase/ERRORS_ANALYSIS/Image_Digest_Replaced_With_Mutable_Tag/test/render_check.ps1
 ```

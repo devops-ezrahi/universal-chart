@@ -57,10 +57,10 @@ with the application's own variable and silently override it.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~1112–1128 | `enableServiceLinks` added to the pod-spec scalar whitelist |
+| `universal/convert_to_universal_chart.py` | ~1112–1128 | `enableServiceLinks` added to the pod-spec scalar whitelist |
 | `universal/Universal-chart/templates/_pod-spec.tpl` | 37–48 (new) | render via `hasKey`, with the reason it differs from its neighbours |
-| `universal/gitops-factory/namespaces-showcase/identity-auth-prd/opa-prd.yaml` | 17–28 | `enableServiceLinks: false` **and** `shareProcessNamespace: false` |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/examples/showcase/identity-auth-prd/opa-prd.yaml` | 17–28 | `enableServiceLinks: false` **and** `shareProcessNamespace: false` |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 **Both booleans in one pod spec, deliberately.** The report bucketed them
 together and their defaults are opposite. Having them side by side in the corpus
@@ -137,5 +137,5 @@ different fields.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/EnableServiceLinks_Lost/test/test_enable_service_links.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/EnableServiceLinks_Lost/test/test_enable_service_links.py -v
 ```

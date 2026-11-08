@@ -111,5 +111,5 @@ readings are the point.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Legacy_ServiceAccount_Field_Lost/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Legacy_ServiceAccount_Field_Lost/test -v
 ```

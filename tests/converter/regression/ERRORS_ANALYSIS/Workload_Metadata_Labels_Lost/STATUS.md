@@ -83,7 +83,7 @@ the rule is consistent.
 ## 3. Tests
 
 `Workload_Metadata_Labels_Lost/test/` — 15 tests. Fixture derives from
-`namespaces-showcase/shop-web/api-gateway.yaml` with real custom labels on eight
+`examples/showcase/shop-web/api-gateway.yaml` with real custom labels on eight
 object kinds: `team`, `environment`, `app.kubernetes.io/part-of` (135
 occurrences in the source report) and `argocd.argoproj.io/instance`.
 
@@ -177,5 +177,5 @@ not exercise it. That is why the fixture, not the count, is the evidence.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Workload_Metadata_Labels_Lost/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Workload_Metadata_Labels_Lost/test -v
 ```

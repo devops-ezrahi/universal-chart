@@ -4,7 +4,7 @@ values_editor.py
 =================
 A values-authoring/editing CLI for the Universal Chart, built on top of the
 layered defaults.yaml system convert_to_universal_chart.py produces (see
-that script's docstring and gitops-factory/README.md's "defaults.yaml —
+that script's docstring and docs/converter.md's "defaults.yaml —
 factoring out what's common" section for the full layering rationale).
 
 Operates on ONE APP's output tree — what one convert_to_universal_chart.py

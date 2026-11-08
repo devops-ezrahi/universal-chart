@@ -60,7 +60,7 @@ conflicts file — which is the same noise problem folders 29 and 33 are about.
 ## 3. Tests
 
 `ServiceAccount_Secrets_And_ImagePullSecrets_Lost/test/` — 8 tests. Fixture
-derives from `namespaces-showcase/shop-web/api-gateway.yaml`, with a
+derives from `examples/showcase/shop-web/api-gateway.yaml`, with a
 ServiceAccount carrying **both** kinds at once, because telling them apart is
 the whole folder:
 
@@ -128,5 +128,5 @@ the suite — the moment the severity flips from cosmetic to CRITICAL.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ServiceAccount_Secrets_And_ImagePullSecrets_Lost/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ServiceAccount_Secrets_And_ImagePullSecrets_Lost/test -v
 ```

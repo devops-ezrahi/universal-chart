@@ -68,8 +68,8 @@ crash in it.
 
 | File | Location | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | `sanitize_object`, pod-template strip | added `ownerReferences` to the key list, with the uid rationale |
-| `universal/gitops-factory/namespaces-showcase/platform-ops/metrics-agent.yaml` | `metadata` + `spec.template.metadata` | corpus fixture: an operator-managed workload carrying a `StoreEndpoint` owner at the object level and a `Thanos` owner at the pod-template level, both with uids |
+| `universal/convert_to_universal_chart.py` | `sanitize_object`, pod-template strip | added `ownerReferences` to the key list, with the uid rationale |
+| `universal/examples/showcase/platform-ops/metrics-agent.yaml` | `metadata` + `spec.template.metadata` | corpus fixture: an operator-managed workload carrying a `StoreEndpoint` owner at the object level and a `Thanos` owner at the pod-template level, both with uids |
 | `.../ERRORS_NEW_ANALYSIS/Pod_Template_Metadata_Name_Namespace_Lost/test/test_pod_template_metadata.py` | 1 test | folder 22's deferred-verdict test, inverted and re-documented — see §7 |
 | `.../ERRORS_NEW_ANALYSIS/Thanos_OwnerReferences_Lost/test/` | new | 15 tests |
 
@@ -139,7 +139,7 @@ value — which is what "stripped at the boundary" is supposed to look like.
 ## 6. Tests
 
 ```
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Thanos_OwnerReferences_Lost/test -q
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Thanos_OwnerReferences_Lost/test -q
 ...............                                                          [100%]
 15 passed in 0.69s
 ```
@@ -218,7 +218,7 @@ folder 13's deliberate rename, unchanged and unrelated.
 
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Thanos_OwnerReferences_Lost/test -v
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Thanos_OwnerReferences_Lost/test -v
 python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out23
 ```
 

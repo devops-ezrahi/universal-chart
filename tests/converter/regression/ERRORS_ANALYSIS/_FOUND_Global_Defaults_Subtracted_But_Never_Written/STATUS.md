@@ -97,8 +97,8 @@ Not hypothetical. After folder 7's fix, `ingress.serviceName` was captured for
 value. Only after fixing it did they appear:
 
 ```diff
---- a/universal/gitops-factory/output-showcase/identity-auth/values/dex.yaml
-+++ b/universal/gitops-factory/output-showcase/identity-auth/values/dex.yaml
+--- a/universal/.generated/output-showcase/identity-auth/values/dex.yaml
++++ b/universal/.generated/output-showcase/identity-auth/values/dex.yaml
        portName: http
 +  serviceName: dex
  replicaCount: 2
@@ -192,7 +192,7 @@ before and after and pins that the fix did not simply delete the feature.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/_FOUND_Global_Defaults_Subtracted_But_Never_Written/test/test_global_defaults_layer.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/_FOUND_Global_Defaults_Subtracted_But_Never_Written/test/test_global_defaults_layer.py -v
 ```
 
 

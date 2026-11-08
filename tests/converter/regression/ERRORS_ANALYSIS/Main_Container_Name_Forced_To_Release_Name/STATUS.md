@@ -77,7 +77,7 @@ important line in this file.
   template render + fallback on all three; checker suppression removed; checker
   reports a rename; full round-trip.
 - `compare_all_container_names.py` — renders **every** release in
-  `output-showcase` and compares `container[0]` against the raw manifest. Exits
+  `.generated/output-showcase` and compares `container[0]` against the raw manifest. Exits
   non-zero on any mismatch. Reusable as a standing check.
 - `render_check.ps1` — fixture chain (Part A) + whole-showcase sweep (Part B).
 
@@ -217,9 +217,9 @@ still pass thanks to the `| default` fallback.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Main_Container_Name_Forced_To_Release_Name/test/test_container_name.py -v
-& universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Main_Container_Name_Forced_To_Release_Name/test/render_check.ps1
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Main_Container_Name_Forced_To_Release_Name/test/test_container_name.py -v
+& universal/.generated/output-showcase/ERRORS_ANALYSIS/Main_Container_Name_Forced_To_Release_Name/test/render_check.ps1
 
-# standing whole-showcase check (run from universal/gitops-factory):
-python output-showcase/ERRORS_ANALYSIS/Main_Container_Name_Forced_To_Release_Name/test/compare_all_container_names.py
+# standing whole-showcase check (run from the repo root):
+python .generated/output-showcase/ERRORS_ANALYSIS/Main_Container_Name_Forced_To_Release_Name/test/compare_all_container_names.py
 ```

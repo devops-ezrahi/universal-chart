@@ -3,14 +3,14 @@
 generate_showcase_extra.py
 ============================
 Adds 10 more hand-specified, REAL-image microservices to each of
-namespaces-showcase/'s 5 namespaces (identity-auth, shop-web, platform-data,
+examples/showcase/'s 5 namespaces (identity-auth, shop-web, platform-data,
 platform-ops, background-jobs) — 50 new files total, on top of the 12 that
 already exist there.
 
 Unlike generate_mock_environment.py (which fabricates random OpenShift-dump
 noise to stress-test the converter's conflict resolution at scale), every
 image here is a real, publicly pullable one, and every raw manifest matches
-namespaces-showcase's existing hand-authored house style: plain `app: <name>`
+examples/showcase's existing hand-authored house style: plain `app: <name>`
 labels/selectors (no OpenShift dump noise), real resource requests/limits,
 readiness/liveness probes where the image supports one cheaply, ClusterIP-only
 Services (no Ingress/Route — none of these are meant to be publicly exposed),
@@ -19,7 +19,7 @@ bundled 'local-path', does not support ReadWriteMany — see shop-web/shared.yam
 for the same lesson learned the hard way on the existing fixture).
 
 Usage:
-    python generate_showcase_extra.py --output namespaces-showcase
+    python generate_showcase_extra.py --output examples/showcase
 """
 from __future__ import annotations
 
@@ -940,7 +940,7 @@ def build_background_jobs(ns_dir: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--output", default="namespaces-showcase")
+    ap.add_argument("--output", default="examples/showcase")
     args = ap.parse_args()
     root = Path(args.output)
 

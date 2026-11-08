@@ -44,15 +44,15 @@ dropped by the same gap.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 1063–1097 (new) | `POD_TEMPLATE_CHART_LABELS`, `pod_template_labels()`, `pod_template_annotations()` — the shared seam |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~1010–1015 | `handle_workload` now calls the seam instead of an inline filter |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~1770–1777 | `handle_cronjob` reads `jobTemplate.spec.template.metadata` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~1880–1888 | `handle_job` reads `spec.template.metadata` |
+| `universal/convert_to_universal_chart.py` | 1063–1097 (new) | `POD_TEMPLATE_CHART_LABELS`, `pod_template_labels()`, `pod_template_annotations()` — the shared seam |
+| `universal/convert_to_universal_chart.py` | ~1010–1015 | `handle_workload` now calls the seam instead of an inline filter |
+| `universal/convert_to_universal_chart.py` | ~1770–1777 | `handle_cronjob` reads `jobTemplate.spec.template.metadata` |
+| `universal/convert_to_universal_chart.py` | ~1880–1888 | `handle_job` reads `spec.template.metadata` |
 | `universal/Universal-chart/templates/cronjob.yaml` | 50–61 | render `$jt.podLabels` / `$jt.podAnnotations` |
 | `universal/Universal-chart/templates/job.yaml` | 31–42 | render `$spec.podLabels` / `$spec.podAnnotations` |
-| `universal/gitops-factory/namespaces-showcase/background-jobs/nightly-report.yaml` | 13–33 | pod-template labels + injector annotation |
-| `universal/gitops-factory/namespaces-showcase/background-jobs/db-migrate.yaml` | 7–17 | pod-template labels on the Job |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/examples/showcase/background-jobs/nightly-report.yaml` | 13–33 | pod-template labels + injector annotation |
+| `universal/examples/showcase/background-jobs/db-migrate.yaml` | 7–17 | pod-template labels on the Job |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### Why a seam and not a third copy
 
@@ -179,7 +179,7 @@ $ python -m pytest .../CronJob_Pod_Template_Labels_Lost/test/test_cronjob_pod_la
 3. **Template** (4) — both templates render the labels via real `helm template`,
    selector labels survive alongside them, annotations render, and no empty
    `annotations: {}` is invented when there are none.
-4. **Corpus coverage** (3) — a CronJob and a Job in `namespaces-showcase` carry
+4. **Corpus coverage** (3) — a CronJob and a Job in `examples/showcase` carry
    pod-template labels, and one carries an injector annotation so the P1 half
    is not left untested.
 
@@ -240,7 +240,7 @@ Folder 3 carries the dotted form; this folder carries the camelCase one.
 ## 11. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/CronJob_Pod_Template_Labels_Lost/test/test_cronjob_pod_labels.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/CronJob_Pod_Template_Labels_Lost/test/test_cronjob_pod_labels.py -v
 
 # rebuild the two RED variants and re-run either half in isolation
 python <scratch>/make_red5.py

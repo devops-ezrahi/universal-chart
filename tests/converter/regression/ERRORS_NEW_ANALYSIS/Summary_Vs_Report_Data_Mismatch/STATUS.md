@@ -40,12 +40,12 @@ mechanism intact. Two changes remove the mechanism.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 432–461 (new) | `run_fingerprint()` — content-derived run identity |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 3216–3221 (new) | `_FIDELITY_FIELD_ERROR` regex |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 3222–3262 (new) | `fidelity_error_breakdown()` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 3967, 3971–3983 | stamp the RUN IDENTITY block into the report header |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 4003 | append the generated breakdown to the summary block |
-| `universal/gitops-factory/sanitize_fidelity_report.py` | 302–318 | teach `_PREAMBLE_HINTS` / `_BREAKDOWN_ROW` about the new header |
+| `universal/convert_to_universal_chart.py` | 432–461 (new) | `run_fingerprint()` — content-derived run identity |
+| `universal/convert_to_universal_chart.py` | 3216–3221 (new) | `_FIDELITY_FIELD_ERROR` regex |
+| `universal/convert_to_universal_chart.py` | 3222–3262 (new) | `fidelity_error_breakdown()` |
+| `universal/convert_to_universal_chart.py` | 3967, 3971–3983 | stamp the RUN IDENTITY block into the report header |
+| `universal/convert_to_universal_chart.py` | 4003 | append the generated breakdown to the summary block |
+| `universal/tools/sanitize_fidelity_report.py` | 302–318 | teach `_PREAMBLE_HINTS` / `_BREAKDOWN_ROW` about the new header |
 
 ### Design decisions inside the fix
 
@@ -134,7 +134,7 @@ FAILED test_breakdown_counts_every_error_shape_the_checker_emits
 ### GREEN — after the fix
 
 ```
-$ python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Summary_Vs_Report_Data_Mismatch/test/test_run_identity.py -q
+$ python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Summary_Vs_Report_Data_Mismatch/test/test_run_identity.py -q
 ....................                                                     [100%]
 20 passed in 0.25s
 ```
@@ -152,7 +152,7 @@ Round-trip fidelity report — raw input vs `helm template` of the converted out
 RUN IDENTITY — counts below describe THIS run and no other.
   run id:         c919e0fb0308-e1073701d07c
   converter:      c919e0fb0308  (convert_to_universal_chart.py)
-  input:          e1073701d07c  (namespaces-showcase)
+  input:          e1073701d07c  (examples/showcase)
   output:         ...\f01
   Compare two fidelity reports ONLY when their run ids match. A differing
   run id means the converter, the input, or both changed — so a count that
@@ -314,10 +314,10 @@ Noticed while working; code left untouched, belongs to other folders:
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Summary_Vs_Report_Data_Mismatch/test/test_run_identity.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Summary_Vs_Report_Data_Mismatch/test/test_run_identity.py -v
 
-cd universal/gitops-factory
-python convert_to_universal_chart.py --input namespaces-showcase --output <tmp> `
+cd tests/converter   # from the universal-chart root
+python convert_to_universal_chart.py --input examples/showcase --output <tmp> `
   --chart ../Universal-chart --verify-fidelity --cluster-scoped
 Get-Content <tmp>/report/fidelity_report.txt -TotalCount 20
 ```

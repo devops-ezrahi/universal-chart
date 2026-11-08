@@ -84,7 +84,7 @@ and the zero-diff regeneration in §5 confirms it across the whole showcase.
 `ERRORS_ANALYSIS/VolumeMount_SubPath_Lost_Duplicate_Name_Collision/test/`
 
 - `fixture/shop-web/storefront.yaml` — from the real
-  `namespaces-showcase/shop-web/storefront.yaml`, with `nginx-conf` mounted
+  `examples/showcase/shop-web/storefront.yaml`, with `nginx-conf` mounted
   three times on different subPaths plus one unique `site` mount as a control.
 - `test_volumemount_subpath.py` — 10 tests across 6 layers (helper, converter,
   template render, validator both ways, end-to-end CLI, fidelity checker).
@@ -125,7 +125,7 @@ $ python -m pytest test_volumemount_subpath.py -q
 ### Accumulated regression suite (folders 1–3)
 
 ```
-$ python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS -q
+$ python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS -q
 ................................                                         [100%]
 32 passed in 7.70s
 ```
@@ -235,6 +235,6 @@ derived from the real `storefront.yaml`; raw manifests were **not** modified.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/VolumeMount_SubPath_Lost_Duplicate_Name_Collision/test/test_volumemount_subpath.py -v
-& universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/VolumeMount_SubPath_Lost_Duplicate_Name_Collision/test/render_check.ps1
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/VolumeMount_SubPath_Lost_Duplicate_Name_Collision/test/test_volumemount_subpath.py -v
+& universal/.generated/output-showcase/ERRORS_ANALYSIS/VolumeMount_SubPath_Lost_Duplicate_Name_Collision/test/render_check.ps1
 ```

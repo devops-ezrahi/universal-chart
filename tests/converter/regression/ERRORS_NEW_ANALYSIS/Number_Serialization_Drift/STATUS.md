@@ -77,8 +77,8 @@ wrong. The fix is in the emitter.
 | File | Change |
 |---|---|
 | `convert_to_universal_chart.py` | `YAML12_ONLY_NUMERIC_RE` + `_represent_str_quoting_go_numerics` + `_ValuesDumper`; `dump_yaml`'s two `yaml.safe_dump` calls now use that dumper |
-| `namespaces-showcase/platform-ops/shared.yaml` | ConfigMap fixture: `MAX_SAMPLE_BYTES: "1e+09"` plus the three-value control group |
-| `namespaces-showcase/platform-ops/metrics-agent.yaml` | literal env var and an `ephemeral-storage: "2e+09"` quantity — the two other converter paths |
+| `examples/showcase/platform-ops/shared.yaml` | ConfigMap fixture: `MAX_SAMPLE_BYTES: "1e+09"` plus the three-value control group |
+| `examples/showcase/platform-ops/metrics-agent.yaml` | literal env var and an `ephemeral-storage: "2e+09"` quantity — the two other converter paths |
 
 ```python
 YAML12_ONLY_NUMERIC_RE = re.compile(
@@ -158,7 +158,7 @@ OLD (pre-folder-24) == NEW  ->  True
 ## 6. Tests
 
 ```
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Number_Serialization_Drift/test -q
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Number_Serialization_Drift/test -q
 25 passed
 ```
 
@@ -193,7 +193,7 @@ text.)
 
 ## 8. A repo-state change this folder caused, disclosed in full
 
-Regenerating the committed `output-showcase/` was done **in `--cluster-scoped`
+Regenerating the committed `.generated/output-showcase/` was done **in `--cluster-scoped`
 mode**, and the committed tree had been generated in the default namespace-scoped
 mode. That left the directory holding both layouts at once, and the converter's
 own stale-output detector caught it — one leftover file:
@@ -212,7 +212,7 @@ No duplicate resource ownership detected across any of the 25 rendered releases.
     fields LOST 0 / fields CHANGED 0 / render failures 0
 ```
 
-**The committed `output-showcase/` is now a cluster-scoped generation** — it
+**The committed `.generated/output-showcase/` is now a cluster-scoped generation** — it
 gained `cluster-shared/`, `base/platform-ops-prd-shared.yaml` and
 `platform-ops-prd/values/platform-ops-prd-shared.yaml`, and lost
 `platform-ops-prd/values/shared.yaml`. This is not cosmetic churn and it is not
@@ -229,7 +229,7 @@ forced by the input, not chosen — but it was made here, so it is recorded here
   cluster-conflict detector, with a test asserting the exact message
   (`ERRORS_ANALYSIS/Missing_Objects_Not_Rendered_By_Any_Release`). Renaming
   either copy would have deleted that coverage, so neither was renamed. What was
-  missing was the note saying so; `namespaces-showcase/platform-ops/log-agent.yaml`
+  missing was the note saying so; `examples/showcase/platform-ops/log-agent.yaml`
   now carries it, along with the `--cluster-scoped` command that regenerates the
   committed output.
 - **12 pre-existing `ERRORS_ANALYSIS` failures**, unchanged and untouched
@@ -241,7 +241,7 @@ forced by the input, not chosen — but it was made here, so it is recorded here
 
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Number_Serialization_Drift/test -v
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Number_Serialization_Drift/test -v
 python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out24
 ```
 

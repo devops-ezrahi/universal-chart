@@ -55,7 +55,7 @@ unreadable, and an unreadable counter is the blind spot.
 
 | File | Change |
 |---|---|
-| `universal/gitops-factory/sanitize_fidelity_report.py` | `_SUMMARY_COUNTER` and `_SEVERITY_LEAD` patterns; `_is_preamble` gained an `after_preamble` context flag; `parse` tracks that flag; one hint added for the unmatched legend sentence |
+| `universal/tools/sanitize_fidelity_report.py` | `_SUMMARY_COUNTER` and `_SEVERITY_LEAD` patterns; `_is_preamble` gained an `after_preamble` context flag; `parse` tracks that flag; one hint added for the unmatched legend sentence |
 
 ```python
 _SUMMARY_COUNTER = re.compile(r"^[a-z][a-z0-9 ,'()/&+-]*:\s*\d+$")
@@ -95,7 +95,7 @@ python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Sanitizer_Drops_Unparsed_Li
                  test_sanitize_fidelity_report.py -q
 56 passed in 1.84s
 
-python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output output-showcase
+python tools/convert_and_verify.py --cluster-scoped --input examples/showcase --output .generated/output-showcase
     fields LOST     0
     fields CHANGED  0
     render failures 0
@@ -140,8 +140,8 @@ documented rather than "fixed".
 
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Sanitizer_Drops_Unparsed_Lines/test -v
-python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output output-showcase
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Sanitizer_Drops_Unparsed_Lines/test -v
+python tools/convert_and_verify.py --cluster-scoped --input examples/showcase --output .generated/output-showcase
 ```
 
 ---

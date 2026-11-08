@@ -2,7 +2,7 @@
 """
 duplicate_showcase_envs.py
 ============================
-Adds environment-suffixed sibling namespaces to namespaces-showcase/ — e.g.
+Adds environment-suffixed sibling namespaces to examples/showcase/ — e.g.
 shop-web-tst, shop-web-stg, shop-web-prd alongside the existing shop-web —
 each running the SAME microservice names as their base namespace, so
 convert_to_universal_chart.py's base/ sharing (same microservice name ->
@@ -38,7 +38,7 @@ that unfinished state across new namespaces would just be more of the same
 gap, not a new demonstration.
 
 Usage:
-    python duplicate_showcase_envs.py --root namespaces-showcase
+    python duplicate_showcase_envs.py --root examples/showcase
 """
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ def process_file(src_path: Path, dst_dir: Path, src_ns: str, dst_ns: str, suffix
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="namespaces-showcase")
+    ap.add_argument("--root", default="examples/showcase")
     args = ap.parse_args()
     root = Path(args.root)
 

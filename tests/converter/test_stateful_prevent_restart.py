@@ -384,7 +384,7 @@ def test_through_namespaces_to_chart(tmp_path):
     manifests.write_text("\n---\n".join(p.read_text(encoding="utf-8") for p in sorted(src.rglob("*.yaml"))),
                          encoding="utf-8")
     out = tmp_path / "out"
-    r = subprocess.run([sys.executable, str(REPO / "converter" / "sources.py"), "--from-yaml", str(manifests),
+    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--from-yaml", str(manifests),
                         "-o", str(out), "--chart", str(REPO), "--verify-fidelity", "--fidelity-strict"],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-4000:]

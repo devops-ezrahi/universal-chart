@@ -54,8 +54,8 @@ and keeps the junk out of the generated values, not merely out of the report.
 
 | File | Location | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | `sanitize_object`, lines 528–545 | strip `name` / `namespace` / `creationTimestamp` from `spec.template.metadata` on `WORKLOAD_KINDS` |
-| `universal/gitops-factory/namespaces-showcase/identity-auth-prd/opa-prd.yaml` | pod template metadata | corpus fixture carrying all three |
+| `universal/convert_to_universal_chart.py` | `sanitize_object`, lines 528–545 | strip `name` / `namespace` / `creationTimestamp` from `spec.template.metadata` on `WORKLOAD_KINDS` |
+| `universal/examples/showcase/identity-auth-prd/opa-prd.yaml` | pod template metadata | corpus fixture carrying all three |
 | `.../ERRORS_NEW_ANALYSIS/Pod_Template_Metadata_Name_Namespace_Lost/test/` | — | 16 tests |
 
 ```python
@@ -109,7 +109,7 @@ python convert_and_verify.py --cluster-scoped --input namespaces-showcase --outp
 ## 6. The folder's own tests
 
 ```
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Pod_Template_Metadata_Name_Namespace_Lost/test/ -q
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Pod_Template_Metadata_Name_Namespace_Lost/test/ -q
 ................                                                         [100%]
 16 passed in 0.46s
 ```
@@ -217,7 +217,7 @@ loop.
 
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Pod_Template_Metadata_Name_Namespace_Lost/test/ -v
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Pod_Template_Metadata_Name_Namespace_Lost/test/ -v
 python convert_and_verify.py --cluster-scoped --input namespaces-showcase --output <scratch>\out22
 ```
 
@@ -273,6 +273,6 @@ not be run in one command.** Both rounds carry a `test_zero_width.py` and a
 on the basename clash. A `pytest.ini` setting `--import-mode=importlib` fixes it.
 
 ```
-python -m pytest -q          # from universal/gitops-factory
+python -m pytest -q          # from tests/converter
 817 passed
 ```

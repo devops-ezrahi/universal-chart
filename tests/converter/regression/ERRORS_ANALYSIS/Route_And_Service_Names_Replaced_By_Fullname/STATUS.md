@@ -204,9 +204,9 @@ trap folders 8 and 9 (missing/extra objects) are especially exposed to.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname/test/test_route_service_names.py -v
-& universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname/test/render_check.ps1
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname/test/test_route_service_names.py -v
+& universal/.generated/output-showcase/ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname/test/render_check.ps1
 
-# standing whole-showcase check (run from universal/gitops-factory):
-python output-showcase/ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname/test/compare_all_object_names.py
+# standing whole-showcase check (run from the repo root):
+python .generated/output-showcase/ERRORS_ANALYSIS/Route_And_Service_Names_Replaced_By_Fullname/test/compare_all_object_names.py
 ```

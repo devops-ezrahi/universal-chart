@@ -20,7 +20,7 @@ losing an explicit `Cluster` and falling back to `Cluster` changes nothing.
 **And it does not occur here at all:**
 
 ```
-$ grep -rn "externalTrafficPolicy" namespaces namespaces-showcase namespaces-live-demo | wc -l
+$ grep -rn "externalTrafficPolicy" namespaces examples/showcase examples/live-demo | wc -l
 0
 ```
 
@@ -54,7 +54,7 @@ edit, documented in both folders.
 ## 4. Tests
 
 `Service_ExternalTrafficPolicy_Lost/test/` — 6 tests. Fixture derives from
-`namespaces-showcase/shop-web/storefront.yaml`, two LoadBalancer Services, both
+`examples/showcase/shop-web/storefront.yaml`, two LoadBalancer Services, both
 `externalTrafficPolicy: Local`.
 
 ### RED — before
@@ -100,5 +100,5 @@ AssertionError: raw {'storefront': 'Local', 'storefront-lb': 'Local'}
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Service_ExternalTrafficPolicy_Lost/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Service_ExternalTrafficPolicy_Lost/test -v
 ```

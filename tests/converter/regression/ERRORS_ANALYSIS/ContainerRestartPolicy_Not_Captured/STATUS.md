@@ -67,7 +67,7 @@ same value restarts that container in place instead of failing the pod.
 
 `ContainerRestartPolicy_Not_Captured/test/` — 10 tests.
 
-Fixtures derive from `namespaces-showcase/background-jobs/db-migrate.yaml` (Job
+Fixtures derive from `examples/showcase/background-jobs/db-migrate.yaml` (Job
 + Secret + credentials mount, plus a CronJob sibling) and
 `shop-web/api-gateway.yaml` (Deployment). Each carries the field on a regular
 container **and** on an initContainer.
@@ -107,7 +107,7 @@ Accumulated across folders 1–16 plus 25/30/31: `183 passed`.
 | Chart's own suite | 234 passed |
 
 Grep proof that the data does not exercise it: every `restartPolicy:` in
-`namespaces-showcase/` is at pod level (4 occurrences, all `Never`). Zero
+`examples/showcase/` is at pod level (4 occurrences, all `Never`). Zero
 container-level ones anywhere. Fixture-driven, like folders 10–12.
 
 ## 6. What could NOT be verified without a live cluster
@@ -131,5 +131,5 @@ container-level ones anywhere. Fixture-driven, like folders 10–12.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ContainerRestartPolicy_Not_Captured/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ContainerRestartPolicy_Not_Captured/test -v
 ```

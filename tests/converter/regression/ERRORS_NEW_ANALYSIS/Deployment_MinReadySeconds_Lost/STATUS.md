@@ -52,12 +52,12 @@ this batch are the same shape (`Service_AllocateLoadBalancerNodePorts_Lost`,
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~897–909 (new) | capture `spec.minReadySeconds` |
+| `universal/convert_to_universal_chart.py` | ~897–909 (new) | capture `spec.minReadySeconds` |
 | `universal/Universal-chart/templates/deployment.yaml` | 26–35 (new) | render it under `spec:`, omitted when unset |
 | `universal/Universal-chart/values.yaml` | 53–60 (new) | declare `minReadySeconds: ""` with the reasoning |
 | `universal/Universal-chart/values.schema.json` | 35 (new) | integer `minimum: 0`, or empty string |
-| `universal/gitops-factory/namespaces-showcase/shop-web/api-gateway.yaml` | 8–16 | declare `minReadySeconds: 10` on the gateway |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/examples/showcase/shop-web/api-gateway.yaml` | 8–16 | declare `minReadySeconds: 10` on the gateway |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### Two details that are not incidental
 
@@ -166,5 +166,5 @@ coverage has to carry a value whose loss is detectable.
 ## 10. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Deployment_MinReadySeconds_Lost/test/test_min_ready_seconds.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Deployment_MinReadySeconds_Lost/test/test_min_ready_seconds.py -v
 ```

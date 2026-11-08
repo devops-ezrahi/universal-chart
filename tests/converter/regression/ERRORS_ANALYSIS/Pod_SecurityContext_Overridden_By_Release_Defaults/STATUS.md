@@ -142,5 +142,5 @@ unchanged — expected, and why the fixture was required.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Pod_SecurityContext_Overridden_By_Release_Defaults/test/test_pod_security_context.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Pod_SecurityContext_Overridden_By_Release_Defaults/test/test_pod_security_context.py -v
 ```

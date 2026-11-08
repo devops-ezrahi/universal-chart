@@ -93,10 +93,10 @@ likely to carry foreign templating syntax.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 1063–1090 (new) | `as_extra_deploy()` — serialise with `{{` escaped |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 1745, 2443 | both `extra_deploy.append` sites routed through it |
-| `universal/gitops-factory/namespaces-showcase/background-jobs/nightly-report.yaml` | 49–117 (new) | first Argo Events `EventSource` + `Sensor`, including a `{{ }}` expression |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/convert_to_universal_chart.py` | 1063–1090 (new) | `as_extra_deploy()` — serialise with `{{` escaped |
+| `universal/convert_to_universal_chart.py` | 1745, 2443 | both `extra_deploy.append` sites routed through it |
+| `universal/examples/showcase/background-jobs/nightly-report.yaml` | 49–117 (new) | first Argo Events `EventSource` + `Sensor`, including a `{{ }}` expression |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### Why the fix is in the converter, not the template
 
@@ -195,6 +195,6 @@ even though the Sensor still rendered.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Argo_Events_Sensor_Double_Prefix/test/test_sensor_naming.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Argo_Events_Sensor_Double_Prefix/test/test_sensor_naming.py -v
 python <scratch>/probe_tpl.py    # shows the pre-fix hard failure directly
 ```

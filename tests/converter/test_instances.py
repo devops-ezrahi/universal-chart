@@ -43,7 +43,7 @@ def _run(tmp_path, manifests, *extra):
     src = tmp_path / "in.yaml"
     src.write_text(manifests, encoding="utf-8")
     out = tmp_path / "out"
-    r = subprocess.run([sys.executable, str(REPO / "converter" / "sources.py"), "--from-yaml", str(src),
+    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--from-yaml", str(src),
                         "-o", str(out), "--chart", str(REPO), "--report", str(tmp_path / "report"),
                         "--verify-fidelity", "--fidelity-strict", *extra],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")

@@ -69,12 +69,12 @@ undetectable from behaviour.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~1210–1226 (new) | `build_service_entry`: capture the field with `is not None` |
+| `universal/convert_to_universal_chart.py` | ~1210–1226 (new) | `build_service_entry`: capture the field with `is not None` |
 | `universal/Universal-chart/templates/service.yaml` | 40–46 (new) | render on the primary Service via `hasKey` |
 | `universal/Universal-chart/templates/services.yaml` | 46–54 (new) | render on extra Services via `hasKey` |
 | `universal/Universal-chart/values.schema.json` | 88 | type it `boolean` |
-| `universal/gitops-factory/namespaces-showcase/platform-data/redis.yaml` | 79–105 (new) | a LoadBalancer with an explicit `false` |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/examples/showcase/platform-data/redis.yaml` | 79–105 (new) | a LoadBalancer with an explicit `false` |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 **Both Service templates, not just the primary.** The two real LoadBalancers the
 report names — a data-receiver and an externally exposed ZooKeeper — are the
@@ -186,5 +186,5 @@ emits anyway.
 ## 11. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Service_AllocateLoadBalancerNodePorts_Lost/test/test_allocate_lb_nodeports.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Service_AllocateLoadBalancerNodePorts_Lost/test/test_allocate_lb_nodeports.py -v
 ```

@@ -115,12 +115,12 @@ INFO   ConfigMap/shared-conf (from shared-conf.yaml): rendered as 'shared-conf-2
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3251–3269 (new) | `_identity_free_hash()` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3700–3722 (new) | content matching when the raw name is ambiguous |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3723–3752 (new) | content search before declaring an object lost |
+| `universal/convert_to_universal_chart.py` | ~3251–3269 (new) | `_identity_free_hash()` |
+| `universal/convert_to_universal_chart.py` | ~3700–3722 (new) | content matching when the raw name is ambiguous |
+| `universal/convert_to_universal_chart.py` | ~3723–3752 (new) | content search before declaring an object lost |
 
 No corpus change: the probe corpus that exposed the regression lives in the
-scratch directory. Adding a second collision to `namespaces-showcase` would have
+scratch directory. Adding a second collision to `examples/showcase` would have
 duplicated folder 12's without testing anything folder 12 does not — and the
 `-2` shape it needs requires the contrived "microservice named after its own
 object" manifest that folder 10 explains was deliberately kept out.
@@ -192,7 +192,7 @@ something, so the tests that matter most are the ones bounding when it can fire.
 ## 11. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Extra_And_Relocated_Objects/test/test_object_reconciliation.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Extra_And_Relocated_Objects/test/test_object_reconciliation.py -v
 
 # the two-microservice collision that produces a `-2` rename
 python convert_to_universal_chart.py --input <scratch>/f14probe --output <tmp> `

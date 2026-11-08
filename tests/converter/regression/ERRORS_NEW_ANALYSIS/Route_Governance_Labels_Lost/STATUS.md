@@ -62,7 +62,7 @@ ExternalSecret, PVC, NetworkPolicy, Role, RoleBinding, ServiceAccount,
 ServiceMonitor, CronJob, Job, workloads and cluster-scoped objects. Route got
 the note.
 
-Nothing contradicted it, because `namespaces-showcase` contained **zero
+Nothing contradicted it, because `examples/showcase` contained **zero
 Routes** — so the fidelity report read 0 for this class whether the code worked
 or not.
 
@@ -70,12 +70,12 @@ or not.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 1107–1108 | delete the false comment |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 1129–1140 (new) | `entry["labels"] = raw_labels(doc)` — the missing line |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 1094–1103 | `CHART_OWNED_LABELS` += `argocd.argoproj.io/instance` (stop capturing it) |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 2922–2930 | `FIDELITY_HELM_LABELS` += `argocd.argoproj.io/instance` (stop reporting it) |
-| `universal/gitops-factory/namespaces-showcase/identity-auth-prd/opa-prd.yaml` | 65–110 (new) | the corpus' first Route, carrying all seven governance labels + the ArgoCD one |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/convert_to_universal_chart.py` | 1107–1108 | delete the false comment |
+| `universal/convert_to_universal_chart.py` | 1129–1140 (new) | `entry["labels"] = raw_labels(doc)` — the missing line |
+| `universal/convert_to_universal_chart.py` | 1094–1103 | `CHART_OWNED_LABELS` += `argocd.argoproj.io/instance` (stop capturing it) |
+| `universal/convert_to_universal_chart.py` | 2922–2930 | `FIDELITY_HELM_LABELS` += `argocd.argoproj.io/instance` (stop reporting it) |
+| `universal/examples/showcase/identity-auth-prd/opa-prd.yaml` | 65–110 (new) | the corpus' first Route, carrying all seven governance labels + the ArgoCD one |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### Why the suppression needed both halves
 
@@ -221,7 +221,7 @@ $ python -m pytest .../Route_Governance_Labels_Lost/test/test_route_labels.py -q
 3. **Template** (3) — both Route templates render the labels via `helm
    template`, and custom labels merge with rather than clobber the chart's
    identity labels.
-4. **Corpus coverage** (2) — a Route exists in `namespaces-showcase` at all,
+4. **Corpus coverage** (2) — a Route exists in `examples/showcase` at all,
    and it still carries the label set the report names. These fail if someone
    removes the coverage, which is exactly how this defect survived a round.
 
@@ -238,7 +238,7 @@ $ python -m pytest .../Route_Governance_Labels_Lost/test/test_route_labels.py -q
 | `helm lint Universal-chart` | 0 failed |
 
 **Regeneration churn is fully attributable.** Diffed the regenerated
-`output-showcase/` against folder 2's run: the only content differences are
+`.generated/output-showcase/` against folder 2's run: the only content differences are
 `base/opa.yaml` (the new `route:` block) and `report/fidelity_report.txt`
 (object count 122 → 123, plus the run id, which moves by design because the
 converter and the corpus both changed). Every other generated file is
@@ -274,10 +274,10 @@ byte-identical.
 ## 10. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Route_Governance_Labels_Lost/test/test_route_labels.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Route_Governance_Labels_Lost/test/test_route_labels.py -v
 
-cd universal/gitops-factory
-python convert_to_universal_chart.py --input namespaces-showcase --output <tmp> `
+cd tests/converter   # from the universal-chart root
+python convert_to_universal_chart.py --input examples/showcase --output <tmp> `
   --chart ../Universal-chart --verify-fidelity --cluster-scoped
 Select-String <tmp>/base/opa.yaml -Pattern "labels" -Context 0,8
 ```

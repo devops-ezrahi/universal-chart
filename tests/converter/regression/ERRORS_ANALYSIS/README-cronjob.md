@@ -37,7 +37,7 @@ Affects: CronJob/Job SA, securityContext, imagePullPolicy"*. All three
 Run the CronJob-relevant tests:
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS -q -k "cronjob or job"
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS -q -k "cronjob or job"
 ```
 
 ---
@@ -87,7 +87,7 @@ That test exists specifically to stop someone "optimising" the fix back into
 | `report` | `nightly-report` | the CronJob map key |
 
 Both of those are real showcase manifests
-(`namespaces-showcase/background-jobs/db-migrate.yaml` and `nightly-report.yaml`),
+(`examples/showcase/background-jobs/db-migrate.yaml` and `nightly-report.yaml`),
 so this was live, not hypothetical.
 
 **Why it is a separate mechanism.** The Deployment path renames via

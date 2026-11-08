@@ -56,7 +56,7 @@ Kubernetes API rule, so nothing can collide there. It is about the converter's
 and a group with more than one member gets **one shared `base/<name>.yaml`**.
 
 That mechanism genuinely exists, and it genuinely fires in this repo — `shared`
-appears in 5 namespaces under `namespaces/` and 2 under `namespaces-showcase/`.
+appears in 5 namespaces under `namespaces/` and 2 under `examples/showcase/`.
 So the premise is sound and worth testing.
 
 I built exactly the scenario: two namespaces, same microservice file name
@@ -146,7 +146,7 @@ Test artifacts added under
 
 - `fixture/shop-web/api-gateway.yaml` + `fixture/shop-web-eu/api-gateway.yaml` —
   same file name in two namespaces, overlapping-but-different sidecar sets.
-  Derived from the real `namespaces-showcase/shop-web/api-gateway.yaml`.
+  Derived from the real `examples/showcase/shop-web/api-gateway.yaml`.
 - `test_sidecar_collision.py` — 7 tests.
 - `render_check.ps1` — prints the raw-vs-rendered container list per namespace.
 
@@ -193,7 +193,7 @@ than asserting why it changed.
 A full survey of both input trees:
 
 ```
-===== namespaces-showcase =====
+===== examples/showcase =====
   MULTI-CONTAINER pods: NONE
   microservice names in >1 namespace: {'shared-prd': [...], 'shared': [...]}
   files declaring >1 workload: NONE
@@ -228,6 +228,6 @@ modified.
 ## 11. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Sidecar_Container_Name_Key_Collision/test/test_sidecar_collision.py -v
-& universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Sidecar_Container_Name_Key_Collision/test/render_check.ps1
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Sidecar_Container_Name_Key_Collision/test/test_sidecar_collision.py -v
+& universal/.generated/output-showcase/ERRORS_ANALYSIS/Sidecar_Container_Name_Key_Collision/test/render_check.ps1
 ```

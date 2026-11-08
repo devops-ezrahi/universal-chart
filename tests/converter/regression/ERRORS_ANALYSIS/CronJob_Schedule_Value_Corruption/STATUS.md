@@ -118,7 +118,7 @@ ExternalSecret name collisions.
 `CronJob_Schedule_Value_Corruption/test/` — 14 tests + `render_check.ps1`.
 
 `fixture/background-jobs/nightly-report.yaml` is derived from
-`namespaces-showcase/background-jobs/nightly-report.yaml` (same namespace, same
+`examples/showcase/background-jobs/nightly-report.yaml` (same namespace, same
 microservice file name, same container/image/resources shape). What it adds is
 the shape the showcase never produces — more than one CronJob in one
 microservice file:
@@ -277,6 +277,6 @@ but it is worth recording that it broke on its own this time.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/CronJob_Schedule_Value_Corruption/test/test_cronjob_schedule.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/CronJob_Schedule_Value_Corruption/test/test_cronjob_schedule.py -v
 & universal\gitops-factory\output-showcase\ERRORS_ANALYSIS\CronJob_Schedule_Value_Corruption\test\render_check.ps1
 ```

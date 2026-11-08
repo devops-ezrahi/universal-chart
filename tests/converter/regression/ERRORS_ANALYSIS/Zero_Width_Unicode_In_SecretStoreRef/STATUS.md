@@ -10,12 +10,12 @@ warned about.**
 
 ## 1. Grep proof: it does not occur here
 
-Scanned every `*.yaml` under `namespaces/`, `namespaces-showcase/` and
-`namespaces-live-demo/` for U+200B, U+200C, U+200D, U+2060, U+FEFF and U+00AD:
+Scanned every `*.yaml` under `namespaces/`, `examples/showcase/` and
+`examples/live-demo/` for U+200B, U+200C, U+200D, U+2060, U+FEFF and U+00AD:
 
 ```
 TOTAL zero-width/invisible chars in raw manifests: 0
-TOTAL in generated output-showcase:                0
+TOTAL in generated .generated/output-showcase:                0
 ```
 
 The character came from the original project's data. `test_this_repo_has_no_
@@ -74,7 +74,7 @@ that.
 ## 4. Tests
 
 `Zero_Width_Unicode_In_SecretStoreRef/test/` — 9 tests. Fixture derives from
-`namespaces-showcase/identity-auth/session-store.yaml` with three U+200C
+`examples/showcase/identity-auth/session-store.yaml` with three U+200C
 characters added: one in `secretStoreRef.kind`, one in the ExternalSecret's
 `metadata.name`, and one inside a ConfigMap's data value.
 
@@ -140,5 +140,5 @@ restored: True  sha256 0b609f73b2ca7807
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Zero_Width_Unicode_In_SecretStoreRef/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Zero_Width_Unicode_In_SecretStoreRef/test -v
 ```

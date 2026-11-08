@@ -61,9 +61,9 @@ the half that has to survive the new key.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 707–740 | `ports_list_to_map`: key unnamed ports on number **and** protocol; raise on a genuine duplicate |
-| `universal/gitops-factory/namespaces-showcase/platform-ops/metrics-agent.yaml` | 29–40 (new) | the colliding statsd-exporter port pair |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/convert_to_universal_chart.py` | 707–740 | `ports_list_to_map`: key unnamed ports on number **and** protocol; raise on a genuine duplicate |
+| `universal/examples/showcase/platform-ops/metrics-agent.yaml` | 29–40 (new) | the colliding statsd-exporter port pair |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### Design decisions
 
@@ -162,7 +162,7 @@ $ python -m pytest .../Missing_Container_Port_9125/test/test_missing_port.py -q
 3. **Through the chart** (1) — the second suspect, pinned: `mapToList` renders
    all three ports and invents no names.
 4. **Corpus coverage** (1) — the colliding shape exists in
-   `namespaces-showcase`, since the collision needs two unnamed ports on one
+   `examples/showcase`, since the collision needs two unnamed ports on one
    number to occur at all.
 
 ## 6. Severity — deliberately not inflated
@@ -223,10 +223,10 @@ no upper bound on what else it discards, and this one was found only because a
 ## 10. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/Missing_Container_Port_9125/test/test_missing_port.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/Missing_Container_Port_9125/test/test_missing_port.py -v
 
 # rebuild the RED variant and watch the port vanish
 python <scratch>/make_red6.py
-python <scratch>/red6.py --input namespaces-showcase --output <tmp> `
+python <scratch>/red6.py --input examples/showcase --output <tmp> `
   --chart ../Universal-chart --verify-fidelity --cluster-scoped
 ```

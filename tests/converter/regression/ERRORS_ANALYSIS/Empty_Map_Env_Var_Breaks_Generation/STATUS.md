@@ -67,7 +67,7 @@ project. `test_this_repo_has_no_empty_env_values` re-runs the scan every time.
 ## 5. Tests
 
 `Empty_Map_Env_Var_Breaks_Generation/test/` — 10 tests. Fixture derives from
-`namespaces-showcase/shop-web/api-gateway.yaml` with the three shapes that
+`examples/showcase/shop-web/api-gateway.yaml` with the three shapes that
 reduce to an empty body:
 
 | env var | raw form |
@@ -127,5 +127,5 @@ than the symptom: every rendered entry has a name and **exactly one** of
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Empty_Map_Env_Var_Breaks_Generation/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Empty_Map_Env_Var_Breaks_Generation/test -v
 ```

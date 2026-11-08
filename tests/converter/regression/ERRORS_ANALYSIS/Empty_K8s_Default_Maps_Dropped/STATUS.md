@@ -127,5 +127,5 @@ The suppression is defensive here and load-bearing there.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Empty_K8s_Default_Maps_Dropped/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Empty_K8s_Default_Maps_Dropped/test -v
 ```

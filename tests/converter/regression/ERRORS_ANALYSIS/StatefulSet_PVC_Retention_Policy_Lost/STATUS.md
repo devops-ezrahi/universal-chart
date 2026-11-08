@@ -13,13 +13,13 @@ this repo. The equivalents here, and the paths every command below uses:
 
 | error.txt path | actual path in this repo |
 |---|---|
-| `convert_to_universal_chart.py` | `universal/gitops-factory/convert_to_universal_chart.py` |
+| `convert_to_universal_chart.py` | `universal/convert_to_universal_chart.py` |
 | `Universal-chart/templates/statefulset.yaml` | `universal/Universal-chart/templates/statefulset.yaml` |
-| `namespaces/interconn/` | `universal/gitops-factory/namespaces-showcase/` (see §6) |
-| `values/report/fidelity_report.txt` | `universal/gitops-factory/output-showcase/report/fidelity_report.txt` |
+| `namespaces/interconn/` | `universal/examples/showcase/` (see §6) |
+| `values/report/fidelity_report.txt` | `universal/.generated/output-showcase/report/fidelity_report.txt` |
 
 `ERRORS_ANALYSIS/` is **not** at the repo root — it is at
-`universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/`.
+`universal/.generated/output-showcase/ERRORS_ANALYSIS/`.
 
 ## 2. Were the line-number hints accurate?
 
@@ -42,7 +42,7 @@ Confirmed the field appears nowhere at all in the project before the fix:
 
 ```
 $ grep -ri "persistentVolumeClaimRetentionPolicy" universal/
-universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/... (error.txt only)
+universal/.generated/output-showcase/ERRORS_ANALYSIS/... (error.txt only)
 ```
 
 No hit in the converter, the chart, the values, or any raw manifest.
@@ -51,11 +51,11 @@ No hit in the converter, the chart, the values, or any raw manifest.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | 686–697 (new) | Extract `spec.persistentVolumeClaimRetentionPolicy` inside the `if kind == "StatefulSet":` block (comment 686–694, code 695–697) |
+| `universal/convert_to_universal_chart.py` | 686–697 (new) | Extract `spec.persistentVolumeClaimRetentionPolicy` inside the `if kind == "StatefulSet":` block (comment 686–694, code 695–697) |
 | `universal/Universal-chart/templates/statefulset.yaml` | 20–23 (new) | Render the field under `spec:`, guarded by `{{- with }}` |
 | `universal/Universal-chart/values.yaml` | 422–431 (new) | Declare `persistentVolumeClaimRetentionPolicy: {}` (line 429) with the reasoning for the empty default |
 | `universal/Universal-chart/values.schema.json` | 118–126 (new) | Type/enum the key: `whenDeleted`/`whenScaled` ∈ {Retain, Delete}, `additionalProperties: false` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | 224–231 | `NON_NAMESPACE_OUTPUT_DIRS = {"report", "ERRORS_ANALYSIS"}` (line 231) — see §7, this is cleanup of pollution my own test fixtures caused |
+| `universal/convert_to_universal_chart.py` | 224–231 | `NON_NAMESPACE_OUTPUT_DIRS = {"report", "ERRORS_ANALYSIS"}` (line 231) — see §7, this is cleanup of pollution my own test fixtures caused |
 
 ### Design decision inside the fix
 
@@ -77,7 +77,7 @@ All under `ERRORS_ANALYSIS/StatefulSet_PVC_Retention_Policy_Lost/test/`:
 
 - `fixture/platform-data/postgres.yaml` — minimal StatefulSet + headless
   Service, derived from the real
-  `namespaces-showcase/platform-data/postgres.yaml`, with the retention policy
+  `examples/showcase/platform-data/postgres.yaml`, with the retention policy
   block added (see §6 for why it had to be added).
 - `test_pvc_retention.py` — 13 tests in 4 layers:
   1. converter extracts the field (and every partial combination of it)
@@ -143,7 +143,7 @@ from the committed ApplicationSets — repo URL, `checker` revision, values path
 $ python convert_to_universal_chart.py --input namespaces-showcase --output output-showcase \
     --chart ../Universal-chart --verify-fidelity \
     --values-repo-url https://github.com/devops-ezrahi/homelab.git \
-    --values-revision checker --values-path universal/gitops-factory/output-showcase
+    --values-revision checker --values-path universal/.generated/output-showcase
 
 Converted 20 microservices across 10 namespaces.
 Rendered 24 releases.
@@ -207,7 +207,7 @@ render failures:            0
 This defect's count was **0 before and 0 after** — see §6, no showcase manifest
 exercises it. Critically, **no other count went up**: the report is byte-identical,
 and every generated values file is byte-identical to what was committed
-(verified by per-file hash comparison across the whole `output-showcase` tree).
+(verified by per-file hash comparison across the whole `.generated/output-showcase` tree).
 
 **5. `helm lint`:**
 
@@ -242,7 +242,7 @@ namespace of the original metroair project. **None of those manifests are in
 this repo.** A grep proves no raw manifest here declares the field at all:
 
 ```
-$ grep -ril "persistentVolumeClaimRetentionPolicy" universal/gitops-factory/namespaces*/
+$ grep -ril "persistentVolumeClaimRetentionPolicy" namespaces*/
 (no matches)
 ```
 
@@ -255,7 +255,7 @@ Consequences, stated plainly:
   zero references in converter and template) plus the **RED test output** above,
   which reproduces the loss on a fixture.
 - The fixture is derived from the real
-  `namespaces-showcase/platform-data/postgres.yaml` with the retention block
+  `examples/showcase/platform-data/postgres.yaml` with the retention block
   added, matching the shape error.txt quotes verbatim. This is the one place I
   did not copy a raw manifest unmodified — because no raw manifest here contains
   the field. The raw manifests themselves were **not** modified.
@@ -263,7 +263,7 @@ Consequences, stated plainly:
 ## 7. Side effect I caused, and cleaned up
 
 Adding `test/fixture/platform-data/postgres.yaml` under
-`output-showcase/ERRORS_ANALYSIS/` made the converter's stale-output scanner
+`.generated/output-showcase/ERRORS_ANALYSIS/` made the converter's stale-output scanner
 read `ERRORS_ANALYSIS` as a namespace directory that had vanished from the input,
 and report every fixture under it as a stale generated file:
 
@@ -331,8 +331,8 @@ of scope:
 
 ```powershell
 # unit + render + round-trip tests
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/StatefulSet_PVC_Retention_Policy_Lost/test/test_pvc_retention.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/StatefulSet_PVC_Retention_Policy_Lost/test/test_pvc_retention.py -v
 
 # standalone chain with printed side-by-side comparison
-& universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/StatefulSet_PVC_Retention_Policy_Lost/test/render_check.ps1
+& universal/.generated/output-showcase/ERRORS_ANALYSIS/StatefulSet_PVC_Retention_Policy_Lost/test/render_check.ps1
 ```

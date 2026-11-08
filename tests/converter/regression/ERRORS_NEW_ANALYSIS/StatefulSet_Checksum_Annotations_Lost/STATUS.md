@@ -84,10 +84,10 @@ what the annotation is called.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~1085–1105 (new) | `handle_workload` sets `checksums.enabled` when raw carried `checksum/*` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3540–3562 (new) | conditional, symmetric suppression in `_fidelity_diff` |
-| `universal/gitops-factory/namespaces-showcase/platform-data/postgres.yaml` | 27–39 | pod-template `checksum/secrets` + `checksum/config` |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/convert_to_universal_chart.py` | ~1085–1105 (new) | `handle_workload` sets `checksums.enabled` when raw carried `checksum/*` |
+| `universal/convert_to_universal_chart.py` | ~3540–3562 (new) | conditional, symmetric suppression in `_fidelity_diff` |
+| `universal/examples/showcase/platform-data/postgres.yaml` | 27–39 | pod-template `checksum/secrets` + `checksum/config` |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ## 5. A mistake in my first version, caught by its own test
 
@@ -160,8 +160,8 @@ whole verdict has inverted.
 ## 10. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/StatefulSet_Checksum_Annotations_Lost/test/test_checksum_annotations.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/StatefulSet_Checksum_Annotations_Lost/test/test_checksum_annotations.py -v
 
-cd universal/gitops-factory
-Select-String output-showcase/platform-data/values/postgres.yaml -Pattern checksums -Context 0,1
+cd tests/converter   # from the universal-chart root
+Select-String .generated/output-showcase/platform-data/values/postgres.yaml -Pattern checksums -Context 0,1
 ```

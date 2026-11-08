@@ -178,6 +178,6 @@ It does **not** address:
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ServiceAccountName_Overridden_By_Release_Name/test/test_serviceaccountname.py -v
-& universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ServiceAccountName_Overridden_By_Release_Name/test/render_check.ps1
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ServiceAccountName_Overridden_By_Release_Name/test/test_serviceaccountname.py -v
+& universal/.generated/output-showcase/ERRORS_ANALYSIS/ServiceAccountName_Overridden_By_Release_Name/test/render_check.ps1
 ```

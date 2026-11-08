@@ -73,7 +73,7 @@ A reorder is invisible; a real change is named precisely —
 ## 3. Tests
 
 `Container_Ports_Reordered_And_Auto_Named/test/` — 8 tests. Fixture derives from
-`namespaces-showcase/shop-web/api-gateway.yaml` with four ports:
+`examples/showcase/shop-web/api-gateway.yaml` with four ports:
 
 | port | why |
 |---|---|
@@ -142,5 +142,5 @@ must still resolve against a port that is called `http`.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Container_Ports_Reordered_And_Auto_Named/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Container_Ports_Reordered_And_Auto_Named/test -v
 ```

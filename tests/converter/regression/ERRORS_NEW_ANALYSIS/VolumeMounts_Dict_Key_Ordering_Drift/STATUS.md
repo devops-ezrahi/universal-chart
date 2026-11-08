@@ -85,8 +85,8 @@ That is the third time in this batch:
 | File | Lines | Change |
 |---|---|---|
 | `universal/gitops-factory/convert_to_universal_chart.py` | `_by_name` | composite `<name>:<subPath\|mountPath>` identity when plain names repeat |
-| `universal/gitops-factory/namespaces-showcase/identity-auth/dex.yaml` | 30–58 | three subPath mounts on one volume, deliberately unsorted |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/examples/showcase/identity-auth/dex.yaml` | 30–58 | three subPath mounts on one volume, deliberately unsorted |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 **Falls back to positional if the composite is also ambiguous.** Two mounts with
 the same name and no discriminator cannot be paired without guessing, and a
@@ -199,6 +199,6 @@ dropped one again.
 ## 11. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/VolumeMounts_Dict_Key_Ordering_Drift/test/test_volumemount_ordering.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/VolumeMounts_Dict_Key_Ordering_Drift/test/test_volumemount_ordering.py -v
 python <scratch>/probe_order.py
 ```

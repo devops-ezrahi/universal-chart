@@ -69,9 +69,9 @@ folder 20's guard.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | `_is_benign_default_loss` | suppress `shareProcessNamespace == False` on workload kinds |
+| `universal/convert_to_universal_chart.py` | `_is_benign_default_loss` | suppress `shareProcessNamespace == False` on workload kinds |
 | `universal/Universal-chart/templates/_pod-spec.tpl` | 34–44 | comment recording why this renders only-when-true while its neighbour uses `hasKey` |
-| `universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/K8s_Runtime_Defaults_Benign_Suppress/test/` | — | folder 17's deferred-verdict test updated, see §5 |
+| `universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/K8s_Runtime_Defaults_Benign_Suppress/test/` | — | folder 17's deferred-verdict test updated, see §5 |
 
 The corpus manifest carrying `shareProcessNamespace: false` was added in folder
 20, alongside `enableServiceLinks: false`, specifically so the two verdicts
@@ -150,5 +150,5 @@ that lists them.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/ShareProcessNamespace_Lost/test/test_share_process_namespace.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/ShareProcessNamespace_Lost/test/test_share_process_namespace.py -v
 ```

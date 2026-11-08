@@ -13,7 +13,7 @@ anyway.** 8 tests RED→GREEN.
 
 ```
 progressDeadlineSeconds - every distinct value across
-namespaces/, namespaces-showcase/, namespaces-live-demo/:
+namespaces/, examples/showcase/, examples/live-demo/:
     NONE FOUND
 ```
 
@@ -52,7 +52,7 @@ fidelity checker compares raw against rendered, not against Kubernetes.
 ## 3. Tests
 
 `ProgressDeadlineSeconds_Lost/test/` — 8 tests. Fixture derives from
-`namespaces-showcase/shop-web/storefront.yaml` with `progressDeadlineSeconds: 120`
+`examples/showcase/shop-web/storefront.yaml` with `progressDeadlineSeconds: 120`
 and `revisionHistoryLimit: 5` (the latter as a control — the sibling field that
 already worked and must keep working).
 
@@ -104,5 +104,5 @@ the two sit one line apart in `handle_workload`.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ProgressDeadlineSeconds_Lost/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ProgressDeadlineSeconds_Lost/test -v
 ```

@@ -53,12 +53,12 @@ and the soft hyphen. It was the *coverage of positions* that was narrow.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~366–381 (new) | `IDENTIFIER_KEYS`, `NON_IDENTIFIER_PARENTS` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~384–404 (new) | `find_zero_width()` — read-only whole-document scan |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~407–429 (new) | `_strip_identifiers_deep()` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~470–495 | wire both into `_sanitize_identifiers`, plus the payload report |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~462 | warning names the object, not the repaired value |
-| `universal/gitops-factory/namespaces-showcase/identity-auth/session-store.yaml` | 42–54 | a real U+200C in `spec.secretStoreRef.kind` |
+| `universal/convert_to_universal_chart.py` | ~366–381 (new) | `IDENTIFIER_KEYS`, `NON_IDENTIFIER_PARENTS` |
+| `universal/convert_to_universal_chart.py` | ~384–404 (new) | `find_zero_width()` — read-only whole-document scan |
+| `universal/convert_to_universal_chart.py` | ~407–429 (new) | `_strip_identifiers_deep()` |
+| `universal/convert_to_universal_chart.py` | ~470–495 | wire both into `_sanitize_identifiers`, plus the payload report |
+| `universal/convert_to_universal_chart.py` | ~462 | warning names the object, not the repaired value |
+| `universal/examples/showcase/identity-auth/session-store.yaml` | 42–54 | a real U+200C in `spec.secretStoreRef.kind` |
 
 ### The line this fix must not cross
 
@@ -103,7 +103,7 @@ ExternalSecret/session-store-signing-key: spec.secretStoreRef.kind contained 1 i
 
 ## 4. The corpus manifest that is knowingly wrong
 
-`namespaces-showcase/identity-auth/session-store.yaml` now contains a real
+`examples/showcase/identity-auth/session-store.yaml` now contains a real
 U+200C between `Secret` and `Store` in `spec.secretStoreRef.kind` — the exact
 field and exact character the report describes.
 
@@ -190,10 +190,10 @@ gradually become "strip everything".
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/ExternalSecret_ZeroWidth_U200C_Source_Fix/test/test_zero_width.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/ExternalSecret_ZeroWidth_U200C_Source_Fix/test/test_zero_width.py -v
 
-cd universal/gitops-factory
-python convert_to_universal_chart.py --input namespaces-showcase --output <tmp> `
+cd tests/converter   # from the universal-chart root
+python convert_to_universal_chart.py --input examples/showcase --output <tmp> `
   --chart ../Universal-chart --verify-fidelity --cluster-scoped
 Select-String <tmp>/report/conflicts_and_warnings.txt -Pattern invisible
 ```

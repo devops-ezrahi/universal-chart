@@ -78,7 +78,7 @@ GitOps layer.
 ## 5. Tests
 
 `Grafana_ConfigMap_Trailing_Newline/test/` — 7 tests. Fixture derives from
-`namespaces-showcase/platform-ops/log-agent.yaml` with one blob per hazard:
+`examples/showcase/platform-ops/log-agent.yaml` with one blob per hazard:
 
 | key | shape |
 |---|---|
@@ -129,5 +129,5 @@ byte-comparison output above, and the real-data scan.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Grafana_ConfigMap_Trailing_Newline/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Grafana_ConfigMap_Trailing_Newline/test -v
 ```

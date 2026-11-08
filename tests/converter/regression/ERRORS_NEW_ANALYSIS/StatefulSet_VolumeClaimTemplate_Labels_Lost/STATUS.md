@@ -53,10 +53,10 @@ null` sitting one level down.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~410–434 (new) | `sanitize_object`: strip embedded VCT runtime fields |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~963–978 (new) | `handle_workload`: capture VCT `labels` / `annotations` |
-| `universal/gitops-factory/namespaces-showcase/platform-data/postgres.yaml` | 71–98 | VCT carrying governance labels **and** the runtime noise |
-| `universal/gitops-factory/output-showcase/**` | regenerated | consequence |
+| `universal/convert_to_universal_chart.py` | ~410–434 (new) | `sanitize_object`: strip embedded VCT runtime fields |
+| `universal/convert_to_universal_chart.py` | ~963–978 (new) | `handle_workload`: capture VCT `labels` / `annotations` |
+| `universal/examples/showcase/platform-data/postgres.yaml` | 71–98 | VCT carrying governance labels **and** the runtime noise |
+| `universal/.generated/output-showcase/**` | regenerated | consequence |
 
 ### Why the strip went in `sanitize_object` and not `_fidelity_ignored_path`
 
@@ -213,7 +213,7 @@ bucket suppression erases without anyone noticing.
 ## 11. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/StatefulSet_VolumeClaimTemplate_Labels_Lost/test/test_vct_labels.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/StatefulSet_VolumeClaimTemplate_Labels_Lost/test/test_vct_labels.py -v
 
 python <scratch>/make_red8.py   # rebuilds both RED variants
 ```

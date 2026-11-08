@@ -121,5 +121,5 @@ Reference integrity across every release is verified in folder 19.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ExternalSecret_Name_Collision_Suffix/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ExternalSecret_Name_Collision_Suffix/test -v
 ```

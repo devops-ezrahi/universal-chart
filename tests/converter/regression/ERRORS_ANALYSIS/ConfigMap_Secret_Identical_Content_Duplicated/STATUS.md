@@ -116,5 +116,5 @@ makes them a guard against a future "helpful" auto-sharing change.
 ## 8. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/ConfigMap_Secret_Identical_Content_Duplicated/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/ConfigMap_Secret_Identical_Content_Duplicated/test -v
 ```

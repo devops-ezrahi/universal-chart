@@ -82,7 +82,7 @@ a future "just suppress it" fails loudly.
 ## 5. Validation
 
 ```
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Grafana_Ini_Changed_False_Positive/test -q
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Grafana_Ini_Changed_False_Positive/test -q
 .......................                                                  [100%]
 23 passed in 0.65s
 ```
@@ -117,7 +117,7 @@ written**. The assertion was too broad, not the code — it now inspects
 
 ```powershell
 cd c:\repos\homelab\universal\gitops-factory
-python -m pytest output-showcase/ERRORS_NEW_ANALYSIS/Grafana_Ini_Changed_False_Positive/test -v
+python -m pytest .generated/output-showcase/ERRORS_NEW_ANALYSIS/Grafana_Ini_Changed_False_Positive/test -v
 ```
 
 ---

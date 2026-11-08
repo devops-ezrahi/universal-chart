@@ -75,7 +75,7 @@ release-wide ones, the same shape the other templates already used.
 ## 3. Tests
 
 `Annotations_Lost/test/` — 14 tests. Fixture derives from
-`namespaces-showcase/shop-web/api-gateway.yaml`, giving seven object kinds one
+`examples/showcase/shop-web/api-gateway.yaml`, giving seven object kinds one
 annotation each from the NOT-SAFE list, plus both server-generated keys so the
 filter is tested from both directions at once.
 
@@ -160,5 +160,5 @@ rating stops being safe.
 ## 7. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Annotations_Lost/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Annotations_Lost/test -v
 ```

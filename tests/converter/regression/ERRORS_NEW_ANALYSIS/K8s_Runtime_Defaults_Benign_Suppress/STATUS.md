@@ -101,8 +101,8 @@ tests a later folder updates when it makes its call.
 
 | File | Lines | Change |
 |---|---|---|
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3455–3492 (new) | `_is_benign_default_loss()` |
-| `universal/gitops-factory/convert_to_universal_chart.py` | ~3552 | consulted in `_fidelity_diff`'s LOST branch |
+| `universal/convert_to_universal_chart.py` | ~3455–3492 (new) | `_is_benign_default_loss()` |
+| `universal/convert_to_universal_chart.py` | ~3552 | consulted in `_fidelity_diff`'s LOST branch |
 
 No corpus change and no chart change. The probe manifest lives in the scratch
 directory: it exists to *measure* the ladder, and adding a workload whose only
@@ -168,7 +168,7 @@ repeatable.
 ## 10. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_NEW_ANALYSIS/K8s_Runtime_Defaults_Benign_Suppress/test/test_benign_suppression.py -v
+python -m pytest universal/.generated/output-showcase/ERRORS_NEW_ANALYSIS/K8s_Runtime_Defaults_Benign_Suppress/test/test_benign_suppression.py -v
 
 # the probe manifest carrying every field on the report's benign list
 python convert_to_universal_chart.py --input <scratch>/probe_suppress --output <tmp> `

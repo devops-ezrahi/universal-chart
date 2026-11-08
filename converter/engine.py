@@ -6419,7 +6419,7 @@ def build_parser() -> argparse.ArgumentParser:
     options (-n, --from-yaml, --upgrade, ...) to this same parser."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--input", default="namespaces", help="root folder containing <namespace>/<microservice>.yaml")
-    ap.add_argument("--output", default="output",
+    ap.add_argument("-o", "--output", default="output",
                      help="output folder for values/ApplicationSets/Applications (per-namespace)/report")
     ap.add_argument("--chart-repo-url", default="https://github.com/devops-ezrahi/universal-chart.git")
     ap.add_argument("--chart-path", default=".",

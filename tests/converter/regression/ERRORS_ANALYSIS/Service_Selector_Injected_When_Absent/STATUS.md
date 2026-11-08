@@ -104,7 +104,7 @@ behaviour and what makes a normal Service work.
 
 `Service_Selector_Injected_When_Absent/test/` — 13 tests (shared file with the
 blob-fidelity run). Fixture derives from
-`namespaces-showcase/platform-ops/shared.yaml`, which really does contain a
+`examples/showcase/platform-ops/shared.yaml`, which really does contain a
 selector-less Service, reshaped as a microservice so both Service templates are
 exercised.
 
@@ -161,5 +161,5 @@ numbers moved by exactly the expected 2.
 ## 9. Reproducing
 
 ```powershell
-python -m pytest universal/gitops-factory/output-showcase/ERRORS_ANALYSIS/Service_Selector_Injected_When_Absent/test -v
+python -m pytest universal/.generated/output-showcase/ERRORS_ANALYSIS/Service_Selector_Injected_When_Absent/test -v
 ```
