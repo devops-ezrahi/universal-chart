@@ -1,4 +1,14 @@
 .git/
 *.md
 examples/
-gitops-factory/
+# The converter and everything around it live in this repo but are not part
+# of the chart: Argo CD renders the chart from this directory.
+*.py
+converter/
+tools/
+tests/converter/
+docs/
+ui/
+requirements.txt
+.generated/
+.github/

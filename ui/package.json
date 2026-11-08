@@ -10,6 +10,13 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "jest": {
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/core-logic\\.test\\.js$",
+      "/e2e-test\\.js$"
+    ]
+  },
   "devDependencies": {
     "@jest/globals": "^30.3.0",
     "jest": "^30.3.0",

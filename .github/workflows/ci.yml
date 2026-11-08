@@ -36,49 +36,46 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: gitops-factory/requirements.txt
-      - run: pip install -r gitops-factory/requirements.txt
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
       # A few regression tests read convert_and_verify.py's report/ and renames.json,
       # which are generated, not committed.
       # --cluster-scoped: the showcase deliberately ships a ClusterRole two
       # namespaces both claim, which the default mode reports as a conflict.
-      - run: python convert_and_verify.py --cluster-scoped
-        working-directory: gitops-factory
+      - run: python tools/convert_and_verify.py --cluster-scoped
       - run: python -m pytest -q
-        working-directory: gitops-factory
-      - run: node gitops-factory/ui/core-logic.test.js
+        working-directory: tests/converter
+      - run: node ui/core-logic.test.js
 
       # The committed examples/converted/ trees must be exactly what the
       # converter writes today, and must render back to their input manifests
       # (--fidelity-strict fails the step otherwise). Reports are printed so a
       # change to them can be copied back into the repo.
       - name: Converted examples are current and render back exactly
-        working-directory: gitops-factory
         run: |
           set -e
           for t in flat grouped; do
             extra=""; [ "$t" = grouped ] && extra="--env-group color=black,yellow"
             out="$RUNNER_TEMP/$t/output"
-            python convert_to_universal_chart.py --input ../examples/converted/$t/input --output "$out" \
-              --chart .. --env-suffixes dev,prd $extra --argocd-manifests true \
+            python convert_to_universal_chart.py --input examples/converted/$t/input --output "$out" \
+              --chart . --env-suffixes dev,prd $extra --argocd-manifests true \
               --values-repo-url https://github.com/devops-ezrahi/universal-chart-example-$t.git \
               --root-set-name example-$t --verify-fidelity --fidelity-strict
             for f in fidelity_report.txt render_conflicts.txt; do
               echo "::group::$t/report/$f"; cat "$out/report/$f"; echo "::endgroup::"
             done
-            diff -r -x report -x rootApplication.yaml.txt "$out" ../examples/converted/$t/output
+            diff -r -x report -x rootApplication.yaml.txt "$out" examples/converted/$t/output
           done
 
       # multi-app-manager.html driven in jsdom against converter output.
       - run: npm ci --prefix ui --silent
       - name: multi-app-manager e2e
-        working-directory: gitops-factory
         env:
           NODE_PATH: ${{ github.workspace }}/ui/node_modules
         run: |
           set -e
           app="$RUNNER_TEMP/e2e-app"
-          python convert_to_universal_chart.py --input regression/ERRORS_NEW_ANALYSIS/Env_Suffix_Folders/fixture \
+          python convert_to_universal_chart.py --input tests/converter/regression/ERRORS_NEW_ANALYSIS/Env_Suffix_Folders/fixture \
             --output "$app" --env-group color=black,yellow --env-suffixes dev,prd --skip-verify
           mkdir -p "$app/dev/black/values/group1"
           mv "$app/dev/black/values/ms1.yaml" "$app/dev/black/values/group1/"

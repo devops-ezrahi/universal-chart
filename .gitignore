@@ -1,3 +1,10 @@
 node_modules/
 .DS_Store
 .claude/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Everything the tools generate (converter output, mock dumps, reports) lands
+# here — regenerate with `python tools/convert_and_verify.py`.
+.generated/
