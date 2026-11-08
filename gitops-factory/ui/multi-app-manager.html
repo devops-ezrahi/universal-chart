@@ -289,6 +289,15 @@ async function getSubdir(dirHandle, name, create) {
   }
 }
 
+/* A values file holding `BaseFile: x` (or x.yaml) — one of several copies of
+   x side by side in a namespace — reads base/x.yaml, exactly as the
+   ms-applicationSet chart resolves it. Any other file reads its own name. */
+function baseNameOf(msName, minimal) {
+  const base = minimal && minimal.BaseFile;
+  if (base === undefined || base === null || base === "") return msName;
+  return String(base).replace(/\.yaml$/, "");
+}
+
 /* The converter's tree: base/<release>.yaml (shared by every folder that runs
    the release) and, per folder, defaults.yaml + values/<release>.yaml. A folder
    is a namespace (dev/) or a variant inside one (dev/yellow/, dev/yellow/eu/);
@@ -305,11 +314,9 @@ async function readNamespace(nsHandle, app) {
         await collect(handle);
       } else if (name.endsWith(".yaml")) {
         const msName = name.slice(0, -".yaml".length);
-        ns.microservices[msName] = {
-          values: app.base[msName] || {},
-          minimal: loadYaml(await (await handle.getFile()).text()),
-          minimalDir: dir,
-        };
+        const minimal = loadYaml(await (await handle.getFile()).text());
+        const baseName = baseNameOf(msName, minimal);
+        ns.microservices[msName] = { values: app.base[baseName] || {}, minimal, minimalDir: dir, baseName };
       }
     }
   }
@@ -346,13 +353,15 @@ async function nsValuesDir(ns) {
   return ns.valuesDir || (ns.valuesDir = await getSubdir(ns.handle, VALUES_DIR_NAME, true));
 }
 
-async function writeBaseFile(app, msName, values) {
+async function writeBaseFile(app, baseName, values) {
   app.baseDir = app.baseDir || await getSubdir(app.handle, BASE_DIR_NAME, true);
-  await writeFileText(app.baseDir, `${msName}.yaml`, dumpYaml(values));
-  app.base[msName] = values;
-  // Shared: every folder running this release sees the new base.
+  await writeFileText(app.baseDir, `${baseName}.yaml`, dumpYaml(values));
+  app.base[baseName] = values;
+  // Shared: every folder (and every instance) running this release sees the new base.
   for (const ns of Object.values(app.namespaces)) {
-    if (ns.microservices[msName]) ns.microservices[msName].values = values;
+    for (const [msName, ms] of Object.entries(ns.microservices)) {
+      if ((ms.baseName || msName) === baseName) ms.values = values;
+    }
   }
 }
 
@@ -514,7 +523,7 @@ function renderMicroserviceEditor(main, msName) {
   const header = el("div", { class: "ms-header" }, [
     el("div", {}, [
       el("div", { class: "title", text: isNew ? "New microservice" : msName }),
-      el("div", { class: "path", text: isNew ? `${activeApp().name}/${state.activeNamespace}/` : `${activeApp().name}/base/${msName}.yaml + ${state.activeNamespace}/values/…/${msName}.yaml` }),
+      el("div", { class: "path", text: isNew ? `${activeApp().name}/${state.activeNamespace}/` : `${activeApp().name}/base/${ms.baseName || msName}.yaml + ${state.activeNamespace}/values/…/${msName}.yaml` }),
     ]),
   ]);
   main.appendChild(header);
@@ -580,7 +589,7 @@ async function saveRawValues(msName, which, parsed) {
   const ns = activeNs();
   const ms = ns.microservices[msName];
   if (which === "values") {
-    await writeBaseFile(activeApp(), msName, parsed);  // base/ — shared by every folder
+    await writeBaseFile(activeApp(), ms.baseName || msName, parsed);  // base/ — shared by every folder
   } else {
     ms.minimalDir = ms.minimalDir || await nsValuesDir(ns);
     await writeFileText(ms.minimalDir, `${msName}.yaml`, dumpYaml(parsed));
@@ -720,8 +729,9 @@ function formEditorPanel(msName) {
         // folder's defaults.yaml — only reported. A new release whose base
         // already exists reuses it and writes just its own values/ file.
         const app = activeApp();
-        const reuseBase = isNew && app.base[name] !== undefined;
-        const baseValues = reuseBase ? app.base[name] : deepMerge(app.base[name] || {}, values);
+        const baseName = (ns.microservices[name] || {}).baseName || name;
+        const reuseBase = isNew && app.base[baseName] !== undefined;
+        const baseValues = reuseBase ? app.base[baseName] : deepMerge(app.base[baseName] || {}, values);
         const covered = flattenKeys(values).filter((k) => !flattenKeys(subtractDefaults(values, layerBase())).includes(k));
         const ms = ns.microservices[name] || {};
         const newMinimal = deepMerge(ms.minimal || {}, minimal);
@@ -737,23 +747,25 @@ function formEditorPanel(msName) {
         const tagMoves = [];
         if (baseTag !== undefined) {
           for (const [key, other] of Object.entries(app.namespaces)) {
-            const otherMs = other === ns ? null : other.microservices[name];
-            if (!otherMs || !usesBaseTag(other, otherMs.minimal)) continue;
-            setPath(otherMs.minimal, "image.tag", baseTag);
-            await writeFileText(otherMs.minimalDir, `${name}.yaml`, dumpYaml(otherMs.minimal));
-            tagMoves.push(key);
+            for (const [otherName, otherMs] of Object.entries(other.microservices)) {
+              if (other === ns && otherName === name) continue;
+              if ((otherMs.baseName || otherName) !== baseName || !usesBaseTag(other, otherMs.minimal)) continue;
+              setPath(otherMs.minimal, "image.tag", baseTag);
+              await writeFileText(otherMs.minimalDir, `${otherName}.yaml`, dumpYaml(otherMs.minimal));
+              tagMoves.push(otherName === name ? key : `${key}/${otherName}`);
+            }
           }
         }
 
-        if (!reuseBase || baseTag !== undefined) await writeBaseFile(app, name, baseValues);
+        if (!reuseBase || baseTag !== undefined) await writeBaseFile(app, baseName, baseValues);
         const valuesDir = ms.minimalDir || await nsValuesDir(ns);
         await writeFileText(valuesDir, `${name}.yaml`, dumpYaml(newMinimal));
 
-        ns.microservices[name] = Object.assign(ms, { values: baseValues, minimal: newMinimal, minimalDir: valuesDir });
+        ns.microservices[name] = Object.assign(ms, { values: baseValues, minimal: newMinimal, minimalDir: valuesDir, baseName });
 
         let msg = isNew ? `Created ${name}.` : `Saved ${name}.`;
-        if (reuseBase) msg += ` Reused the existing base/${name}.yaml (another folder runs it).`;
-        if (baseTag !== undefined) msg += ` Moved image.tag out of base/${name}.yaml${tagMoves.length ? ` (also into ${tagMoves.join(", ")})` : ""}.`;
+        if (reuseBase) msg += ` Reused the existing base/${baseName}.yaml (another folder runs it).`;
+        if (baseTag !== undefined) msg += ` Moved image.tag out of base/${baseName}.yaml${tagMoves.length ? ` (also into ${tagMoves.join(", ")})` : ""}.`;
         if (covered.length) msg += ` Already supplied by defaults.yaml (kept in the shared base): ${covered.join(", ")}`;
         showStatus(status, "success", msg);
 

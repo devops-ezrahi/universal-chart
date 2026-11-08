@@ -177,3 +177,12 @@ tests:
             - name: links.console
               value: https://console.example.com
               forceString: true
+
+  - it: reads the base a values file names in BaseFile, else the base of its own name
+    asserts:
+      - equal:
+          path: spec.template.spec.sources[0].helm.valueFiles
+          value:
+            - '$Values/base{{ .path.path | trimPrefix "rakia-fac1/black/values" }}/{{ if hasKey . "BaseFile" }}{{ .BaseFile | toString | trimSuffix ".yaml" }}.yaml{{ else }}{{ .path.filename }}{{ end }}'
+            - '$Values/rakia-fac1/black/defaults.yaml'
+            - '$Values/{{ .path.path }}/{{ .path.filename }}'

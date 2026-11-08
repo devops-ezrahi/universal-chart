@@ -346,6 +346,9 @@ def parse_env_group(spec: str, reserved: set) -> EnvGroup:
     if name in reserved:
         sys.exit(f"--env-group {spec!r}: '{name}' is one of the chart's own top-level "
                  f"values; injecting it would override that setting")
+    if name in (INSTANCE_KEY, BASE_FILE_KEY):
+        sys.exit(f"--env-group {spec!r}: '{name}' is what --instances writes into each "
+                 f"copy's values file; pick another group name")
     tokens: dict = {}
     for piece in filter(None, (p.strip() for p in right.split(","))):
         tok, _, val = piece.partition(":")
@@ -759,10 +762,35 @@ def values_files(values_dir: Path) -> list[Path]:
     return sorted(values_dir.rglob("*.yaml")) if values_dir.is_dir() else []
 
 
+# Instances (--instances): one release deployed several times side by side in
+# the same namespace — x-1, x-2, x-3, or alpha, beta, gamma — shares ONE
+# base/x.yaml. Each copy's values file carries two keys:
+#   BaseFile: x      which base/ file it layers — read by Argo CD
+#                    (ms-applicationSet), and by base_file_for here
+#   instance: <id>   what base/ fills in as {{ .Values.instance }} — read by Helm
+BASE_FILE_KEY = "BaseFile"
+INSTANCE_KEY = "instance"
+
+
+def base_name_of(vf: Path) -> "str | None":
+    """The base a values file names in BaseFile ('x' or 'x.yaml' -> 'x'); None
+    when it names none (or the file is missing or unreadable)."""
+    try:
+        data = yaml.safe_load(vf.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if isinstance(data, dict) and data.get(BASE_FILE_KEY) not in (None, ""):
+        name = str(data[BASE_FILE_KEY])
+        return name[:-len(".yaml")] if name.endswith(".yaml") else name
+    return None
+
+
 def base_file_for(base_dir: Path, values_dir: Path, vf: Path) -> Path:
     """A release's base file: base/ mirrors its sub-folder under values/
-    (values/group1/ms1.yaml -> base/group1/ms1.yaml), as the chart reads it."""
-    return base_dir / vf.relative_to(values_dir)
+    (values/group1/ms1.yaml -> base/group1/ms1.yaml), as the chart reads it.
+    A file holding `BaseFile: x` reads base/<sub-folder>/x.yaml instead."""
+    rel = vf.relative_to(values_dir)
+    return base_dir / rel.with_name((base_name_of(vf) or rel.stem) + rel.suffix)
 
 VOLATILE_ANNOTATION_PREFIXES = (
     "kubectl.kubernetes.io/last-applied-configuration",
@@ -2768,6 +2796,9 @@ COSMETIC_ORDER_KEYS = frozenset({"portOrder", "volumeOrder", "sidecarOrder"})
 EXCLUDE_PATTERNS: list[str] = []
 KEEP_PATTERNS: list[str] = []
 INCLUDE_PATTERNS: list[str] = []
+# --instances: {base: None (its <base>-<id> releases) or [named copies]}, all
+# sharing one base/<base>.yaml.
+INSTANCE_BASES: dict[str, "list[str] | None"] = {}
 
 
 def matches_patterns(doc: dict, patterns: list[str]) -> bool:
@@ -4431,7 +4462,8 @@ def write_base_file(base_dir: Path, slug: str, values: dict) -> None:
 
 
 def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: str, namespace: str,
-                              ctx: MicroserviceContext, minimal_extra: dict | None = None) -> None:
+                              ctx: MicroserviceContext, minimal_extra: dict | None = None,
+                              base_slug: str | None = None) -> None:
     """
     Writes this microservice's per-NAMESPACE artifacts only — the shared
     comprehensive file lives in base/ and is written once by write_base_file,
@@ -4458,12 +4490,17 @@ def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: s
     minimal = build_minimal_values(ctx)
     if minimal_extra:
         minimal = deep_merge(minimal_extra, minimal)
+    base_slug = base_slug or release_slug
     header_min = (
         f"# Auto-generated MINIMAL override for '{ms_name}' — image, replicas,\n"
         f"# plus (if present) this namespace's own structural difference from the\n"
-        f"# shared base/{release_slug}.yaml (see conflicts_and_warnings.txt).\n"
+        f"# shared base/{base_slug}.yaml (see conflicts_and_warnings.txt).\n"
         f"# This is the client's single source of truth for day-2 tuning; safe to hand-edit\n"
-        f"# and applied LAST (highest precedence) over base/{release_slug}.yaml.\n\n"
+        f"# and applied LAST (highest precedence) over base/{base_slug}.yaml.\n"
+        + (f"# '{BASE_FILE_KEY}' makes this one copy of '{base_slug}' (Argo CD layers\n"
+           f"# base/{base_slug}.yaml for it); '{INSTANCE_KEY}' is what that base fills in.\n"
+           if base_slug != release_slug else "")
+        + "\n"
     )
     target.write_text(header_min + dump_yaml(helm_safe_values(minimal), spaced=True), encoding="utf-8")
 
@@ -6370,6 +6407,15 @@ def main() -> None:
                           "--env-suffixes is the namespace's, not a folder. The namespace name "
                           "becomes {{ .Release.Namespace }}; '--env-group namespace' enables only "
                           "that. Repeatable; a second group nests (dev/yellow/eu/).")
+    ap.add_argument("--instances", action="append", default=[], metavar="NAME | NAME=COPY,COPY",
+                    help="copies of one release deployed side by side in a namespace share ONE "
+                         "base/NAME.yaml. 'x' takes every release named x-<id> (x-1, x-2, x-3); "
+                         "'x=alpha,beta,gamma' takes exactly those, whatever they are called. What "
+                         "differs per copy is templated as {{ .Values.instance }}, and each copy's "
+                         "values file carries 'BaseFile: NAME' (which base Argo CD layers) and "
+                         "'instance: <id>' (<id> = what follows 'x-', or the copy's whole name). "
+                         "Each copy stays its own Application and Helm release. Repeatable; ';' "
+                         "also separates groups.")
     ap.add_argument("--env-in-values", nargs="?", const=True, default=False, type=_bool_arg,
                      help="write each namespace's whole env map into its own values/ file. Default "
                           "false: each env var is treated like any other value — in base/ when it "
@@ -6425,6 +6471,16 @@ def main() -> None:
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
         INCLUDE_PATTERNS
     global ENV_IN_VALUES, PREVENT_RESTART, PREVENT_RESTART_FLAG
+    INSTANCE_BASES.clear()
+    for spec in (p.strip() for arg in args.instances for p in arg.split(";") if p.strip()):
+        base, eq, named = spec.partition("=")
+        if eq:  # x=alpha,beta,gamma
+            INSTANCE_BASES[base.strip()] = list(dict.fromkeys(n.strip() for n in named.split(",") if n.strip()))
+        else:   # x  or  x,y
+            INSTANCE_BASES.update({b.strip(): None for b in spec.split(",") if b.strip()})
+    for base, named in INSTANCE_BASES.items():
+        if not HELM_RELEASE_NAME_RE.match(base) or named == []:
+            sys.exit(f"--instances {base}: give a release name, optionally =copy1,copy2,...")
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
     ENV_IN_VALUES = args.env_in_values
@@ -6764,22 +6820,43 @@ def main() -> None:
     expected_values: dict[str, set] = {}
     env_group_applied: list[dict] = []
 
-    def publish(slug: str, release: str, entries: list[tuple[str, MicroserviceContext]]) -> None:
+    base_of: dict[tuple[str, str], str] = {}  # (folder, release) -> its base/ file's name
+    written_bases: set[str] = set()
+
+    def publish(slug: str, release: str, entries: list[tuple[str, MicroserviceContext]],
+                instances: "dict[str, tuple[str, str, str]] | None" = None) -> None:
         """Write base/<slug>.yaml once for every (folder, ctx) in entries — what
         all of them agree on, group words templated in — and leave the rest
-        (minimal_extras) for each one's own values/<slug>.yaml."""
-        for namespace, _ in entries:
-            release_slugs[(namespace, release)] = slug
+        (minimal_extras) for each one's own values/<slug>.yaml.
+
+        instances (--instances): the entries are copies of one release side by
+        side, keyed '<folder>/@<release>' -> (folder, release, id). Their ids are
+        one more group, {{ .Values.instance }}, whose value always rides in the
+        release's own values/<release>.yaml, next to `BaseFile: <slug>` — the
+        key that makes ms-applicationSet read base/<slug>.yaml for it."""
+        groups_here = env_groups
+        if instances:
+            groups_here = env_groups + [EnvGroup(INSTANCE_KEY, {i: i for _, _, i in instances.values()},
+                                                 folder=False)]
+
+        def where(key: str) -> tuple[str, str]:
+            return instances[key][:2] if instances else (key, release)
+
+        for key, _ in entries:
+            ns, rel = where(key)
+            release_slugs[(ns, rel)] = rel if instances else slug
+            base_of[(ns, rel)] = slug
+        written_bases.add(slug)
         if len(entries) == 1:
             write_base_file(base_dir, slug, entries[0][1].values)
             return
         key_injections: dict = {}
-        if env_groups:
-            unify_group_keys(entries, env_groups, key_injections)
+        if groups_here:
+            unify_group_keys(entries, groups_here, key_injections)
         shared_base = common_subtree([ctx.values for _, ctx in entries])
         injections = {}
-        if env_groups:
-            injections, applied = combine_env_groups(slug, entries, env_groups, shared_base,
+        if groups_here:
+            injections, applied = combine_env_groups(slug, entries, groups_here, shared_base,
                                                      args.interactive)
             for ns, inj in key_injections.items():
                 injections[ns] = {**inj, **injections.get(ns, {})}
@@ -6788,25 +6865,66 @@ def main() -> None:
                                 + (f", injected {a['injection']}" if a["injection"] else "")
                                 for a in applied)
         write_base_file(base_dir, slug, shared_base)
-        for namespace, ctx in entries:
+        for key, ctx in entries:
+            namespace, rel = where(key)
             remainder = subtract_defaults(ctx.values, shared_base)
             # The group values this release's templates read come from its
             # folder's defaults.yaml (folder_values); only a value that
             # disagrees with the folder rides in the release's own values/.
-            own = {g: v for g, v in injections.get(namespace, {}).items()
+            own = {g: v for g, v in injections.get(key, {}).items()
                    if folder_values(namespace, env_groups).get(g) != v}
+            if instances:
+                own[BASE_FILE_KEY] = slug
+                own[INSTANCE_KEY] = instances[key][2]
             extra = deep_merge(own, remainder)
             if extra:
-                minimal_extras[(namespace, release)] = extra
+                minimal_extras[(namespace, rel)] = extra
             if remainder:
                 all_warnings.append(
-                    f"[{namespace}/{release}] shares base/{slug}.yaml with its other namespaces' "
-                    f"copies; {_leaf_paths(remainder)} differ and were pushed into this "
-                    f"namespace's own values/{slug}.yaml instead"
+                    f"[{namespace}/{rel}] shares base/{slug}.yaml with its other "
+                    f"{'instances' if instances else 'namespaces' + chr(39) + ' copies'}; "
+                    f"{_leaf_paths(remainder)} differ and were pushed into its own "
+                    f"values/{rel if instances else slug}.yaml instead"
                 )
+
+    # --instances: x-1, x-2, x-3 (`x`) or alpha, beta, gamma (`x=alpha,beta,gamma`),
+    # in any folders, are copies of one release, x. They share base/x.yaml and
+    # keep their own values/<release>.yaml, each its own Application and Helm
+    # release. Grouped only when it is safe: at least two different copies, and
+    # no release named plain 'x' that would claim base/x.yaml.
+    instance_groups: dict[str, tuple[list, dict]] = {}
+    for base, named in INSTANCE_BASES.items():
+        if named is None:  # x-<id>: the id is what follows 'x-'
+            pat = re.compile(rf"{re.escape(base)}-([a-z0-9]+(?:-[a-z0-9]+)*)")
+            members = [(name, m.group(1)) for name in groups if (m := pat.fullmatch(name))]
+        else:  # named copies: the id is the whole release name
+            members = [(name, name) for name in named if name in groups]
+            missing = [name for name in named if name not in groups]
+            if missing:
+                all_warnings.append(f"--instances {base}={','.join(named)}: no release named "
+                                    f"{', '.join(missing)} in this run")
+        listed = ", ".join(n for n, _ in members) or "none"
+        if base in groups or base == SHARED_DIR_NAME:
+            all_warnings.append(f"--instances {base}: a release named '{base}' exists too, and it owns "
+                                f"base/{base}.yaml — {listed} kept as separate releases")
+            continue
+        if len({i for _, i in members}) < 2:
+            all_warnings.append(f"--instances {base}: needs at least two copies, found {listed} — "
+                                f"nothing combined")
+            continue
+        entries, inst = [], {}
+        for name, i in members:
+            for namespace, ctx in groups.pop(name):
+                key = f"{namespace}/@{name}"
+                entries.append((key, ctx))
+                inst[key] = (namespace, name, i)
+        instance_groups[base] = (entries, inst)
+        print(f"Instances of {base}: {listed} share base/{base}.yaml")
 
     for name, entries in groups.items():
         publish(name, name, entries)
+    for base, (entries, inst) in instance_groups.items():
+        publish(base, base, entries, inst)
 
     # 'shared' releases: the namespaces whose shared objects are the same ones
     # (each environment's copy) are ONE release, published exactly like a
@@ -6814,7 +6932,7 @@ def main() -> None:
     # group of their own, under a name of their own (shared_group_slug).
     shared_groups = group_shared_releases(per_namespace_shared, per_namespace_shared_objects,
                                           {ns: {name for name, _ in ms} for ns, ms in out_ms.items()})
-    taken = set(groups)
+    taken = set(groups) | set(instance_groups)
     for i, members in enumerate(shared_groups):
         slug = SHARED_DIR_NAME if i == 0 else shared_group_slug(members, taken)
         taken.add(slug)
@@ -6902,7 +7020,8 @@ def main() -> None:
         for ms_name, ctx in ms_contexts:
             slug = release_slugs[(namespace, ms_name)]
             write_microservice_output(out_ns_dir, ms_name, slug, namespace, ctx,
-                                       minimal_extra=minimal_extras.get((namespace, ms_name)))
+                                       minimal_extra=minimal_extras.get((namespace, ms_name)),
+                                       base_slug=base_of[(namespace, ms_name)])
             expected_values[namespace].add(slug)
 
         if shared_ctx is not None:
@@ -7052,9 +7171,7 @@ def main() -> None:
 
     # Stale output — always reported, because a leftover <ns>/values/<name>.yaml
     # keeps ArgoCD deploying a microservice that no longer exists in the input.
-    expected_base = {f.stem for f in base_dir.rglob("*.yaml")} if base_dir.is_dir() else set()
-    expected_base &= {slug for slug in release_slugs.values()}
-    stale = find_stale_output(output_dir, expected_values, expected_base)
+    stale = find_stale_output(output_dir, expected_values, written_bases)
     if stale:
         stale_report = report_dir / "stale_output.txt"
         stale_releases = [f for f in stale if f.parent.name == VALUES_DIR_NAME]
