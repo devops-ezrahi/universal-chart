@@ -1,0 +1,13 @@
+# later layer: each var switched, the old key / old kind of ref nulled
+env:
+  DB_PASS:
+    value: not-secret-in-dev
+    valueFrom: null
+  MODE:
+    valueFrom:
+      configMapKeyRef: { name: cfg, key: mode }
+    value: null
+  NODE:
+    valueFrom:
+      fieldRef: { fieldPath: spec.nodeName }
+      secretKeyRef: null

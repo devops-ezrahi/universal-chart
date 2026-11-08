@@ -77,16 +77,16 @@ def test_clean_by_default(tmp_path):
     # Meaning, not cosmetics: init containers run in order, a later envFrom wins.
     assert v["initContainerOrder"] == ["z-migrate", "a-warm"]
     assert v["envFromOrder"] == ["z-sec", "a-cm"]
-    # env is a NAME: value map; with no $(VAR) between them the chart's sorted
+    # env is a NAME: {value} map; with no $(VAR) between them the chart's sorted
     # order is harmless, so no envOrder. volumeMounts stays a list.
-    assert v["env"] == {"ZED": "1", "ALPHA": "2"}
+    assert v["env"] == {"ZED": {"value": "1"}, "ALPHA": {"value": "2"}}
     assert v["volumeMounts"] == MOUNTS
     assert "envOrder" not in v and "volumeMountOrder" not in v
 
 
 def test_env_order_kept_when_a_value_reads_another(tmp_path):
     v = convert(tmp_path, REF_ENV)
-    assert v["env"] == {"HOST": "db", "A_URL": "postgres://$(HOST):5432"}
+    assert v["env"] == {"HOST": {"value": "db"}, "A_URL": {"value": "postgres://$(HOST):5432"}}
     assert v["envOrder"] == ["HOST", "A_URL"]
 
 
@@ -97,7 +97,7 @@ def test_no_env_order_when_sorting_keeps_the_reference(tmp_path):
 
 def assert_live_template(v):
     assert v["portOrder"] == ["web", "admin"]
-    assert v["env"] == {"ZED": "1", "ALPHA": "2"}
+    assert v["env"] == {"ZED": {"value": "1"}, "ALPHA": {"value": "2"}}
     assert v["envOrder"] == ["ZED", "ALPHA"]
     assert v["volumeMounts"] == MOUNTS
     assert v["volumeOrder"] == ["z-data", "a-tmp"]

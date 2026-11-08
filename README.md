@@ -523,7 +523,7 @@ workload:
 | Workload type | `workload.type` | deployment / statefulset / daemonset / none (no compute workload) |
 | Replica count | `replicaCount` | Omitted automatically when HPA is enabled |
 | Update strategy | `strategy` | RollingUpdate / Recreate / OnDelete |
-| Environment variables | `env`, `envOrder` | A map, `NAME: value`; a ref is `NAME: {secretKeyRef: ...}` (also `configMapKeyRef`, `fieldRef`, `resourceFieldRef`), the chart adds `valueFrom`. A later values file overrides one var, or deletes it with `NAME: null`. Rendered sorted by name, except the names in `envOrder` go first (needed only when a `$(VAR)` must see an earlier var). A Kubernetes-style list still works, rendered as written |
+| Environment variables | `env`, `envOrder` | A map keyed by var name; each var says what it is: `NAME: {value: ...}` or `NAME: {valueFrom: {secretKeyRef: ...}}` (also `configMapKeyRef`, `fieldRef`, `resourceFieldRef`). A later values file overrides one var, or deletes it with `NAME: null`; one that switches a var between `value` and `valueFrom` (or between kinds of ref) sets the old key to `null`, and the render fails, naming the var, if it does not. The shorthand `NAME: value` / `NAME: {secretKeyRef: ...}` of earlier trees still renders. Rendered sorted by name, except the names in `envOrder` go first (needed only when a `$(VAR)` must see an earlier var). A Kubernetes-style list still works, rendered as written |
 | Volume mounts | `volumeMounts` | A list, rendered in the order written; same rules as `env` |
 | Service | `service.enabled: true` | Off by default; set `false` in a later values file to turn it back off |
 | ServiceAccount | `serviceAccount.create: true` | Off by default (pods run as `serviceAccount.name`, else `default`); `false` turns it back off |
@@ -611,13 +611,15 @@ ports:
 
 env:
   POSTGRES_USER:
-    secretKeyRef:
-      name: postgres-secret
-      key: username
+    valueFrom:
+      secretKeyRef:
+        name: postgres-secret
+        key: username
   POSTGRES_PASSWORD:
-    secretKeyRef:
-      name: postgres-secret
-      key: password
+    valueFrom:
+      secretKeyRef:
+        name: postgres-secret
+        key: password
 
 service:
   enabled: true

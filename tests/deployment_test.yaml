@@ -589,6 +589,49 @@ tests:
             - { name: EXTRA, value: x }
             - { name: LOG_LEVEL, value: debug }
 
+  - it: renders the explicit env map (value / valueFrom), sorted by name
+    set:
+      env:
+        B:
+          valueFrom:
+            fieldRef: { fieldPath: metadata.name }
+        A:
+          value: a
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - { name: A, value: a }
+            - { name: B, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+
+  - it: a later file switching value <-> valueFrom, or the kind of ref, nulls the old key
+    values:
+      - env_flip_base_values.yaml
+      - env_flip_override_values.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - { name: DB_PASS, value: not-secret-in-dev }
+            - { name: MODE, valueFrom: { configMapKeyRef: { name: cfg, key: mode } } }
+            - { name: NODE, valueFrom: { fieldRef: { fieldPath: spec.nodeName } } }
+
+  - it: fails, naming the var, when a switch to value leaves valueFrom in place
+    values:
+      - env_flip_base_values.yaml
+      - env_flip_missing_null_values.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: 'env DB_PASS has both value and valueFrom'
+
+  - it: fails, naming the var, when a switch of ref kind leaves the old kind in place
+    values:
+      - env_flip_base_values.yaml
+      - env_kind_missing_null_values.yaml
+    asserts:
+      - failedTemplate:
+          errorPattern: 'env NODE has more than one source in valueFrom'
+
   - it: renders volumes in volumeOrder and a volumeMounts list as written
     set:
       volumes:

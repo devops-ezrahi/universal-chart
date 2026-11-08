@@ -52,8 +52,8 @@ def test_env_group_merges_into_one_templated_base(tmp_path):
     # env is a map, so each var is combined on its own: COLOR and SELF_URL
     # become templates in base/, and only NEIGHBOUR_URL (below), which cannot
     # be templated, stays in each namespace's values/.
-    assert base["env"] == {"COLOR": "{{ .Values.color }}",
-                           "SELF_URL": "http://api.{{ .Release.Namespace }}.svc:8080"}
+    assert base["env"] == {"COLOR": {"value": "{{ .Values.color }}"},
+                           "SELF_URL": {"value": "http://api.{{ .Release.Namespace }}.svc:8080"}}
     assert "envOrder" not in base
     # A source '{{' is escaped so the chart's tpl emits it literally.
     assert base["configMaps"]["filter-alerts"]["data"]["ALERT"] == \
@@ -68,7 +68,7 @@ def test_env_group_merges_into_one_templated_base(tmp_path):
     assert base["configMaps"][cm]["data"]["mode"] == "{{ .Values.color }}"
     cron = base["cronjobs"]["report-{{ .Values.color }}"]["jobTemplate"]
     assert cron["envFrom"][cm] == {"type": "configMapRef"}
-    assert cron["env"] == {"COLOR": "{{ .Values.color }}"}
+    assert cron["env"] == {"COLOR": {"value": "{{ .Values.color }}"}}
     assert base["sidecars"]["proxy-{{ .Values.color }}"]["args"] == ["--color", "{{ .Values.color }}"]
 
     # The color token in each file name moved the release into a folder of
@@ -77,7 +77,7 @@ def test_env_group_merges_into_one_templated_base(tmp_path):
         assert _values(out / ns / color / "defaults.yaml")["color"] == color
         values = _values(out / ns / color / "values" / "filter-service-b2b.yaml")
         # Names another namespace, not its own: never templated.
-        assert values["env"] == {"NEIGHBOUR_URL": f"http://db.{other}.svc:5432"}
+        assert values["env"] == {"NEIGHBOUR_URL": {"value": f"http://db.{other}.svc:5432"}}
 
 
 def test_without_env_group_output_is_unchanged(tmp_path):
@@ -109,7 +109,7 @@ def test_combine_values_rules():
 
 
 def test_env_is_split_per_var(tmp_path):
-    """env is a NAME: value map, which Helm merges key by key: when one var
+    """env is a NAME: {value} map, which Helm merges key by key: when one var
     differs between namespaces, base/ keeps the vars every namespace agrees on
     and each namespace's values/ carries only the var that differs."""
     for ns, fruit in (("ns1", "banana"), ("ns2", "tapuz")):
@@ -137,8 +137,8 @@ spec:
         capture_output=True, text=True, errors="replace", cwd=str(GITOPS_DIR))
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
-    assert _values(out / "base" / "app.yaml")["env"] == {"foo": "bar"}
-    assert _values(out / "ns1" / "values" / "app.yaml")["env"] == {"test": "banana"}
-    assert _values(out / "ns2" / "values" / "app.yaml")["env"] == {"test": "tapuz"}
+    assert _values(out / "base" / "app.yaml")["env"] == {"foo": {"value": "bar"}}
+    assert _values(out / "ns1" / "values" / "app.yaml")["env"] == {"test": {"value": "banana"}}
+    assert _values(out / "ns2" / "values" / "app.yaml")["env"] == {"test": {"value": "tapuz"}}
     # Only the one var that differs is reported and moved, not the whole env.
-    assert "['env.test'] differ" in (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")
+    assert "['env.test.value'] differ" in (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")

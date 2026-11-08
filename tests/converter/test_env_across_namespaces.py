@@ -1,6 +1,6 @@
 """Every namespace gets exactly its own env vars back.
 
-env is a NAME: value map split per var between base/ and each folder's values/
+env is a NAME: {value} map split per var between base/ and each folder's values/
 file. This builds releases that run in several namespaces with env that
 differs between them (values changed, vars dropped, vars added, Secret refs,
 cronjob/job env), converts them with --prevent-restart, then rebuilds each

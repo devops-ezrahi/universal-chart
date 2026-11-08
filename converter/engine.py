@@ -1723,12 +1723,14 @@ def env_map(env, ctx: "MicroserviceContext | None" = None) -> dict:
     values split places each var on its own: a var the same in every namespace
     stays in base/, only the ones that differ go to that folder's values file.
 
-      - name: A / value: x            ->  A: x
-      - name: B / valueFrom: {ref}    ->  B: {ref}      (the chart adds valueFrom)
+      - name: A / value: x            ->  A: {value: x}
+      - name: B / valueFrom: {ref}    ->  B: {valueFrom: {ref}}
 
-    `- name: FOO` with nothing else, or `value: {}`, both reduce to an empty
-    body — normalised to `""` rather than dropped: an env var explicitly set to
-    the empty string is meaningful, and removing it is NOT the same.
+    Always this explicit form: each var says whether it is a value or a ref,
+    so a reader never has to know the chart's shorthand. `- name: FOO` with
+    nothing else, or `value: {}`, both reduce to `{value: ""}` rather than being
+    dropped: an env var explicitly set to the empty string is meaningful, and
+    removing it is NOT the same.
     ConfigMap/Secret references follow ctx.name_map's renames. A name listed
     twice keeps its last entry — the one Kubernetes applies.
     """
@@ -1740,13 +1742,11 @@ def env_map(env, ctx: "MicroserviceContext | None" = None) -> dict:
         name = e["name"]
         body = {k: v for k, v in e.items() if k != "name"}
         if not body or body.get("value") == {} or (set(body) == {"value"} and body["value"] is None):
-            val: Any = ""
+            val: Any = {"value": ""}
         elif set(body) == {"value"}:
-            val = body["value"] if isinstance(body["value"], str) else str(body["value"])
-        elif set(body) == {"valueFrom"} and isinstance(body["valueFrom"], dict) and body["valueFrom"]:
-            val = body["valueFrom"]
+            val = {"value": body["value"] if isinstance(body["value"], str) else str(body["value"])}
         else:
-            val = body  # anything unusual is kept in the explicit value/valueFrom form
+            val = body  # {valueFrom: ...}, or anything unusual, kept as written
         if name in out:
             del out[name]  # keep the position of the entry that wins
             if ctx is not None:
@@ -1756,7 +1756,10 @@ def env_map(env, ctx: "MicroserviceContext | None" = None) -> dict:
 
 
 def _env_refs(val) -> set:
-    """Names a value refers to as $(NAME)."""
+    """Names a value refers to as $(NAME). `val` is an env entry ({value: ...})
+    or, for callers holding the bare string, the string itself."""
+    if isinstance(val, dict):
+        val = val.get("value")
     return set(_ENV_REF_RE.findall(val)) if isinstance(val, str) else set()
 
 
@@ -4495,6 +4498,102 @@ def shared_group_slug(members: list[str], taken: set[str]) -> str:
     return next(c for c in candidates if c not in taken)
 
 
+# Every base written this run, by slug — the lower layer each values file is
+# checked against by null_env_flips.
+WRITTEN_BASES: dict[str, dict] = {}
+
+
+# Subtrees holding Kubernetes shapes the chart renders verbatim: their env is
+# a Kubernetes list, not the chart's env map.
+_VERBATIM_KEYS = frozenset({"sidecars", "initContainers", "extraDeploy", "extraContainers"})
+
+
+def env_shape_problems(data, where: str) -> list[str]:
+    """Every chart env map in `data` must hold, per var, exactly one of
+    `value: <string>` / `valueFrom: {...}` (the other key may be null — see
+    null_env_flips), or be `NAME: null` (deletes a var a lower file set)."""
+    out: list[str] = []
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in _VERBATIM_KEYS:
+                    continue
+                p = f"{path}.{k}" if path else str(k)
+                if k == "env":
+                    if not isinstance(v, dict):
+                        out.append(f"{where}: {p} is a {type(v).__name__}, not a NAME: {{value|valueFrom}} map")
+                        continue
+                    for name, body in v.items():
+                        if body is None:
+                            continue
+                        live = {bk: bv for bk, bv in body.items() if bv is not None} if isinstance(body, dict) else None
+                        refs = ({rk: rv for rk, rv in live["valueFrom"].items() if rv is not None}
+                                if live and isinstance(live.get("valueFrom"), dict) else {})
+                        ok = (isinstance(body, dict) and set(body) <= {"value", "valueFrom"} and len(live) == 1
+                              and (isinstance(live.get("value"), str) or len(refs) == 1))
+                        if not ok:
+                            out.append(f"{where}: {p}.{name} = {body!r}")
+                else:
+                    walk(v, p)
+        elif isinstance(node, list):
+            for i, x in enumerate(node):
+                walk(x, f"{path}[{i}]")
+
+    walk(data, "")
+    return out
+
+
+def lint_env_shape(output_dir: Path) -> list[str]:
+    """env_shape_problems over every values file of a written tree."""
+    out: list[str] = []
+    for f in sorted(output_dir.rglob("*.yaml")):
+        rel = f.relative_to(output_dir)
+        if rel.parts[0] in NON_NAMESPACE_OUTPUT_DIRS or f.name in (ROOT_APPSET_FILE_NAME, CLUSTER_SHARED_APP_FILE_NAME):
+            continue
+        try:
+            data = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except yaml.YAMLError:
+            continue
+        out += env_shape_problems(data, rel.as_posix())
+    return out
+
+
+def null_env_flips(lower: dict, upper: dict) -> int:
+    """Where `upper` (a values file) sets an env var as `value` and `lower`
+    (its base) sets it as `valueFrom` — or the reverse — null the other key in
+    `upper`. Helm merges values files map by map, so without the null the var
+    renders with both, which the API server refuses (and the chart now fails
+    on). Walks every `env` map at any depth (top level, jobs, cronjobs);
+    container lists (sidecars, initContainers) keep Kubernetes lists and are
+    not touched. Returns how many keys were nulled."""
+    n = 0
+    if not isinstance(upper, dict) or not isinstance(lower, dict):
+        return 0
+    for k, v in upper.items():
+        low = lower.get(k)
+        if k == "env" and isinstance(v, dict) and isinstance(low, dict):
+            for name, body in v.items():
+                lb = low.get(name)
+                if not (isinstance(body, dict) and isinstance(lb, dict)):
+                    continue
+                for mine, other in (("value", "valueFrom"), ("valueFrom", "value")):
+                    if mine in body and other not in body and lb.get(other) is not None:
+                        body[other] = None
+                        n += 1
+                # One source per valueFrom: switching secretKeyRef -> fieldRef
+                # nulls the lower file's kind, or the merge would hold both.
+                uf, lf = body.get("valueFrom"), lb.get("valueFrom")
+                if isinstance(uf, dict) and isinstance(lf, dict) and any(v is not None for v in uf.values()):
+                    for kind, ref in lf.items():
+                        if ref is not None and kind not in uf:
+                            uf[kind] = None
+                            n += 1
+        elif isinstance(v, dict):
+            n += null_env_flips(low if isinstance(low, dict) else {}, v)
+    return n
+
+
 def write_base_file(base_dir: Path, slug: str, values: dict) -> None:
     """
     The comprehensive, environment-agnostic file for one microservice —
@@ -4504,6 +4603,7 @@ def write_base_file(base_dir: Path, slug: str, values: dict) -> None:
     namespace, lives in each namespace's own <folder>/values/<slug>.yaml.
     """
     base_dir.mkdir(parents=True, exist_ok=True)
+    WRITTEN_BASES[slug] = copy.deepcopy(values)
     # A file someone moved into a base/ sub-folder stays there.
     target = next(iter(sorted(base_dir.rglob(f"{slug}.yaml"))), base_dir / f"{slug}.yaml")
     header = (
@@ -4546,6 +4646,7 @@ def write_microservice_output(namespace_dir: Path, ms_name: str, release_slug: s
     if minimal_extra:
         minimal = deep_merge(minimal_extra, minimal)
     base_slug = base_slug or release_slug
+    null_env_flips(WRITTEN_BASES.get(base_slug, {}), minimal)
     header_min = (
         f"# Auto-generated MINIMAL override for '{ms_name}' — image, replicas,\n"
         f"# plus (if present) this namespace's own structural difference from the\n"
@@ -4600,7 +4701,7 @@ def _values_ref(values_path: str, rest: str) -> str:
     layout (a dedicated repo whose root IS the --output directory). --values-
     path exists for the other case — the --output directory folded into a
     subpath of a larger repo (e.g. this repo's own homelab checkout, at
-    universal/gitops-factory/output-showcase) — so the same references still
+    universal/.generated/output-showcase) — so the same references still
     resolve. Empty (the default) reproduces the original unprefixed paths
     exactly.
     """
@@ -6438,7 +6539,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--values-revision", default="main")
     ap.add_argument("--values-path", default="",
                      help="subpath within --values-repo-url where this run's --output directory's "
-                          "content actually lives, e.g. 'universal/gitops-factory/output-showcase' when "
+                          "content actually lives, e.g. 'universal/.generated/output-showcase' when "
                           "the output is folded into a larger repo instead of a dedicated values repo "
                           "(whose root would otherwise just BE the --output directory). Every "
                           "$values/... reference and the ApplicationSet git generator's file glob are "
@@ -6626,6 +6727,7 @@ def main() -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Convert args.input (the <ns>/<microservice>.yaml dump) into args.output."""
+    WRITTEN_BASES.clear()
     global ESO_API_VERSION_OVERRIDE, NAMESPACE_SCOPED_ONLY, EXCLUDE_PATTERNS, KEEP_PATTERNS, ARGOCD_MANIFESTS, \
         INCLUDE_PATTERNS
     global ENV_IN_VALUES, PREVENT_RESTART, PREVENT_RESTART_FLAG, EXACT_COPY
@@ -7339,6 +7441,16 @@ def run(args: argparse.Namespace) -> None:
             "# deploy. See build_root_application's docstring.\n\n"
         )
         (output_dir / ROOT_APP_FILE_NAME).write_text(root_header + dump_yaml(root_app), encoding="utf-8")
+
+    # Every env the run wrote is in the explicit form ({value} / {valueFrom}).
+    # A failure here is a converter bug, so it stops the run before anything
+    # is verified or deployed.
+    env_problems = lint_env_shape(output_dir)
+    if env_problems:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "env_shape.txt").write_text("\n".join(env_problems) + "\n", encoding="utf-8")
+        sys.exit(f"\n{len(env_problems)} env entr(y/ies) not in the explicit value/valueFrom form "
+                 f"(a converter bug) — see {report_dir / 'env_shape.txt'}")
 
     # Stale output — always reported, because a leftover <ns>/values/<name>.yaml
     # keeps ArgoCD deploying a microservice that no longer exists in the input.

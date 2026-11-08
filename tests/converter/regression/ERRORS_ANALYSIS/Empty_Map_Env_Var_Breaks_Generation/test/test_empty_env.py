@@ -87,7 +87,7 @@ def _env(docs, kind="Deployment"):
 # --------------------------------------------------------------------------
 
 def _env_by_name(raw):
-    """conv.env_map: NAME -> literal string, or the valueFrom ref."""
+    """conv.env_map: NAME -> {value: ...} or {valueFrom: ...}."""
     return conv.env_map(raw)
 
 
@@ -95,13 +95,13 @@ def test_all_three_empty_shapes_normalise_to_an_empty_string_value():
     env = _env_by_name(
         _doc()["spec"]["template"]["spec"]["containers"][0]["env"])
     for name in ("GW_ANALYTICS_TYPE", "GW_EMPTY_MAP", "GW_BARE"):
-        assert env[name] == "", f"{name} -> {env[name]}"
+        assert env[name] == {"value": ""}, f"{name} -> {env[name]}"
 
 
 def test_a_real_value_is_untouched():
     env = _env_by_name(
         _doc()["spec"]["template"]["spec"]["containers"][0]["env"])
-    assert env["GW_REAL"] == "keep-me"
+    assert env["GW_REAL"] == {"value": "keep-me"}
 
 
 def test_no_variable_is_dropped():
@@ -114,7 +114,7 @@ def test_no_variable_is_dropped():
 def test_a_value_from_reference_is_not_mistaken_for_empty():
     env = _env_by_name([
         {"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "s", "key": "k"}}}])
-    assert env["SECRET"] == {"secretKeyRef": {"name": "s", "key": "k"}}
+    assert env["SECRET"] == {"valueFrom": {"secretKeyRef": {"name": "s", "key": "k"}}}
 
 
 # --------------------------------------------------------------------------

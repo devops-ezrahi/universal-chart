@@ -26,9 +26,10 @@ ports:
   - name: http
     containerPort: 8080
 
-# RIGHT - the name becomes the map KEY (env: the value goes right after it)
+# RIGHT - the name becomes the map KEY, and the var says what it is (value / valueFrom)
 env:
-  LOG_LEVEL: debug
+  LOG_LEVEL:
+    value: debug
 ports:
   http:
     containerPort: 8080
@@ -281,45 +282,54 @@ podManagementPolicy: Parallel       # all pods start/stop simultaneously (faster
 
 ## 4. Environment Variables
 
-`env` is a map: `NAME: value`. A reference (ConfigMap, Secret, downward API)
-is written under the name without the `valueFrom:` level — the chart adds it.
+`env` is a map keyed by var name. Each var says what it is: `value:` for a
+plain string, `valueFrom:` for a reference (ConfigMap, Secret, downward API) —
+the same two keys as a Kubernetes EnvVar, without the `name:`.
 
 ```yaml
 env:
   # Plain value
-  NODE_ENV: production
+  NODE_ENV:
+    value: production
 
   # Downward API (pod info)
   POD_NAME:
-    fieldRef:
-      fieldPath: metadata.name
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
   POD_IP:
-    fieldRef:
-      fieldPath: status.podIP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
   NODE_NAME:
-    fieldRef:
-      fieldPath: spec.nodeName
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
 
   # From resource limits
   MEMORY_LIMIT:
-    resourceFieldRef:
-      resource: limits.memory
+    valueFrom:
+      resourceFieldRef:
+        resource: limits.memory
 
   # From a ConfigMap key
   DB_HOST:
-    configMapKeyRef:
-      name: backend-config
-      key: db-host
+    valueFrom:
+      configMapKeyRef:
+        name: backend-config
+        key: db-host
 
   # From a Secret key
   DB_PASSWORD:
-    secretKeyRef:
-      name: backend-secret
-      key: password
+    valueFrom:
+      secretKeyRef:
+        name: backend-secret
+        key: password
 
   # Uses another var: $(VAR) only expands vars rendered BEFORE it, and the map
   # renders sorted by name — so pin the order with envOrder
-  DB_URL: postgres://$(DB_HOST):5432
+  DB_URL:
+    value: postgres://$(DB_HOST):5432
 envOrder: [DB_HOST, DB_URL]   # listed names first, the rest sorted
 
 # Inject an entire ConfigMap or Secret as env vars (all keys → env vars)
@@ -335,8 +345,20 @@ Because `env` is a map, a later values file (e.g. a namespace's
 
 ```yaml
 env:
-  NODE_ENV: staging   # overrides this one var
+  NODE_ENV:
+    value: staging   # overrides this one var
   DB_HOST: null       # deletes a var the lower file set
+```
+
+A file that switches a var between `value` and `valueFrom` — or from one kind
+of ref to another — sets the old key to `null`: Helm merges the files map by
+map, so without it the var would carry both, and the render fails naming the var.
+
+```yaml
+env:
+  DB_PASSWORD:          # base/ reads it from a Secret; this folder sets it
+    value: not-secret-in-dev
+    valueFrom: null
 ```
 
 The older forms still render: a Kubernetes-style list (replaced whole by a
@@ -1679,7 +1701,8 @@ image:
   tag: "3.1"
 
 env:
-  JAVA_TOOL_OPTIONS: "-javaagent:/otel/javaagent.jar"
+  JAVA_TOOL_OPTIONS:
+    value: "-javaagent:/otel/javaagent.jar"
 
 sidecars:
   - name: native-processor

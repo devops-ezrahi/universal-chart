@@ -47,7 +47,7 @@ def test_variant_tree_shares_one_base(tmp_path):
     ]
     base = yaml.safe_load((out / "base/ms1.yaml").read_text(encoding="utf-8"))
     assert base["fullnameOverride"] == "ms1-{{ .Values.variant }}"
-    assert base["env"]["DB_URL"] == "http://db.{{ .Release.Namespace }}.svc:5432"  # env is NAME: value
+    assert base["env"]["DB_URL"] == {"value": "http://db.{{ .Release.Namespace }}.svc:5432"}
     # The folder's defaults.yaml carries the group value, not the release file.
     assert yaml.safe_load((out / "prd/black/defaults.yaml").read_text(encoding="utf-8"))["variant"] == "black"
 

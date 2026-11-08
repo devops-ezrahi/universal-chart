@@ -11,7 +11,8 @@ image:
 replicaCount: 1
 
 env:
-  FEATURE_FLAG: 'on'
+  FEATURE_FLAG:
+    value: 'on'
 
 cronjobs:
   ms1-report-{{ .Values.color }}:

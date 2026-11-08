@@ -140,7 +140,7 @@ def test_each_cronjob_keeps_the_command_that_belongs_to_it():
 # --------------------------------------------------------------------------
 
 def _stage(env: dict) -> str:
-    return env["STAGE"]
+    return env["STAGE"]["value"]  # env is NAME: {value: ...}
 
 
 def test_both_stage_values_survive_capture():
@@ -153,8 +153,8 @@ def test_both_stage_values_survive_capture():
 def test_the_secret_ref_env_stays_on_the_right_cronjob():
     cronjobs = _convert_fixture().values.get("cronjobs", {})
     by_schedule = {e["schedule"]: e["jobTemplate"] for e in cronjobs.values()}
-    # env is NAME: value; a reference is NAME: {secretKeyRef: ...}.
-    assert by_schedule["0 1 * * *"]["env"]["DB_PASSWORD"] == SECRET_REF
+    # env is NAME: {value: ...}; a reference is NAME: {valueFrom: {secretKeyRef: ...}}.
+    assert by_schedule["0 1 * * *"]["env"]["DB_PASSWORD"] == {"valueFrom": SECRET_REF}
     assert "DB_PASSWORD" not in by_schedule["0 3 * * *"]["env"]
 
 

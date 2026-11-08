@@ -81,6 +81,7 @@ from converter.engine import (  # noqa: E402  (reuse, never redefine)
     dump_yaml,
     k8s_ns,
     namespace_dirs_of,
+    null_env_flips,
     split_image,
     subtract_defaults,
 )
@@ -180,6 +181,23 @@ def get_path(d: dict, dotted_path: str) -> Any:
     return cur
 
 
+def explicit_env(dotted_path: str, value: Any) -> tuple[str, Any]:
+    """env is written in the explicit form only: `env.NAME` given a plain
+    value becomes `env.NAME.value` (as a string — EnvVar.value is one), and
+    given a bare ref ({secretKeyRef: ...}) becomes `env.NAME.valueFrom`.
+    Any other path is returned unchanged."""
+    parts = dotted_path.split(".")
+    if parts[0] == "env" and len(parts) == 2 and value is not None:
+        if isinstance(value, dict):
+            if not ({"value", "valueFrom"} & set(value)):
+                return f"{dotted_path}.valueFrom", value
+            return dotted_path, value
+        return f"{dotted_path}.value", value if isinstance(value, str) else str(value)
+    if parts[0] == "env" and len(parts) == 3 and parts[2] == "value" and value is not None             and not isinstance(value, str):
+        return dotted_path, str(value)
+    return dotted_path, value
+
+
 def is_minimal_path(dotted_path: str, value: Any) -> bool:
     """
     Mirrors handle_main_container's split in convert_to_universal_chart.py:
@@ -189,8 +207,8 @@ def is_minimal_path(dotted_path: str, value: Any) -> bool:
     """
     if dotted_path == "image.tag":
         return True
-    # env is a map: `env.NAME: value` is a literal (the older `env.NAME.value`
-    # form too); `env.NAME.secretKeyRef...` is a reference and stays put.
+    # env is a map: `env.NAME.value` is a literal (the shorthand `env.NAME:
+    # value` too); `env.NAME.valueFrom...` is a reference and stays put.
     if dotted_path.startswith("env.") and (
             dotted_path.count(".") == 1 and not isinstance(value, dict)
             or dotted_path.count(".") == 2 and dotted_path.endswith(".value")):
@@ -314,7 +332,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         env_name, sep, env_value = spec.partition("=")
         if not sep:
             sys.exit(f"--env must be NAME=value, got: {spec}")
-        set_path(minimal, f"env.{env_name}", env_value)  # env is NAME: value
+        set_path(minimal, f"env.{env_name}.value", env_value)  # env is NAME: {value: ...}
 
     for spec in args.set or []:
         dotted_path, sep, raw_value = spec.partition("=")
@@ -322,7 +340,7 @@ def cmd_new(args: argparse.Namespace) -> None:
             sys.exit(f"--set must be dotted.path=value, got: {spec}")
         value = parse_scalar(raw_value)
         target = minimal if is_minimal_path(dotted_path, value) else values
-        set_path(target, dotted_path, value)
+        set_path(target, *explicit_env(dotted_path, value))
 
     # Reported, NOT subtracted. This namespace's defaults.yaml is never
     # removed from base/ content: base/ may end up reused by another
@@ -352,6 +370,9 @@ def cmd_new(args: argparse.Namespace) -> None:
         )
         values_path.write_text(header_full + dump_yaml(trimmed), encoding="utf-8")
         print(f"\nWrote {values_path}")
+    # A var this folder sets as a value where base/ has a valueFrom (or the
+    # reverse) must null the other key, or Helm's merge keeps both.
+    null_env_flips(load_yaml(values_path) if reuse_base else trimmed, minimal)
     minimal_path.write_text(header_min + dump_yaml(minimal), encoding="utf-8")
 
     print(f"Wrote {minimal_path}")
@@ -381,7 +402,10 @@ def cmd_set(args: argparse.Namespace) -> None:
     if target_path is base_path and base_path.exists():
         print(f"Note: {base_path} is shared — this edit affects every namespace that reuses it.")
     doc = load_yaml(target_path)
-    set_path(doc, args.key, value)
+    key, value = explicit_env(args.key, value)
+    set_path(doc, key, value)
+    if target_path is minimal_path and base_path.exists():
+        null_env_flips(load_yaml(base_path), doc)
 
     # Only the minimal file is compared against this namespace's defaults:
     # base/ is shared across namespaces, so "your defaults already say this"

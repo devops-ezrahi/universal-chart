@@ -356,20 +356,29 @@ env / volumeMounts.
 
 env is a MAP keyed by var name — what the converter writes — so a later values
 file overrides one var (or deletes it with `NAME: null`) instead of restating
-the whole list:
+the whole list. Each var says what it is:
 
   env:
-    DB_URL: http://db:5432          # scalar  -> value: "http://db:5432"
+    DB_URL:
+      value: http://db:5432
     DB_PASS:
-      secretKeyRef:                 # a ref   -> valueFrom: {secretKeyRef: ...}
-        name: db
-        key: password
+      valueFrom:
+        secretKeyRef:
+          name: db
+          key: password
   envOrder: [DB_URL, DB_PASS]       # optional render order
+
+Helm merges maps key by key, so a later file that switches a var from
+valueFrom to value (or back) must null the other key — `DB_PASS: {value: x,
+valueFrom: null}` — and the converter writes it that way. A null key is
+dropped here; an entry still holding both fails the render, naming the var,
+instead of reaching the API server, which would refuse it.
 
 A map renders in `order` first (envOrder: the converter writes it only when
 order matters — a `$(VAR)` that needs an earlier var, or --prevent-restart),
-then every other key sorted. The older `NAME: {value: ...}` / `{valueFrom: ...}`
-map form still works unchanged.
+then every other key sorted. The shorthand forms trees written before still
+use render the same: `NAME: value` (a scalar is the value) and
+`NAME: {secretKeyRef: ...}` (a bare ref goes under valueFrom).
 
 A list (the Kubernetes shape) also still works and renders exactly as written;
 a later values file replaces a list wholesale (Helm never merges lists).
@@ -402,7 +411,32 @@ Usage: {{- include "universal-chart.listOrMap" (dict "items" .Values.env "order"
 {{- range $k, $v := $items }}
 {{- if kindIs "map" $v }}
 {{- if or (hasKey $v "value") (hasKey $v "valueFrom") (hasKey $v "name") (not $v) }}
-{{- $_ := set $norm $k $v }}
+{{- /* Drop null keys: a file switching value <-> valueFrom nulls the other,
+       and one switching the kind of ref (secretKeyRef -> fieldRef) nulls the old kind. */}}
+{{- $e := dict }}
+{{- range $ek, $ev := $v }}
+{{- if not (kindIs "invalid" $ev) }}
+{{- $_ := set $e $ek $ev }}
+{{- end }}
+{{- end }}
+{{- if and (hasKey $e "value") (hasKey $e "valueFrom") }}
+{{- fail (printf "env %s has both value and valueFrom after merging the values files: a file that switches a var between the two must set the other to null (%s: {value: ..., valueFrom: null})" $k $k) }}
+{{- end }}
+{{- if kindIs "map" $e.valueFrom }}
+{{- $refs := dict }}
+{{- range $rk, $rv := $e.valueFrom }}
+{{- if not (kindIs "invalid" $rv) }}
+{{- $_ := set $refs $rk $rv }}
+{{- end }}
+{{- end }}
+{{- if gt (len $refs) 1 }}
+{{- fail (printf "env %s has more than one source in valueFrom (%s) after merging the values files: a file that switches the kind of ref must set the old one to null" $k (keys $refs | sortAlpha | join ", ")) }}
+{{- end }}
+{{- $_ := set $e "valueFrom" $refs }}
+{{- end }}
+{{- if or $e (not $v) }}
+{{- $_ := set $norm $k $e }}
+{{- end }}
 {{- else }}
 {{- $_ := set $norm $k (dict "valueFrom" $v) }}
 {{- end }}

@@ -1,0 +1,4 @@
+# later layer that switches DB_PASS to a value but forgets to null valueFrom
+env:
+  DB_PASS:
+    value: oops

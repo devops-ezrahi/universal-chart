@@ -1,0 +1,10 @@
+# base/ layer for the value/valueFrom switch tests in deployment_test.yaml
+env:
+  DB_PASS:
+    valueFrom:
+      secretKeyRef: { name: db, key: password }
+  MODE:
+    value: prod
+  NODE:
+    valueFrom:
+      secretKeyRef: { name: node, key: name }

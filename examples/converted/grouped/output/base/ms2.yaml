@@ -10,9 +10,12 @@ workload:
 containerName: app
 
 env:
-  COLOR: none
-  DB_URL: http://db.{{ .Values.environment }}.svc:5432
-  ENVIRONMENT: '{{ .Values.environment }}'
+  COLOR:
+    value: none
+  DB_URL:
+    value: http://db.{{ .Values.environment }}.svc:5432
+  ENVIRONMENT:
+    value: '{{ .Values.environment }}'
 
 service:
   enabled: true

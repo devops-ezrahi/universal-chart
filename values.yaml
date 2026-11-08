@@ -143,36 +143,38 @@ ports: {}
 # writes them in the raw manifest's order under --prevent-restart (by default
 # for a StatefulSet) and --exact-copy (no restart at cutover); otherwise only
 # initContainerOrder and envFromOrder.
-# env and volumeMounts have no order key: write them as lists and they render
-# exactly in the order written.
+# volumeMounts has no order key: write it as a list and it renders exactly in
+# the order written. env orders with envOrder (see env below).
 portOrder: []
 envFromOrder: []
 volumeOrder: []
 sidecarOrder: []
 
 # ---------------------------------------------------------------------------
-# Environment variables — a LIST, rendered in the order written (the
-# deployment's own order; `$(VAR)` expands only vars defined earlier).
-# A later values file replaces the whole list. The older map form (keyed by
-# env var name, `MY_VAR: {value: hello}`) still works but renders sorted by name.
+# Environment variables — a MAP keyed by var name; each var says what it is,
+# `value:` or `valueFrom:`. A later values file overrides one var (or deletes
+# it with `MY_VAR: null`); one switching a var between value and valueFrom sets
+# the old key to null. Rendered sorted by name, envOrder's names first (needed
+# only when a `$(VAR)` must see a var defined before it). A Kubernetes list
+# still renders as written, and is replaced whole by a later file.
 # ---------------------------------------------------------------------------
 env: ~
-# - name: MY_VAR
-#   value: "hello"
-# - name: POD_NAME
-#   valueFrom:
-#     fieldRef:
-#       fieldPath: metadata.name
-# - name: DB_HOST
-#   valueFrom:
-#     configMapKeyRef:
-#       name: my-config
-#       key: db-host
-# - name: DB_PASS
-#   valueFrom:
-#     secretKeyRef:
-#       name: my-secret
-#       key: password
+#   MY_VAR:
+#     value: "hello"
+#   POD_NAME:
+#     valueFrom:
+#       fieldRef:
+#         fieldPath: metadata.name
+#   DB_HOST:
+#     valueFrom:
+#       configMapKeyRef:
+#         name: my-config
+#         key: db-host
+#   DB_PASS:
+#     valueFrom:
+#       secretKeyRef:
+#         name: my-secret
+#         key: password
 
 # ---------------------------------------------------------------------------
 # envFrom — MAP-BASED (keyed by configmap/secret name)

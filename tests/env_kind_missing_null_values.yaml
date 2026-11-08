@@ -1,0 +1,5 @@
+# later layer that switches NODE's kind of ref but forgets to null the old one
+env:
+  NODE:
+    valueFrom:
+      fieldRef: { fieldPath: spec.nodeName }

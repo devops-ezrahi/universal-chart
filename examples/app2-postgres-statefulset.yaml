@@ -80,24 +80,30 @@ ports:
 # ----- Environment variables -----------------------------------------------------------------
 env:
   POSTGRES_DB:
-    configMapKeyRef:
-      name: postgres-config
-      key: POSTGRES_DB
+    valueFrom:
+      configMapKeyRef:
+        name: postgres-config
+        key: POSTGRES_DB
   POSTGRES_USER:
-    secretKeyRef:
-      name: postgres-secret
-      key: POSTGRES_USER
+    valueFrom:
+      secretKeyRef:
+        name: postgres-secret
+        key: POSTGRES_USER
   POSTGRES_PASSWORD:
-    secretKeyRef:
-      name: postgres-secret
-      key: POSTGRES_PASSWORD
-  PGDATA: /var/lib/postgresql/data/pgdata
+    valueFrom:
+      secretKeyRef:
+        name: postgres-secret
+        key: POSTGRES_PASSWORD
+  PGDATA:
+    value: /var/lib/postgresql/data/pgdata
   POD_NAME:
-    fieldRef:
-      fieldPath: metadata.name
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
   POD_NAMESPACE:
-    fieldRef:
-      fieldPath: metadata.namespace
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
 
 envFrom:
   - configMapRef:
@@ -436,17 +442,20 @@ cronjobs:
           echo "Backup completed: pg_dump_${DATE}.pgc"
       env:
         PGPASSWORD:
-          secretKeyRef:
-            name: postgres-secret
-            key: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: PGPASSWORD
         POSTGRES_USER:
-          secretKeyRef:
-            name: postgres-secret
-            key: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_USER
         POSTGRES_DB:
-          configMapKeyRef:
-            name: postgres-config
-            key: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_DB
       resources:
         requests:
           cpu: 200m
@@ -488,17 +497,20 @@ cronjobs:
         - VACUUM ANALYZE;
       env:
         PGPASSWORD:
-          secretKeyRef:
-            name: postgres-secret
-            key: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: PGPASSWORD
         POSTGRES_USER:
-          secretKeyRef:
-            name: postgres-secret
-            key: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_USER
         POSTGRES_DB:
-          configMapKeyRef:
-            name: postgres-config
-            key: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_DB
       resources:
         requests:
           cpu: 100m

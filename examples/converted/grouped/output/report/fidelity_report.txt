@@ -1,10 +1,10 @@
 Round-trip fidelity report — raw input vs `helm template` of the converted output.
 
 RUN IDENTITY — counts below describe THIS run and no other.
-  run id:         7d5df377a249-60a7ddf0bf15
-  converter:      7d5df377a249  (convert_to_universal_chart.py)
-  input:          60a7ddf0bf15  (../examples/converted/grouped/input)
-  output:         ../examples/converted/grouped/output
+  run id:         37fd9224ec24-60a7ddf0bf15
+  converter:      37fd9224ec24  (engine.py)
+  input:          60a7ddf0bf15  (examples\converted\grouped\input)
+  output:         examples\converted\grouped\output
   Compare two fidelity reports ONLY when their run ids match. A differing
   run id means the converter, the input, or both changed — so a count that
   moved between them may be more data rather than a regression, and the two

@@ -61,7 +61,7 @@ def test_copies_share_one_base(tmp_path):
     assert sorted(p.name for p in (out / "base").iterdir()) == ["x.yaml"]
     base = _load(out / "base" / "x.yaml")
     assert base["fullnameOverride"] == "x-{{ .Values.instance }}"
-    assert base["env"]["URL"] == "http://x-{{ .Values.instance }}.{{ .Release.Namespace }}.svc"
+    assert base["env"]["URL"] == {"value": "http://x-{{ .Values.instance }}.{{ .Release.Namespace }}.svc"}
     assert base["configMaps"]["x-{{ .Values.instance }}-config"]["data"]["SHARD_ID"] == "{{ .Values.instance }}"
     for ns in envs:
         values_dir = out / ns / "values"
