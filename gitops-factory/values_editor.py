@@ -71,10 +71,10 @@ import yaml
 from convert_to_universal_chart import (  # noqa: E402  (reuse, never redefine)
     BASE_DIR_NAME,
     DEFAULTS_FILE_NAME,
+    BASE_FILE_KEY,
     INSTANCE_KEY,
     VALUES_DIR_NAME,
     base_file_for,
-    instance_base_name,
     dump_yaml,
     k8s_ns,
     namespace_dirs_of,
@@ -233,11 +233,15 @@ def cmd_new(args: argparse.Namespace) -> None:
     values_path, minimal_path = microservice_paths(app_dir, namespace, name)
     if minimal_path.exists():
         sys.exit(f"{namespace}/{name} already exists — use `set` to edit it, not `new`.")
-    if args.instance:
-        # One more copy of a release (x-4 next to x-1..x-3): it reads base/x.yaml.
-        if instance_base_name(name, args.instance) == name:
-            sys.exit(f"--instance {args.instance}: the name must be <base>-{args.instance}, got '{name}'")
-        values_path = values_path.with_name(instance_base_name(name, args.instance) + ".yaml")
+    base_file = args.base_file.removesuffix(".yaml") if args.base_file else None
+    if base_file:
+        # One more copy of a release (x-4 next to x-1..x-3, or delta next to
+        # alpha..gamma): it reads base/x.yaml, as the chart does.
+        if base_file == name:
+            sys.exit(f"--base-file {args.base_file}: a copy needs a name of its own, not '{name}'")
+        values_path = values_path.with_name(base_file + ".yaml")
+    elif args.instance:
+        sys.exit("--instance needs --base-file: the instance is what that shared base fills in")
     reuse_base = values_path.exists()
     if reuse_base:
         print(f"Note: {values_path} already exists (shared by another namespace or instance) — reusing it "
@@ -246,7 +250,7 @@ def cmd_new(args: argparse.Namespace) -> None:
               f"change — that affects every namespace that reuses it.")
 
     values: dict = {}
-    minimal: dict = {INSTANCE_KEY: str(args.instance)} if args.instance else {}
+    minimal: dict = {BASE_FILE_KEY: base_file, INSTANCE_KEY: str(args.instance or name)} if base_file else {}
 
     if args.workload_type:
         set_path(values, "workload.type", args.workload_type)
@@ -468,9 +472,12 @@ def main() -> None:
     p_new.add_argument("--app-dir", required=True)
     p_new.add_argument("--namespace", required=True)
     p_new.add_argument("--name", required=True)
+    p_new.add_argument("--base-file", metavar="BASE",
+                       help="one more copy of a release deployed side by side: --name delta --base-file x "
+                            "reads base/x.yaml and writes 'BaseFile: x' into values/delta.yaml")
     p_new.add_argument("--instance", metavar="ID",
-                       help="one more copy of a release deployed side by side: --name x-4 --instance 4 "
-                            "reads base/x.yaml and writes 'instance: \"4\"' into values/x-4.yaml")
+                       help="with --base-file: what the base fills in as {{ .Values.instance }} "
+                            "(default: --name; e.g. --name x-4 --instance 4)")
     p_new.add_argument("--image", help="repository[:tag]")
     p_new.add_argument("--workload-type", choices=["deployment", "statefulset", "daemonset", "none"])
     p_new.add_argument("--replicas", type=int)

@@ -289,14 +289,13 @@ async function getSubdir(dirHandle, name, create) {
   }
 }
 
-/* An instance file (values/x-2.yaml holding `instance: "2"`, one of several
-   copies of x side by side in a namespace) reads base/x.yaml, exactly as the
+/* A values file holding `BaseFile: x` (or x.yaml) — one of several copies of
+   x side by side in a namespace — reads base/x.yaml, exactly as the
    ms-applicationSet chart resolves it. Any other file reads its own name. */
 function baseNameOf(msName, minimal) {
-  const inst = minimal && minimal.instance;
-  if (inst === undefined || inst === null || inst === "") return msName;
-  const sfx = `-${inst}`;
-  return msName.endsWith(sfx) && msName.length > sfx.length ? msName.slice(0, -sfx.length) : msName;
+  const base = minimal && minimal.BaseFile;
+  if (base === undefined || base === null || base === "") return msName;
+  return String(base).replace(/\.yaml$/, "");
 }
 
 /* The converter's tree: base/<release>.yaml (shared by every folder that runs

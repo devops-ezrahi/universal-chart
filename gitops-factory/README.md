@@ -302,42 +302,65 @@ that differed in a single env word was forked into one
 Variant folders (`--env-group`) give each copy of a release its own folder,
 `defaults.yaml` and ApplicationSet. That is right for a few colours. For one
 deployment installed 8 times side by side in the same namespace it's too much.
-Instances keep every copy in the namespace's own `values/` and share one base:
+Instances keep every copy in the namespace's own `values/` and share one base.
+
+Two ways to say which releases are copies:
 
 ```bash
+# numbered: every release named x-<id>
 python namespaces_to_chart.py -n shop-dev -o out --instances x
+# any names: exactly these releases are copies of x
+python namespaces_to_chart.py -n shop-dev -o out --instances x=alpha,beta,gamma
 ```
 
-Releases named `x-<id>` (`x-1`, `x-2`, `x-3`, or `x-eu`, `x-us`) become:
+Either way the output is one base plus one small values file per copy:
 
 ```
-base/x.yaml                  # one file: what differs per copy is {{ .Values.instance }}
-                             #   fullnameOverride: x-{{ .Values.instance }}
-                             #   configMaps: { x-{{ .Values.instance }}-config: ... }
-shop-dev/values/x-1.yaml     # instance: "1"  + image tag, replicas, anything else
-shop-dev/values/x-2.yaml     # instance: "2"    that differs for this copy only
-shop-dev/values/x-3.yaml     # instance: "3"
+base/x.yaml                  # what differs per copy is {{ .Values.instance }}
+                             #   fullnameOverride: "{{ .Values.instance }}"
+                             #   configMaps: { "{{ .Values.instance }}-config": ... }
+shop-dev/values/alpha.yaml   # BaseFile: x
+                             # instance: alpha   + image tag, replicas, anything
+shop-dev/values/beta.yaml    # BaseFile: x         else only this copy has
+                             # instance: beta
 ```
 
-`instance` is what wires it up: ms-applicationSet layers `base/x.yaml`
-under any values file named `x-<id>.yaml` that holds `instance: "<id>"`. So keep
-the key, and keep the file name matching it. Each copy is still its own Argo CD
-Application and Helm release (`x-1-dev`, `x-2-dev`, ...). The templating is
-the same as `--env-group`: a value is templated only when the copies differ by
-nothing but their id, and the render-verify and `--verify-fidelity` checks
-render each copy back to its source. Anything else that differs stays in that
-copy's values file. It combines with `--env-suffixes` / `--env-group`, so
-`x-1..x-3` in `shop-dev` and `shop-prd` still make one `base/x.yaml`.
+The two keys do different jobs:
 
-Copies are combined only when it is safe. There must be at least two different
-ids, and no release named plain `x` (it owns `base/x.yaml`). Otherwise the copies
-stay separate releases and the report says why. `--instances a,b` (or the flag
-repeated) handles several such releases at once.
+- **`BaseFile: x`** is for **Argo CD**. The ApplicationSet creates one
+  Application per values file and needs to know which base to layer under it.
+  It can't guess that `alpha` belongs to `x`, so the file says so. A file
+  without `BaseFile` reads the base of its own name, as before. `x.yaml` works
+  too.
+- **`instance: alpha`** is for **Helm**. It's an ordinary value, filled in
+  wherever `base/x.yaml` says `{{ .Values.instance }}`. So the same base
+  renders `alpha`, `alpha-config` for one copy and `beta`, `beta-config` for
+  the next.
+
+For numbered copies (`--instances x`), `instance` is what follows `x-`
+(`"1"`, `"2"`). The base then reads `fullnameOverride: x-{{ .Values.instance }}`,
+and values like `SHARD: "1"` can be filled in too. For named copies it is the
+copy's whole name.
+
+Each copy is still its own Argo CD Application and Helm release (`alpha-dev`,
+`beta-dev`, ...). The templating is the same as `--env-group`: a value goes
+into the base as a template only when the copies differ by nothing but their
+instance, and the render-verify and `--verify-fidelity` checks render each copy
+back to its source. Anything else that differs stays in that copy's values
+file. It combines with `--env-suffixes` / `--env-group`, so copies in
+`shop-dev` and `shop-prd` still make one `base/x.yaml`.
+
+Copies are combined only when it is safe. There must be at least two copies,
+and no release named plain `x` (it owns `base/x.yaml`). Otherwise the copies
+stay separate releases and the report says why. A name listed in
+`x=...` that isn't in the run is reported too. Repeat the flag (or separate
+groups with `;`) for several such releases.
 
 To add a copy later, run
-`values_editor.py new --app-dir out --namespace shop-dev --name x-4 --instance 4 --image registry/x:1.1`.
-It reuses `base/x.yaml` and writes only `values/x-4.yaml`. The browser UI reads
-an instance's base the same way.
+`values_editor.py new --app-dir out --namespace shop-dev --name delta --base-file x --image registry/x:1.1`
+(add `--instance 4` for a numbered copy like `x-4`; the default is the name).
+It reuses `base/x.yaml` and writes only `values/delta.yaml`. The browser UI
+reads `BaseFile` the same way.
 
 ## Cutting a live app over from its old ArgoCD apps
 

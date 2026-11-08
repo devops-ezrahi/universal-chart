@@ -13,8 +13,8 @@ convert_to_universal_chart.py as one command.
    is handed to it unchanged, so `--env-suffixes`, `--env-group`,
    `--instances`, `--argocd-manifests`, `--values-repo-url`, `--skip-verify`…
    all work as documented in `convert_to_universal_chart.py --help`.
-   (`--instances x`: x-1, x-2, x-3 side by side in one namespace share one
-   base/x.yaml instead of three near-identical ones.)
+   (`--instances x` or `--instances x=alpha,beta,gamma`: copies of one release
+   side by side in a namespace share one base/x.yaml instead of one each.)
 3. `-o` ends up holding the values tree and nothing else, and nothing else is
    left anywhere: the importer's dump and the converter's report are deleted.
    Keep them with `--dump DIR` / `--report DIR`.
