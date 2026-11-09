@@ -224,10 +224,20 @@ writes; offline leaves them to Kubernetes.
 
 **Always checked:** `--verify-fidelity` is on, so the new tree is rendered
 and compared object by object with what the old one deployed. In place,
-everything is read before anything is written, and `--prune` is on, so what
-only the old layout had (e.g. `root-application.yaml`) goes. The new
-`report/upgrade.txt` lists any folder or release the two trees do not share
-and the files put back into their old sub-folders.
+everything is read before anything is written, and nothing is deleted except
+the root files an older layout named differently (`root-application.yaml`,
+`root-applicationSet.yaml`), which would keep deploying the old
+ApplicationSet. Anything else only the old layout had stays and is listed in
+`report/stale_output.txt`: a folder whose namespace the pull could not read
+(RBAC, the wrong context, never synced) must not be deleted with it. Delete
+what is listed yourself, or re-run with `--prune` — which is refused while any
+namespace of the tree pulled nothing. `report/upgrade.txt` lists any folder or
+release the two trees do not share and the files put back into their old
+sub-folders.
+
+`--pull-only` writes into an empty folder or one holding other namespaces
+(one pull per cluster), never into a values tree or over a namespace already
+there; `--report DIR` adds the report beside what `DIR` already holds.
 
 What changes, and what does not:
 

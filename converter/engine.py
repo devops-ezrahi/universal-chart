@@ -4560,13 +4560,24 @@ def env_shape_problems(data, where: str) -> list[str]:
     return out
 
 
-def lint_env_shape(output_dir: Path) -> list[str]:
-    """env_shape_problems over every values file of a written tree."""
+def lint_env_shape(output_dir: Path, skip: frozenset = frozenset()) -> list[str]:
+    """env_shape_problems over the values files of a written tree — base/,
+    cluster-shared/values/, and each folder's defaults.yaml and values/ — and
+    nothing else under it: -o may be a repo root holding other YAML (a CI
+    workflow has an `env:` of its own). `skip`: stale files from an earlier
+    run, which this run did not write and --prune may be about to remove."""
+    files: set[Path] = set()
+    for root in (output_dir / BASE_DIR_NAME, output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME):
+        if root.is_dir():
+            files.update(root.rglob("*.yaml"))
+    for _, ns_dir in namespace_dirs_of(output_dir):
+        if (ns_dir / DEFAULTS_FILE_NAME).is_file():
+            files.add(ns_dir / DEFAULTS_FILE_NAME)
+        if (ns_dir / VALUES_DIR_NAME).is_dir():
+            files.update(values_files(ns_dir / VALUES_DIR_NAME))
     out: list[str] = []
-    for f in sorted(output_dir.rglob("*.yaml")):
+    for f in sorted(files - set(skip)):
         rel = f.relative_to(output_dir)
-        if rel.parts[0] in NON_NAMESPACE_OUTPUT_DIRS or f.name in (ROOT_APPSET_FILE_NAME, CLUSTER_SHARED_APP_FILE_NAME):
-            continue
         try:
             data = yaml.safe_load(f.read_text(encoding="utf-8"))
         except yaml.YAMLError:
@@ -5275,7 +5286,9 @@ def find_stale_output(output_dir: Path, expected_values: dict[str, set], expecte
             stale += sorted(f for f in old_releases.rglob("*") if f.is_file())
         stale += sorted(ns_dir.glob("*-applicationset.yaml"))
         stale += sorted(ns_dir.glob("*-shared-application.yaml"))
-    return stale
+    # A variant folder (prd/black) is listed under its namespace dir (prd) too:
+    # once each, or --prune deletes it and then fails on the second unlink.
+    return list(dict.fromkeys(stale))
 
 
 # ---------------------------------------------------------------------------
@@ -7458,20 +7471,23 @@ def run(args: argparse.Namespace) -> None:
         )
         (output_dir / ROOT_APP_FILE_NAME).write_text(root_header + dump_yaml(root_app), encoding="utf-8")
 
+    # Stale output — always reported, because a leftover <ns>/values/<name>.yaml
+    # keeps ArgoCD deploying a microservice that no longer exists in the input.
+    stale = find_stale_output(output_dir, expected_values, written_bases)
+
     # Every env the run wrote is in the explicit form ({value} / {valueFrom}).
     # A failure here is a converter bug, so it stops the run before anything
-    # is verified or deployed.
-    env_problems = lint_env_shape(output_dir)
+    # is verified or deployed. Stale files are not this run's: an earlier
+    # run's shorthand in them is reported with them, not as a bug.
+    env_problems = lint_env_shape(output_dir, frozenset(stale))
     if env_problems:
         report_dir.mkdir(parents=True, exist_ok=True)
         (report_dir / "env_shape.txt").write_text("\n".join(env_problems) + "\n", encoding="utf-8")
         sys.exit(f"\n{len(env_problems)} env entr(y/ies) not in the explicit value/valueFrom form "
                  f"(a converter bug) — see {report_dir / 'env_shape.txt'}")
 
-    # Stale output — always reported, because a leftover <ns>/values/<name>.yaml
-    # keeps ArgoCD deploying a microservice that no longer exists in the input.
-    stale = find_stale_output(output_dir, expected_values, written_bases)
     if stale:
+        report_dir.mkdir(parents=True, exist_ok=True)
         stale_report = report_dir / "stale_output.txt"
         stale_releases = [f for f in stale if f.parent.name == VALUES_DIR_NAME]
         stale_report.write_text(
@@ -7489,7 +7505,7 @@ def run(args: argparse.Namespace) -> None:
         )
         if args.prune:
             for f in stale:
-                f.unlink()
+                f.unlink(missing_ok=True)
             # Drop directories the prune just emptied (e.g. cluster-shared/ and
             # its values/ when switching a tree to namespace-scoped output), so
             # the tree doesn't keep hollow folders suggesting content that is

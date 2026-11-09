@@ -348,30 +348,47 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         ap.error("--upgrade-chart-rev / --upgrade-chart choose the chart for --upgrade-offline")
 
     out = Path(args.output).resolve()
+    if args.report and Path(args.report).resolve() in (out, *out.parents):
+        ap.error("--report must not be the output folder or one holding it")
+    if args.pull_only and _is_values_tree(out):
+        ap.error(f"--pull-only writes a dump, and {out} is a values tree — give another -o")
     tree = None
     if args.upgrade:
         from converter import upgrade
         tree = upgrade.prepare(args, ap, out)
-    if args.pull_only:
-        dump = out
-        dump.mkdir(parents=True, exist_ok=True)
-    elif args.dump:
-        dump = Path(args.dump).resolve()
-        if dump.exists() and any(dump.iterdir()):
-            sys.exit(f"--dump {dump} is not empty — the converter would read whatever is already there")
-        dump.mkdir(parents=True, exist_ok=True)
-    else:
-        dump = Path(tempfile.mkdtemp(prefix="ucc-dump-"))
+    if args.dump:
+        keep = Path(args.dump).resolve()
+        if keep.exists() and any(keep.iterdir()):
+            sys.exit(f"--dump {keep} is not empty — the converter would read whatever is already there")
+    # Always a fresh folder: the pull rewrites every file in it (regrouping,
+    # stripping), so it must never run over anything but its own output.
+    dump = Path(tempfile.mkdtemp(prefix="ucc-dump-"))
 
     code = 0
     try:
         warnings = upgrade.pull(tree, args, dump) if tree else pull(args, dump)
         if args.warnings_file:
             Path(args.warnings_file).write_text(json.dumps(warnings, ensure_ascii=False), encoding="utf-8")
+        if args.dump:
+            shutil.copytree(dump, Path(args.dump).resolve(), dirs_exist_ok=True)
         if args.pull_only:
+            # Into -o, which may hold other namespaces (one pull per cluster) —
+            # but never one of these: its old microservice files would be
+            # converted alongside the new ones.
+            clash = sorted(d.name for d in dump.iterdir() if d.is_dir() and (out / d.name).exists())
+            if clash:
+                sys.exit(f"--pull-only: {out} already holds {', '.join(clash)} — pull into an empty folder, "
+                         f"or remove those first")
+            out.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(dump, out, dirs_exist_ok=True)
             _print_warnings(warnings)
-            print(f"==> dump: {dump} — convert it with --input {dump}", file=sys.stderr)
+            print(f"==> dump: {out} — convert it with --input {out}", file=sys.stderr)
             return 0
+        if tree is not None and args.prune:
+            missing = upgrade.unpulled(tree, dump)
+            if missing:
+                sys.exit(f"--upgrade --prune: nothing was pulled for {', '.join(missing)}; pruning would delete "
+                         f"those folders from the tree. Fix the pull (context, RBAC), or drop --prune.")
         print("==> converting", file=sys.stderr, flush=True)
         args.input = str(dump)
         try:
@@ -385,12 +402,18 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         report = out / "report"
         if tree is not None and code == 0:
             moved = upgrade.place_like(tree, out)
+            removed = upgrade.finish_in_place(tree, out)
             lines = upgrade.compare_releases(tree, out)
             report.mkdir(parents=True, exist_ok=True)
             text = f"Upgraded from {tree.root}\n\n"
             text += ("Release sets differ:\n" + "\n".join(lines) + "\n\n") if lines else "Same releases in every folder.\n\n"
             if moved:
-                text += "Put back in their old sub-folders:\n" + "\n".join(moved) + "\n"
+                text += "Put back in their old sub-folders:\n" + "\n".join(moved) + "\n\n"
+            if removed:
+                text += "Old-named root files removed (the new ones replace them):\n" + "\n".join(removed) + "\n\n"
+            if (report / "stale_output.txt").exists():
+                text += ("Files the old layout had and this one no longer writes are listed in "
+                         "stale_output.txt — kept; review them, then delete or re-run with --prune.\n")
             (report / "upgrade.txt").write_text(text, encoding="utf-8")
             for line in lines:
                 print(f"    upgrade: {line}", file=sys.stderr)
@@ -400,16 +423,23 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
                 "What the pull could not bring into the conversion:\n\n" + "\n".join(warnings) + "\n",
                 encoding="utf-8")
         if args.report and report.is_dir():
+            # Into DIR beside whatever is already there (same names replaced),
+            # never by deleting DIR first.
             dest = Path(args.report).resolve()
-            shutil.rmtree(dest, ignore_errors=True)
-            shutil.move(str(report), str(dest))
+            shutil.copytree(report, dest, dirs_exist_ok=True)
+            shutil.rmtree(report)
             print(f"==> report: {dest}", file=sys.stderr)
         _print_warnings(warnings)
         print(f"==> values tree: {out}" if code == 0 else f"==> conversion exited {code}", file=sys.stderr)
         return code
     finally:
-        if not (args.pull_only or args.dump):
-            shutil.rmtree(dump, ignore_errors=True)
+        shutil.rmtree(dump, ignore_errors=True)
+
+
+def _is_values_tree(d: Path) -> bool:
+    """A converter tree: base/ or a <folder>/defaults.yaml, or root wiring."""
+    return d.is_dir() and ((d / "base").is_dir() or any(d.glob("*/defaults.yaml"))
+                           or (d / "rootApplicationSet.yaml").is_file())
 
 
 def _print_warnings(warnings: list[str]) -> None:

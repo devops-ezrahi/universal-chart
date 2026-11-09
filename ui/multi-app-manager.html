@@ -640,7 +640,9 @@ function formEditorPanel(msName) {
   // env is NAME: {value: ...}; a ref (NAME: {valueFrom: ...}) is not editable here.
   // Trees written before may hold the shorthand NAME: value — read too.
   const envEntries = Object.entries(merged.env || {})
-    .filter(([, v]) => v !== null && (typeof v !== "object" || ("value" in v && !("valueFrom" in v))))
+    // A literal: a scalar (shorthand), or {value} — also {value, valueFrom: null},
+    // the flip marker a file writes over a lower layer's valueFrom.
+    .filter(([, v]) => v !== null && (typeof v !== "object" || ("value" in v && v.value !== null && v.valueFrom == null)))
     .map(([n, v]) => [n, String(typeof v === "object" ? v.value : v)]);
   const envWrap = rowList(envEntries, "ENV_NAME", "value");
 

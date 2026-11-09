@@ -126,7 +126,12 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
             if git.get("revision"):
                 s["values_revision"] = git["revision"]
             paths = [f.get("path", "") for f in git.get("files") or git.get("directories") or [] if isinstance(f, dict)]
-            prefix = next((p.split("**")[0].rstrip("/") for p in paths if "**" in p), "")
+            # files: [{path: <prefix>/**/defaults.yaml}] today; the September
+            # 2026 layout used directories: [{path: <prefix>/*}].
+            prefix = next((p.split("**")[0].rstrip("/") for p in paths if "**" in p), None)
+            if prefix is None:
+                prefix = next((p.rsplit("/", 1)[0] for p in paths
+                               if p.endswith("/*") and "exclude" not in p), "")
             if prefix:
                 s["values_path"] = prefix
         tmpl = (appset.get("spec") or {}).get("template") or {}
@@ -329,7 +334,6 @@ def place_like(tree: OldTree, out: Path) -> list[str]:
     base/<sub>/<file> for values/<sub>/<file>). In place, the engine already
     rewrote such files where they were; this is for a new output folder."""
     moved = []
-    bases_done = set()
     for folder, rels in tree.releases.items():
         vdir = out / folder / engine.VALUES_DIR_NAME
         for stem, rel in rels.items():
@@ -340,13 +344,26 @@ def place_like(tree: OldTree, out: Path) -> list[str]:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(src), str(dst))
                 moved.append(f"{folder}/values/{rel.as_posix()}")
-            old_base = tree.root / engine.BASE_DIR_NAME / rel
-            bsrc, bdst = out / engine.BASE_DIR_NAME / f"{stem}.yaml", out / engine.BASE_DIR_NAME / rel
-            if old_base.exists() and bsrc.exists() and not bdst.exists() and stem not in bases_done:
-                bdst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(bsrc), str(bdst))
-                bases_done.add(stem)
-                moved.append(f"base/{rel.as_posix()}")
+    # Then base/: every path the new tree's values files are read with
+    # (base/<sub>/<file>, or the BaseFile an instance names) must exist. Each
+    # gets a copy of the base the engine wrote; a base path no values file
+    # reads any more is removed. A release flat in one folder and in values/
+    # team-a/ in another keeps both base/<x>.yaml and base/team-a/<x>.yaml.
+    base_dir = out / engine.BASE_DIR_NAME
+    needed: set[Path] = set()
+    for _, ns_dir in engine.namespace_dirs_of(out):
+        vdir = ns_dir / engine.VALUES_DIR_NAME
+        if vdir.is_dir():
+            needed.update(engine.base_file_for(base_dir, vdir, vf) for vf in engine.values_files(vdir))
+    written = {p.stem: p for p in sorted(base_dir.rglob("*.yaml"), key=lambda p: len(p.parts))} if base_dir.is_dir() else {}
+    for path in sorted(needed):
+        if not path.exists() and path.stem in written:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(written[path.stem], path)
+            moved.append(path.relative_to(out).as_posix())
+    for path in sorted(base_dir.rglob("*.yaml")) if base_dir.is_dir() else []:
+        if path not in needed and path.stem in {p.stem for p in needed}:
+            path.unlink()  # this base is now read only from its sub-folder copy
     return moved
 
 
@@ -450,11 +467,35 @@ def prepare(args: argparse.Namespace, ap: argparse.ArgumentParser, out: Path) ->
           f"{sum(len(r) for r in tree.releases.values())} release(s)", file=sys.stderr)
     for t in taken:
         print(f"    from the old tree: {t}", file=sys.stderr)
-    if out == tree.root:
-        args.prune = True  # in place: what the old layout had and the new one does not goes
+    # In place, --prune is NOT forced: a namespace the pull could not read (RBAC,
+    # the wrong context, a folder never synced) would have its whole folder
+    # deleted. What the new layout no longer writes is reported in
+    # report/stale_output.txt; the old-named root files, which would keep
+    # deploying the old ApplicationSet, are removed by finish_in_place.
     if not args.skip_verify:
         args.verify_fidelity = True  # the new tree must deploy what the old one did
     return tree
+
+
+def unpulled(tree: OldTree, dump: Path) -> list[str]:
+    """Folders of the old tree that the pull brought nothing for."""
+    return [f for f in tree.folders if not any((dump / engine.k8s_ns(f)).rglob("*.yaml"))]
+
+
+def finish_in_place(tree: OldTree, out: Path) -> list[str]:
+    """In place, after a good conversion: drop the root files an older layout
+    named differently (root-application.yaml / root-applicationSet.yaml) —
+    left behind, the root Application would keep deploying the old
+    ApplicationSet. Nothing else is deleted here."""
+    removed = []
+    if out != tree.root:
+        return removed
+    for name in engine.LEGACY_ROOT_FILE_NAMES:
+        p = out / name
+        if p.is_file() and (out / engine.ROOT_APPSET_FILE_NAME).is_file():
+            p.unlink()
+            removed.append(name)
+    return removed
 
 
 def pull(tree: OldTree, args: argparse.Namespace, dump: Path) -> list[str]:

@@ -404,6 +404,13 @@ def cmd_set(args: argparse.Namespace) -> None:
     doc = load_yaml(target_path)
     key, value = explicit_env(args.key, value)
     set_path(doc, key, value)
+    # Setting env.NAME.value where this same file says env.NAME.valueFrom (or
+    # the reverse) replaces it: the file must not hold both.
+    parts = key.split(".")
+    if parts[0] == "env" and len(parts) >= 3 and parts[2] in ("value", "valueFrom"):
+        body = (doc.get("env") or {}).get(parts[1])
+        if isinstance(body, dict):
+            body.pop("valueFrom" if parts[2] == "value" else "value", None)
     if target_path is minimal_path and base_path.exists():
         null_env_flips(load_yaml(base_path), doc)
 
