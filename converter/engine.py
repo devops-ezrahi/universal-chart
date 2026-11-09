@@ -3539,6 +3539,12 @@ def handle_ingress(doc: dict, ctx: MicroserviceContext) -> None:
     ann = clean_annotations((doc.get("metadata") or {}).get("annotations"))
     if ann:
         ing["annotations"] = ann
+    # The Ingress's own labels, like every other object's (raw_labels): the chart
+    # renders them through ingress.labels. They were dropped — found converting
+    # a live namespace whose Ingress carries `app: invoice`.
+    labels = raw_labels(doc)
+    if labels:
+        ing["labels"] = labels
     ctx.values["ingress"] = ing
 
 
@@ -3676,7 +3682,8 @@ def claim_subresource_key(ctx: MicroserviceContext, top_key: str, raw_name: str)
 
 
 JOB_POD_FIELDS = ("automountServiceAccountToken", "enableServiceLinks", "terminationGracePeriodSeconds",
-                  "priorityClassName", "dnsPolicy", "hostAliases", "nodeSelector", "tolerations", "affinity")
+                  "priorityClassName", "dnsPolicy", "schedulerName", "hostAliases", "nodeSelector", "tolerations",
+                  "affinity")
 JOB_CONTAINER_FIELDS = ("workingDir", "ports", "livenessProbe", "readinessProbe", "startupProbe", "lifecycle")
 
 

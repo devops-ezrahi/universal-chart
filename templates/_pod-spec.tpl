@@ -358,6 +358,9 @@ priorityClassName: {{ . }}
 {{- with .job.dnsPolicy }}
 dnsPolicy: {{ . }}
 {{- end }}
+{{- with .job.schedulerName }}
+schedulerName: {{ . }}
+{{- end }}
 {{- with .job.hostAliases }}
 hostAliases:
   {{- toYaml . | nindent 2 }}

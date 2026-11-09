@@ -36,22 +36,12 @@ from test_sources import fake_oc  # noqa: E402
 
 CASES = sorted((v.name, c.name) for v in FIX.iterdir() if v.is_dir() for c in v.iterdir() if c.is_dir())
 IDS = [f"{v}-{c}" for v, c in CASES]
-# The September 2026 chart stamped Helm's own labels on Ingress objects; today's
-# chart does not, so those (and only those) are reported lost for that era.
-SEPTEMBER_INGRESS_LABELS = {"app.kubernetes.io/instance", "app.kubernetes.io/managed-by",
-                            "app.kubernetes.io/name", "app.kubernetes.io/version"}
-
-
 def flags(version, corpus):
     """Nothing: every option comes from the old tree. (Passing --env-group to the
     September grouped tree would reshape dev/values/ms1-black.yaml into
     dev/black/values/ms1.yaml — a new Argo CD Application name, so a delete and
     recreate; the upgrade keeps the old structure unless asked otherwise.)"""
     return []
-
-
-def strict(version, corpus):
-    return (version, corpus) != ("pre-2026-09-20", "flat")
 
 
 def run(*args, env=None, ok=True):
@@ -108,15 +98,11 @@ def check(out: Path, version: str, corpus: str, r) -> None:
     assert engine.lint_env_shape(out) == []
     text = "".join(f.read_text(encoding="utf-8") for f in out.rglob("*.yaml") if "report" not in f.parts)
     assert "tracking-id" not in text
-    # The new tree deploys what the old one did (--verify-fidelity, on for --upgrade).
+    # The new tree deploys what the old one did (--verify-fidelity, on for --upgrade),
+    # for every era — the September chart's Helm labels on Ingress objects included.
     fid = (out / "report" / "fidelity_report.txt").read_text(encoding="utf-8")
     lost = [l for l in fid.splitlines() if l.strip().startswith("ERROR ") and "/" in l.split()[1]]
-    if strict(version, corpus):
-        assert not lost, "\n".join(lost[:10])
-    else:
-        assert lost and all(l.split()[1].startswith("Ingress/") and " LOST at metadata.labels." in l
-                            and l.split("metadata.labels.")[1].split(":")[0] in SEPTEMBER_INGRESS_LABELS
-                            for l in lost), "\n".join(lost)
+    assert not lost, "\n".join(lost[:10])
 
 
 @pytest.mark.parametrize("version,corpus", CASES, ids=IDS)
@@ -124,7 +110,7 @@ def test_live_upgrade(tmp_path, version, corpus):
     d = FIX / version / corpus
     out = tmp_path / "out"
     r = run("--upgrade", d / "tree", "--oc", fake_oc(tmp_path), "-o", out, *flags(version, corpus),
-            *(["--fidelity-strict"] if strict(version, corpus) else []),
+            "--fidelity-strict",
             env={"FAKE_OC_DIR": str(d / "cluster")})
     check(out, version, corpus, r)
 
@@ -137,7 +123,7 @@ def test_offline_upgrade_matches_the_live_one(tmp_path, version, corpus):
         pytest.skip(f"no {rev} in this checkout (shallow clone)")
     off = tmp_path / "offline"
     r = run("--upgrade", d / "tree", "--upgrade-offline", "--upgrade-chart-rev", rev, "-o", off,
-            *flags(version, corpus), *(["--fidelity-strict"] if strict(version, corpus) else []))
+            *flags(version, corpus), "--fidelity-strict")
     check(off, version, corpus, r)
     live = tmp_path / "live"
     run("--upgrade", d / "tree", "--oc", fake_oc(tmp_path), "-o", live, *flags(version, corpus),

@@ -242,9 +242,6 @@ What changes, and what does not:
   files (`dev/values/ms1-black.yaml`) stays that way. Passing `--env-group`
   to fold them into folders changes their Argo CD Application names, so it
   redeploys them; `report/upgrade.txt` says so.
-- The September 2026 chart stamped Helm's own labels on Ingress objects;
-  today's chart does not, so for trees of that era those labels are reported
-  lost (metadata only — nothing restarts and no traffic changes).
 
 ## Input contract
 
