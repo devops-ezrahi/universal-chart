@@ -16,6 +16,9 @@ now NAME: {value|valueFrom}) and nothing in a tree says which one it uses.
                    branch, so that is what Argo CD rendered it with): a temp
                    copy of this repo at the last commit on or before the
                    tree's last commit date in its own git repo.
+  --upgrade-version 3.1.0  offline, with the chart of that universal-chart
+                   release (3.1 / 3 = the latest of that line) — for when you
+                   know which release the tree was converted with.
 
 Either way the result is the same dump every other source produces, so the
 conversion, the render check and the fidelity check are the ordinary ones.
@@ -238,6 +241,44 @@ def tree_date(tree: Path) -> str | None:
     r = subprocess.run(["git", "-C", str(tree), "log", "-1", "--format=%cI", "--", "."],
                        capture_output=True, text=True)
     return r.stdout.strip() or None
+
+
+def _release_tags() -> list[str]:
+    r = subprocess.run(["git", "-C", str(REPO), "tag", "--list", "v*"], capture_output=True, text=True)
+    return [t for t in r.stdout.split() if re.fullmatch(r"v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?", t)]
+
+
+def _version_key(tag: str) -> tuple:
+    core, _, pre = tag[1:].partition("-")
+    pre_key = tuple(int(p) if p.isdigit() else p for p in pre.split(".")) if pre else ()
+    # a release sorts after its own pre-releases (1.0.0-dev.9 < 1.0.0)
+    return (*map(int, core.split(".")), not pre, pre_key)
+
+
+def release_tag(version: str) -> str:
+    """The release tag for a universal-chart version as a person writes it:
+    3.1.0 / v3.1.0 -> v3.1.0; 3.1 or 3 -> the latest release of that line
+    (pre-releases only when named in full, e.g. 1.0.0-dev.3)."""
+    want = version.strip()
+    want = want if want.startswith("v") else "v" + want
+    if not re.fullmatch(r"v\d+(\.\d+){0,2}(-[0-9A-Za-z.]+)?", want):
+        sys.exit(f"--upgrade-version: '{version}' is not a version (like 3.1.0, v3.1.0 or 3.1)")
+    tags = _release_tags()
+    if not tags:
+        # a shallow or tagless clone: fetch the release tags once, then look again
+        subprocess.run(["git", "-C", str(REPO), "fetch", "--quiet", "--tags", "origin"],
+                       capture_output=True, timeout=120)
+        tags = _release_tags()
+    if want in tags:
+        return want
+    if "-" not in want and want.count(".") < 2:
+        line = [t for t in tags if "-" not in t and t.startswith(want + ".")]
+        if line:
+            return max(line, key=_version_key)
+    stable = sorted((t for t in tags if "-" not in t), key=_version_key)
+    sys.exit(f"--upgrade-version: {version} is not a release of the universal chart"
+             + (f" — releases: {', '.join(stable)}" if stable else
+                f" — {REPO} has no release tags (git fetch --tags)"))
 
 
 def chart_at(rev_or_date: str, *, is_date: bool, dest: Path) -> str:
@@ -525,15 +566,20 @@ def pull(tree: OldTree, args: argparse.Namespace, dump: Path) -> list[str]:
         if args.upgrade_chart:
             chart, what = Path(args.upgrade_chart).resolve(), f"the chart at {args.upgrade_chart}"
         else:
-            if args.upgrade_chart_rev:
+            tag = None
+            if getattr(args, "upgrade_version", None):
+                tag = release_tag(args.upgrade_version)
+                sha = chart_at(tag, is_date=False, dest=work)
+            elif args.upgrade_chart_rev:
                 sha = chart_at(args.upgrade_chart_rev, is_date=False, dest=work)
             else:
                 when = tree_date(tree.root)
                 if not when:
                     sys.exit(f"--upgrade-offline: {tree.root} is not in a git repo, so the date it was written is "
-                             f"unknown — pass --upgrade-chart-rev REV (the chart revision it was converted for)")
+                             f"unknown — pass --upgrade-version VERSION (the universal-chart release it was "
+                             f"converted with) or --upgrade-chart-rev REV")
                 sha = chart_at(when, is_date=True, dest=work)
-            chart, what = work, f"chart commit {sha[:10]}"
+            chart, what = work, (f"universal chart {tag} (commit {sha[:10]})" if tag else f"chart commit {sha[:10]}")
         print(f"==> rendering the old tree with {what} ({' -> '.join(layer_order(chart))})", file=sys.stderr)
         return render_tree(tree, chart, dump)
     finally:

@@ -125,7 +125,7 @@ python convert_to_universal_chart.py --input dump/ -o out
 | `--pull-only` | Stop after the pull; the dump is written to `-o`. |
 | `--dump DIR`, `--report DIR` | Keep the pulled dump; write the report somewhere other than `<output>/report`. |
 | `--warnings-file FILE` | Also write the pull's warnings as a JSON list (what the devops-portal reads). |
-| `--upgrade TREE` | A tree an earlier run wrote — see [Upgrading](#upgrading-a-tree-an-earlier-run-wrote---upgrade). `--upgrade-offline`, `--upgrade-chart-rev REV`, `--upgrade-chart PATH` for no cluster. |
+| `--upgrade TREE` | A tree an earlier run wrote — see [Upgrading](#upgrading-a-tree-an-earlier-run-wrote---upgrade). `--upgrade-version VERSION` (the release it was converted with), `--upgrade-offline`, `--upgrade-chart-rev REV`, `--upgrade-chart PATH` for no cluster. |
 | `-o DIR` | Where the values tree is written. |
 
 Everything else in `--help` is a conversion option and works with every source.
@@ -207,10 +207,24 @@ cluster — sync first, or use offline.
 the chart as it was when the tree was last committed (old trees track the
 chart's `main`, so that is what Argo CD rendered them with): a temporary copy
 of this repo at the last commit on or before the tree's git date, layering the
-files in that chart's own order. `--upgrade-chart-rev REV` names the revision
-instead (needed when the tree is not in git); `--upgrade-chart PATH` uses a
-checkout as it is. A release that chart cannot render is reported, never
-skipped.
+files in that chart's own order. A release that chart cannot render is
+reported, never skipped.
+
+**Offline from a known release (`--upgrade-version VERSION`):** when you know
+which universal-chart release the tree was converted with, name it and the old
+tree is rendered with that release's chart — no git date needed, so it also
+works for a tree that is not in git. It implies `--upgrade-offline`.
+
+```bash
+python convert_to_universal_chart.py --upgrade old-tree/ --upgrade-version 2.4.0 -o old-tree/
+```
+
+`3.1.0` and `v3.1.0` are the same release; `3.1` or `3` take the latest release
+of that line. Pre-releases count only when named in full (`1.0.0-dev.3`). A
+version that is not a release is refused with the list of releases. For a
+revision that is not a release, `--upgrade-chart-rev REV` takes any commit or
+branch, and `--upgrade-chart PATH` uses a checkout as it is; both also imply
+`--upgrade-offline`, and only one of the three may be given.
 
 **Which to use.** Live converts what actually runs, so it is the one that
 catches drift and hand changes made on the cluster. Offline converts what git

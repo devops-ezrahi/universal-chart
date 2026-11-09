@@ -122,8 +122,12 @@ def test_offline_upgrade_matches_the_live_one(tmp_path, version, corpus):
     if not has_rev(rev):
         pytest.skip(f"no {rev} in this checkout (shallow clone)")
     off = tmp_path / "offline"
-    r = run("--upgrade", d / "tree", "--upgrade-offline", "--upgrade-chart-rev", rev, "-o", off,
-            *flags(version, corpus), "--fidelity-strict")
+    # A release is named the way a person says it (3.1.0, no "v"); a pre-release
+    # commit by its revision. Either implies --upgrade-offline, so it is not passed.
+    chart = ["--upgrade-version", rev[1:]] if rev.startswith("v") else ["--upgrade-chart-rev", rev]
+    r = run("--upgrade", d / "tree", *chart, "-o", off, *flags(version, corpus), "--fidelity-strict")
+    if rev.startswith("v"):
+        assert f"rendering the old tree with universal chart {rev} (commit" in r.stderr
     check(off, version, corpus, r)
     live = tmp_path / "live"
     run("--upgrade", d / "tree", "--oc", fake_oc(tmp_path), "-o", live, *flags(version, corpus),
@@ -234,7 +238,12 @@ def test_layer_order_of_each_era():
 @pytest.mark.parametrize("args,msg", [
     (["--upgrade", "{fix}/v3.1.0/flat/tree", "-n", "dev"], "--upgrade reads its namespaces from the old tree"),
     (["--upgrade-offline"], "need --upgrade TREE"),
-    (["--upgrade", "{fix}/v3.1.0/flat/tree", "--upgrade-chart-rev", "v1.0.0"], "choose the chart for --upgrade-offline"),
+    (["--upgrade-version", "3.1.0"], "need --upgrade TREE"),
+    (["--upgrade", "{fix}/v3.1.0/flat/tree", "--upgrade-version", "3.1.0", "--upgrade-chart-rev", "v3.1.0"],
+     "--upgrade-version and --upgrade-chart-rev each name the old chart; give one"),
+    (["--upgrade", "{fix}/v3.1.0/flat/tree", "--upgrade-version", "3.1.0", "--upgrade-chart", "."],
+     "--upgrade-version and --upgrade-chart each name the old chart; give one"),
+    (["--upgrade", "{fix}/v3.1.0/flat/tree", "--upgrade-version", "latest"], "'latest' is not a version"),
     (["--upgrade", str(REPO / "examples" / "showcase")], "not a converter tree"),
     (["--upgrade", "{fix}/does-not-exist"], "is not a folder"),
     (["--upgrade", "{fix}/v3.1.0/flat/tree", "--upgrade-offline", "--upgrade-chart-rev", "no-such-rev"],
@@ -250,7 +259,51 @@ def test_offline_without_git_or_revision_says_what_to_pass(tmp_path):
     shutil.copytree(FIX / "v3.1.0" / "flat" / "tree", tree)
     r = run("--upgrade", tree, "--upgrade-offline", "-o", tmp_path / "out", ok=False,
             env={"GIT_CEILING_DIRECTORIES": str(tmp_path)})
-    assert r.returncode != 0 and "pass --upgrade-chart-rev REV" in r.stderr
+    assert r.returncode != 0 and "pass --upgrade-version VERSION" in r.stderr
+
+
+@pytest.mark.parametrize("given,tag", [
+    ("3.1.0", "v3.1.0"), ("v3.1.0", "v3.1.0"), (" 2.4.0 ", "v2.4.0"),
+    ("3.1", "v3.1.0"), ("1.2", "v1.2.2"), ("2", "v2.4.0"), ("v1", "v1.4.0"),
+    ("1.0", "v1.0.0"),                       # the release, never its -dev.N pre-releases
+    ("1.0.0-dev.3", "v1.0.0-dev.3"),         # a pre-release when named in full
+])
+def test_release_tag_reads_a_version_as_a_person_writes_it(given, tag):
+    if not has_rev(tag):
+        pytest.skip(f"no {tag} in this checkout")
+    assert upgrade.release_tag(given) == tag
+
+
+@pytest.mark.parametrize("given,msg", [
+    ("9.9.9", "is not a release of the universal chart — releases: v1.0.0, "),
+    ("3.9", "is not a release of the universal chart"),
+    ("main", "is not a version"),
+    ("3.1.0.1", "is not a version"),
+])
+def test_release_tag_refuses_what_is_not_a_release(given, msg):
+    if not has_rev("v1.0.0"):
+        pytest.skip("needs this repo's tags")
+    with pytest.raises(SystemExit) as e:
+        upgrade.release_tag(given)
+    assert msg in str(e.value)
+
+
+def test_version_order_puts_a_release_after_its_pre_releases():
+    tags = ["v1.0.0", "v1.0.0-dev.10", "v1.0.0-dev.9", "v0.9.9", "v1.0.1-dev.1"]
+    assert sorted(tags, key=upgrade._version_key) == ["v0.9.9", "v1.0.0-dev.9", "v1.0.0-dev.10", "v1.0.0",
+                                                     "v1.0.1-dev.1"]
+
+
+def test_upgrade_version_in_place(tmp_path):
+    """The everyday call: the tree the user has, the release they say it came
+    from, rewritten where it is."""
+    if not has_rev("v2.4.0"):
+        pytest.skip("needs this repo's history")
+    tree = tmp_path / "tree"
+    shutil.copytree(FIX / "v2.4.0" / "grouped" / "tree", tree)
+    r = run("--upgrade", tree, "--upgrade-version", "2.4", "-o", tree, "--fidelity-strict")
+    assert "universal chart v2.4.0" in r.stderr
+    check(tree, "v2.4.0", "grouped", r)
 
 
 def test_a_release_the_old_chart_cannot_render_is_reported_not_skipped(tmp_path):

@@ -71,10 +71,14 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
     g.add_argument("--upgrade-offline", action="store_true",
                    help="with --upgrade: no cluster — render the old tree with the chart as it was when the tree "
                         "was last committed (its git date), and convert that")
+    g.add_argument("--upgrade-version", metavar="VERSION",
+                   help="with --upgrade: the universal-chart release the old tree was converted with (3.1.0, "
+                        "v3.1.0, or 3.1 / 3 for the latest of that line); renders the old tree with that "
+                        "release's chart, no cluster (implies --upgrade-offline)")
     g.add_argument("--upgrade-chart-rev", metavar="REV",
-                   help="with --upgrade-offline: render with this revision of this repo instead (a tag, a commit)")
+                   help="with --upgrade: like --upgrade-version, for any revision of this repo (a commit, a branch)")
     g.add_argument("--upgrade-chart", metavar="PATH",
-                   help="with --upgrade-offline: render with the chart checked out at PATH")
+                   help="with --upgrade: render with the chart checked out at PATH (implies --upgrade-offline)")
 
 
 def names(values: list[str]) -> list[str]:
@@ -332,8 +336,15 @@ def has_source(args: argparse.Namespace) -> bool:
 def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
     """The whole command: pull (if a source was given), convert, report."""
     from converter import engine
-    if not args.upgrade and (args.upgrade_offline or args.upgrade_chart_rev or args.upgrade_chart):
-        ap.error("--upgrade-offline / --upgrade-chart-rev / --upgrade-chart need --upgrade TREE")
+    chart_choice = [f for f, v in (("--upgrade-version", args.upgrade_version),
+                                   ("--upgrade-chart-rev", args.upgrade_chart_rev),
+                                   ("--upgrade-chart", args.upgrade_chart)) if v]
+    if not args.upgrade and (args.upgrade_offline or chart_choice):
+        ap.error("--upgrade-offline / --upgrade-version / --upgrade-chart-rev / --upgrade-chart need --upgrade TREE")
+    if len(chart_choice) > 1:
+        ap.error(f"{' and '.join(chart_choice)} each name the old chart; give one")
+    if chart_choice:
+        args.upgrade_offline = True  # naming the old chart only means something offline
     if not has_source(args):
         for flag in ("pull_only", "dump", "warnings_file"):
             if getattr(args, flag):
@@ -344,8 +355,6 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         ap.error("--input is a source of its own; drop it, or drop -n/--link/--from-yaml/--upgrade")
     if args.upgrade and (args.namespace or args.link or args.from_yaml):
         ap.error("--upgrade reads its namespaces from the old tree; drop -n/--link/--from-yaml")
-    if (args.upgrade_chart_rev or args.upgrade_chart) and not args.upgrade_offline:
-        ap.error("--upgrade-chart-rev / --upgrade-chart choose the chart for --upgrade-offline")
 
     out = Path(args.output).resolve()
     if args.report and Path(args.report).resolve() in (out, *out.parents):
