@@ -1,0 +1,21 @@
+cronjobs:
+  ms1-report-black:
+    jobTemplate:
+      image:
+        repository: registry.example.org/ms1-report
+        tag: 1.0.0
+env:
+  COLOR:
+    value: black
+  DB_URL:
+    value: http://db.dev.svc:5432
+  ENVIRONMENT:
+    value: dev
+  FEATURE_FLAG:
+    value: 'on'
+  LOG_LEVEL:
+    value: trace
+image:
+  repository: registry.example.org/ms1
+  tag: 9.9.9
+replicaCount: 1

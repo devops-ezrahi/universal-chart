@@ -64,6 +64,17 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
                    help="also write the pull's warnings to FILE as a JSON list")
     g.add_argument("--dump", metavar="DIR", help="keep the pulled dump in DIR (default: a temp dir, deleted)")
     g.add_argument("--report", metavar="DIR", help="write the report here instead of <output>/report")
+    g.add_argument("--upgrade", metavar="TREE",
+                   help="bring a tree an earlier run wrote (any converter version) up to date: its namespaces "
+                        "are pulled again from the cluster and converted with today's converter; settings it "
+                        "recorded (repos, groups, clusters, ...) fill every option not given. -o TREE upgrades in place")
+    g.add_argument("--upgrade-offline", action="store_true",
+                   help="with --upgrade: no cluster — render the old tree with the chart as it was when the tree "
+                        "was last committed (its git date), and convert that")
+    g.add_argument("--upgrade-chart-rev", metavar="REV",
+                   help="with --upgrade-offline: render with this revision of this repo instead (a tag, a commit)")
+    g.add_argument("--upgrade-chart", metavar="PATH",
+                   help="with --upgrade-offline: render with the chart checked out at PATH")
 
 
 def names(values: list[str]) -> list[str]:
@@ -315,12 +326,14 @@ def pull(args: argparse.Namespace, dump: Path) -> list[str]:
 
 
 def has_source(args: argparse.Namespace) -> bool:
-    return bool(args.namespace or args.link or args.from_yaml)
+    return bool(args.namespace or args.link or args.from_yaml or args.upgrade)
 
 
 def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
     """The whole command: pull (if a source was given), convert, report."""
     from converter import engine
+    if not args.upgrade and (args.upgrade_offline or args.upgrade_chart_rev or args.upgrade_chart):
+        ap.error("--upgrade-offline / --upgrade-chart-rev / --upgrade-chart need --upgrade TREE")
     if not has_source(args):
         for flag in ("pull_only", "dump", "warnings_file"):
             if getattr(args, flag):
@@ -328,9 +341,17 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         engine.run(args)
         return 0
     if args.input != ap.get_default("input"):
-        ap.error("--input is a source of its own; drop it, or drop -n/--link/--from-yaml")
+        ap.error("--input is a source of its own; drop it, or drop -n/--link/--from-yaml/--upgrade")
+    if args.upgrade and (args.namespace or args.link or args.from_yaml):
+        ap.error("--upgrade reads its namespaces from the old tree; drop -n/--link/--from-yaml")
+    if (args.upgrade_chart_rev or args.upgrade_chart) and not args.upgrade_offline:
+        ap.error("--upgrade-chart-rev / --upgrade-chart choose the chart for --upgrade-offline")
 
     out = Path(args.output).resolve()
+    tree = None
+    if args.upgrade:
+        from converter import upgrade
+        tree = upgrade.prepare(args, ap, out)
     if args.pull_only:
         dump = out
         dump.mkdir(parents=True, exist_ok=True)
@@ -344,7 +365,7 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
 
     code = 0
     try:
-        warnings = pull(args, dump)
+        warnings = upgrade.pull(tree, args, dump) if tree else pull(args, dump)
         if args.warnings_file:
             Path(args.warnings_file).write_text(json.dumps(warnings, ensure_ascii=False), encoding="utf-8")
         if args.pull_only:
@@ -362,6 +383,17 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
             else:
                 code = e.code or 0
         report = out / "report"
+        if tree is not None and code == 0:
+            moved = upgrade.place_like(tree, out)
+            lines = upgrade.compare_releases(tree, out)
+            report.mkdir(parents=True, exist_ok=True)
+            text = f"Upgraded from {tree.root}\n\n"
+            text += ("Release sets differ:\n" + "\n".join(lines) + "\n\n") if lines else "Same releases in every folder.\n\n"
+            if moved:
+                text += "Put back in their old sub-folders:\n" + "\n".join(moved) + "\n"
+            (report / "upgrade.txt").write_text(text, encoding="utf-8")
+            for line in lines:
+                print(f"    upgrade: {line}", file=sys.stderr)
         if warnings:
             report.mkdir(parents=True, exist_ok=True)
             (report / "pull_warnings.txt").write_text(

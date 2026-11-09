@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ms1-yellow
+  labels:
+    app.kubernetes.io/instance: ms1-yellow-dev
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: ms1-yellow
+    app.kubernetes.io/version: 2.0.0
+    helm.sh/chart: super-universal-chart-1.0.0
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-yellow-dev:/ServiceAccount:dev/ms1-yellow
+  namespace: dev
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ms1-settings-yellow
+  labels:
+    app.kubernetes.io/instance: ms1-yellow-dev
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: ms1-yellow
+    app.kubernetes.io/version: 2.0.0
+    helm.sh/chart: super-universal-chart-1.0.0
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-yellow-dev:/ConfigMap:dev/ms1-settings-yellow
+  namespace: dev
+data:
+  app.conf: 'color = yellow
+
+    retries = 3
+
+    '
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms1-yellow
+  labels:
+    app.kubernetes.io/instance: ms1-yellow-dev
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: ms1-yellow
+    app.kubernetes.io/version: 2.0.0
+    helm.sh/chart: super-universal-chart-1.0.0
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-yellow-dev:/Service:dev/ms1-yellow
+  namespace: dev
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: ms1-yellow
+    app.kubernetes.io/instance: ms1-yellow-dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms1-yellow
+  labels:
+    app.kubernetes.io/instance: ms1-yellow-dev
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: ms1-yellow
+    app.kubernetes.io/version: 2.0.0
+    helm.sh/chart: super-universal-chart-1.0.0
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-yellow-dev:apps/Deployment:dev/ms1-yellow
+  namespace: dev
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ms1-yellow
+      app.kubernetes.io/instance: ms1-yellow-dev
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ms1-yellow
+        app.kubernetes.io/instance: ms1-yellow-dev
+    spec:
+      serviceAccountName: ms1-yellow
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: app
+        image: registry.example.org/ms1:1.0.0
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: COLOR
+          value: yellow
+        - name: DB_URL
+          value: http://db.dev.svc:5432
+        - name: ENVIRONMENT
+          value: dev
+        - name: FEATURE_FLAG
+          value: 'on'
+        - name: LOG_LEVEL
+          value: info
+        volumeMounts:
+        - name: settings-yellow
+          mountPath: /etc/ms1
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      volumes:
+      - name: settings-yellow
+        configMap:
+          name: ms1-settings-yellow
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ms1-report-yellow
+  labels:
+    app.kubernetes.io/instance: ms1-yellow-dev
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: ms1-yellow
+    app.kubernetes.io/version: 2.0.0
+    helm.sh/chart: super-universal-chart-1.0.0
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-yellow-dev:batch/CronJob:dev/ms1-report-yellow
+  namespace: dev
+spec:
+  schedule: 0 2 * * *
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 6
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ms1-yellow
+            app.kubernetes.io/instance: ms1-yellow-dev
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: ms1-yellow
+          containers:
+          - name: report
+            image: registry.example.org/ms1-report:1.0.0
+            imagePullPolicy: IfNotPresent
+            args:
+            - --color
+            - yellow

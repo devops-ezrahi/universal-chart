@@ -1,0 +1,15 @@
+image:
+  repository: registry.example.org/ms1
+  tag: 9.9.9
+replicaCount: 1
+env:
+  FEATURE_FLAG:
+    value: 'on'
+  LOG_LEVEL:
+    value: trace
+cronjobs:
+  ms1-report-{{ .Values.color }}:
+    jobTemplate:
+      image:
+        repository: registry.example.org/ms1-report
+        tag: 1.0.0

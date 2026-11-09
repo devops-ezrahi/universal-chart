@@ -1,0 +1,6 @@
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: 9.9.9
+replicaCount: 1
+env:
+  LOG_LEVEL: trace

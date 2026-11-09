@@ -1,0 +1,11 @@
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: 9.9.9
+replicaCount: 1
+env:
+- name: ENVIRONMENT
+  value: '{{ .Values.environment }}'
+- name: DB_URL
+  value: http://db.{{ .Values.environment }}.svc:5432
+- name: LOG_LEVEL
+  value: trace

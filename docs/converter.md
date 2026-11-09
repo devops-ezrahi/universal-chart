@@ -125,6 +125,7 @@ python convert_to_universal_chart.py --input dump/ -o out
 | `--pull-only` | Stop after the pull; the dump is written to `-o`. |
 | `--dump DIR`, `--report DIR` | Keep the pulled dump; write the report somewhere other than `<output>/report`. |
 | `--warnings-file FILE` | Also write the pull's warnings as a JSON list (what the devops-portal reads). |
+| `--upgrade TREE` | A tree an earlier run wrote — see [Upgrading](#upgrading-a-tree-an-earlier-run-wrote---upgrade). `--upgrade-offline`, `--upgrade-chart-rev REV`, `--upgrade-chart PATH` for no cluster. |
 | `-o DIR` | Where the values tree is written. |
 
 Everything else in `--help` is a conversion option and works with every source.
@@ -170,6 +171,80 @@ The exit code is the conversion's: `0` means converted **and** verified.
 The devops-portal's **Convert** runs the same importer over pasted YAML
 (its `SPLIT_DUMP` adapter is what `--from-yaml` mirrors), so a tree from this
 script and one converted in the portal come out the same.
+
+## Upgrading a tree an earlier run wrote (`--upgrade`)
+
+A values tree written by any version of this converter — the September 2026
+`gitops-factory` script, the v1.x `NAME: {value}` env maps, the v2.x env
+lists, the v3.0 `NAME: value` shorthand — comes up to what the converter
+writes today with one command:
+
+```bash
+python convert_to_universal_chart.py --upgrade old-tree/ -o new-tree/      # into a new folder
+python convert_to_universal_chart.py --upgrade values-repo/ -o values-repo/  # in place
+```
+
+**The old tree is only read for what to convert**, never interpreted with
+today's chart (its values format may be from any era):
+
+- its folders → the namespaces to pull (variant folders included),
+- its release files → their names and the `values/<sub>/` folders they sit in,
+- its `rootApplicationSet.yaml` and `defaults.yaml` files → the settings it was
+  converted with: values and chart repo/revision, root set name, project,
+  destination, auto-sync, links, `--argocd-manifests`, `--cluster-scoped`,
+  `--env-group`, `--env-suffixes`, `--namespace-cluster`, `--instances`. Each
+  fills an option only when you did not pass it; what it took is printed.
+
+**Live (default):** the namespaces are pulled from the cluster exactly like
+`-n`, so what runs — hand edits included, whichever version wrote the tree —
+is what gets converted. Every pulled object goes back into the release whose
+Argo CD Application deployed it (Argo CD's tracking annotation or instance
+label): moving an object to another release would make Argo CD delete it and
+create it again. Edits committed to git but not yet synced are not on the
+cluster — sync first, or use offline.
+
+**Offline (`--upgrade-offline`):** no cluster. The old tree is rendered with
+the chart as it was when the tree was last committed (old trees track the
+chart's `main`, so that is what Argo CD rendered them with): a temporary copy
+of this repo at the last commit on or before the tree's git date, layering the
+files in that chart's own order. `--upgrade-chart-rev REV` names the revision
+instead (needed when the tree is not in git); `--upgrade-chart PATH` uses a
+checkout as it is. A release that chart cannot render is reported, never
+skipped.
+
+**Which to use.** Live converts what actually runs, so it is the one that
+catches drift and hand changes made on the cluster. Offline converts what git
+says. Prefer offline when not every folder of the tree is deployed (a `prd`
+never synced): live pulls only what is there, and with one namespace left it
+cannot template the values that differ by environment back into `base/`
+(`report/upgrade.txt` lists the missing folders). A live pull also spells out
+the defaults the API server filled in (`progressDeadlineSeconds`, `strategy`,
+`dnsPolicy`, …) — exactly what any `-n` conversion of a running namespace
+writes; offline leaves them to Kubernetes.
+
+**Always checked:** `--verify-fidelity` is on, so the new tree is rendered
+and compared object by object with what the old one deployed. In place,
+everything is read before anything is written, and `--prune` is on, so what
+only the old layout had (e.g. `root-application.yaml`) goes. The new
+`report/upgrade.txt` lists any folder or release the two trees do not share
+and the files put back into their old sub-folders.
+
+What changes, and what does not:
+
+- The values are written in today's format (env as `{value}` / `{valueFrom}`,
+  today's defaults factoring). What is deployed does not change: the tests
+  prove it for trees from every release since September 2026
+  (`tests/converter/test_upgrade.py`, fixtures in `tests/converter/upgrade/`).
+- Object names are kept as they run. A v1.x tree deployed its workloads as
+  `<release>-<ns>` (`ms1-dev`); the upgraded tree keeps that name rather than
+  renaming — a rename is a delete and recreate.
+- The release structure is kept: a tree whose colour variants were separate
+  files (`dev/values/ms1-black.yaml`) stays that way. Passing `--env-group`
+  to fold them into folders changes their Argo CD Application names, so it
+  redeploys them; `report/upgrade.txt` says so.
+- The September 2026 chart stamped Helm's own labels on Ingress objects;
+  today's chart does not, so for trees of that era those labels are reported
+  lost (metadata only — nothing restarts and no traffic changes).
 
 ## Input contract
 

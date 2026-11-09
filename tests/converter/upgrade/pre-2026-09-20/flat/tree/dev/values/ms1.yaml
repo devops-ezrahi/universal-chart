@@ -1,0 +1,18 @@
+env:
+  DB_URL:
+    value: http://db.dev.svc:5432
+  ENVIRONMENT:
+    value: dev
+  LOG_LEVEL:
+    value: trace
+image:
+  repository: nginxinc/nginx-unprivileged
+  tag: 9.9.9
+ingress:
+  hosts:
+  - host: ms1-dev.homelab.localhost
+    paths:
+    - path: /
+      pathType: Prefix
+      portName: null
+replicaCount: 1

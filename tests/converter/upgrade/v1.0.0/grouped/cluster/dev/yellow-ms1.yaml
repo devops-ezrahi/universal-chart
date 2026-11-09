@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ms1-settings-yellow
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-dev-yellow:/ConfigMap:dev/ms1-settings-yellow
+  namespace: dev
+data:
+  app.conf: 'color = yellow
+
+    retries = 3
+
+    '
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms1-yellow
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-dev-yellow:/Service:dev/ms1-yellow
+  namespace: dev
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: ms1-yellow
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms1-yellow
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-dev-yellow:apps/Deployment:dev/ms1-yellow
+  namespace: dev
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: ms1-yellow
+  template:
+    metadata:
+      labels:
+        app: ms1-yellow
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: app
+        image: registry.example.org/ms1:1.0.0
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: ENVIRONMENT
+          value: dev
+        - name: DB_URL
+          value: http://db.dev.svc:5432
+        - name: COLOR
+          value: yellow
+        - name: LOG_LEVEL
+          value: info
+        - name: FEATURE_FLAG
+          value: 'on'
+        volumeMounts:
+        - name: settings-yellow
+          mountPath: /etc/ms1
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      volumes:
+      - name: settings-yellow
+        configMap:
+          name: ms1-settings-yellow
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ms1-report-yellow
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-dev-yellow:batch/CronJob:dev/ms1-report-yellow
+  namespace: dev
+spec:
+  schedule: 0 2 * * *
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 6
+      template:
+        metadata:
+          labels: null
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: report
+            image: registry.example.org/ms1-report:1.0.0
+            imagePullPolicy: IfNotPresent
+            args:
+            - --color
+            - yellow

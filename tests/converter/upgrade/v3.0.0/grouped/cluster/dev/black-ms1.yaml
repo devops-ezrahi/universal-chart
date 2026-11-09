@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ms1-settings-black
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-dev-black:/ConfigMap:dev/ms1-settings-black
+  namespace: dev
+data:
+  app.conf: 'color = black
+
+    retries = 3
+
+    '
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ms1-black
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-dev-black:/Service:dev/ms1-black
+  namespace: dev
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: ms1-black
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ms1-black
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-dev-black:apps/Deployment:dev/ms1-black
+  namespace: dev
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: ms1-black
+  template:
+    metadata:
+      labels:
+        app: ms1-black
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: app
+        image: registry.example.org/ms1:9.9.9
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: COLOR
+          value: black
+        - name: DB_URL
+          value: http://db.dev.svc:5432
+        - name: ENVIRONMENT
+          value: dev
+        - name: FEATURE_FLAG
+          value: 'on'
+        - name: LOG_LEVEL
+          value: trace
+        volumeMounts:
+        - name: settings-black
+          mountPath: /etc/ms1
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      volumes:
+      - name: settings-black
+        configMap:
+          name: ms1-settings-black
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ms1-report-black
+  annotations:
+    argocd.argoproj.io/tracking-id: ms1-dev-black:batch/CronJob:dev/ms1-report-black
+  namespace: dev
+spec:
+  schedule: 0 2 * * *
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 6
+      template:
+        metadata:
+          labels: null
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: report
+            image: registry.example.org/ms1-report:1.0.0
+            imagePullPolicy: IfNotPresent
+            args:
+            - --color
+            - black

@@ -1,0 +1,11 @@
+{
+ "dev_ms1": "dev/black",
+ "dev_rel": "ms1",
+ "prd_ms1": "prd/black",
+ "prd_rel": "ms1",
+ "moved": [
+  "dev/values/team-a/ms2.yaml",
+  "prd/values/team-a/ms2.yaml"
+ ],
+ "rev": "v2.4.0"
+}

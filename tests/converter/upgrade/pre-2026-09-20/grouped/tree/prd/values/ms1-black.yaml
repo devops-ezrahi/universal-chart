@@ -1,0 +1,21 @@
+cronjobs:
+  ms1-report-black:
+    jobTemplate:
+      image:
+        repository: registry.example.org/ms1-report
+        tag: 1.0.0
+env:
+  COLOR:
+    value: black
+  DB_URL:
+    value: http://db.prd.svc:5432
+  ENVIRONMENT:
+    value: prd
+  FEATURE_FLAG:
+    value: 'off'
+  LOG_LEVEL:
+    value: info
+image:
+  repository: registry.example.org/ms1
+  tag: 1.0.0
+replicaCount: 3
