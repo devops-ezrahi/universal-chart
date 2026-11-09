@@ -835,6 +835,12 @@ VOLATILE_ANNOTATION_PREFIXES = (
     # object claims to belong to an Application that is not the one deploying
     # it now; ArgoCD writes its own on apply.
     "argocd.argoproj.io/tracking-id",
+    # Rancher (seen on a live k3d/Rancher cluster): publicEndpoints is rewritten
+    # by its controller from the Service/Ingress status — carried into values,
+    # Argo CD and Rancher overwrite each other forever (permanent OutOfSync) —
+    # and objectset.rio.cattle.io/applied is Rancher's own last-applied blob.
+    "field.cattle.io/publicEndpoints",
+    "objectset.rio.cattle.io/applied",
 )
 
 VOLATILE_METADATA_KEYS = (
@@ -1057,6 +1063,8 @@ CLUSTER_OWNED_ANNOTATIONS = (
     "kubectl.kubernetes.io/last-applied-configuration",
     "deployment.kubernetes.io/revision",
     "argocd.argoproj.io/tracking-id",
+    "field.cattle.io/publicEndpoints",
+    "objectset.rio.cattle.io/applied",
 )
 
 
@@ -2436,6 +2444,7 @@ def pod_template_annotations(pod_meta: dict) -> dict:
 RESTART_STAMP_ANNOTATIONS = frozenset({
     "kubectl.kubernetes.io/restartedAt",
     "openshift.openshift.io/restartedAt",
+    "cattle.io/timestamp",  # Rancher's "Redeploy"
 })
 
 
