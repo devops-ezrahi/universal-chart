@@ -40,7 +40,7 @@ def test_ingress_goes_with_its_service_and_output_is_only_the_tree(tmp_path):
     src = tmp_path / "in.yaml"
     src.write_text(MANIFESTS, encoding="utf-8")
     out = tmp_path / "out"
-    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--from-yaml", str(src),
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--from-yaml", str(src),
                         "-o", str(out), "--chart", str(REPO)],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
@@ -50,7 +50,7 @@ def test_ingress_goes_with_its_service_and_output_is_only_the_tree(tmp_path):
 
     # --report DIR: the output then holds the tree and nothing else.
     out2, rep = tmp_path / "out2", tmp_path / "rep"
-    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--from-yaml", str(src),
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--from-yaml", str(src),
                         "-o", str(out2), "--chart", str(REPO), "--report", str(rep)],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
@@ -97,7 +97,7 @@ def test_shared_that_differs_only_by_env_is_one_release(tmp_path, extra):
     src = tmp_path / "in.yaml"
     src.write_text(_env_copies(envs), encoding="utf-8")
     out = tmp_path / "out"
-    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--from-yaml", str(src),
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--from-yaml", str(src),
                         "-o", str(out), "--chart", str(REPO),
                         "--include", "app.kubernetes.io/part-of=shop", *extra],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")

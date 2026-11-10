@@ -39,7 +39,7 @@ TEST_DIR = pathlib.Path(__file__).resolve().parent
 GITOPS_DIR = TEST_DIR.parents[3]
 REPO = GITOPS_DIR.parents[1]  # the universal-chart checkout
 CHART_DIR = REPO
-CONVERTER_PY = REPO / "convert_to_universal_chart.py"
+CONVERTER_PY = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 SHOWCASE_IN = REPO / "examples" / "showcase"
 COLLISION_FIXTURE = (TEST_DIR.parent.parent / "ConfigMap_Secret_Identical_Content_Duplicated"
                      / "test" / "fixture")

@@ -19,7 +19,7 @@ TEST_DIR = pathlib.Path(__file__).resolve().parent
 GITOPS_DIR = TEST_DIR.parents[3]
 REPO = GITOPS_DIR.parents[1]  # the universal-chart checkout
 CHART_DIR = REPO
-CONVERTER_PY = REPO / "convert_to_universal_chart.py"
+CONVERTER_PY = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 FIXTURE = TEST_DIR.parent / "fixture"
 
 

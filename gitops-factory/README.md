@@ -1,6 +1,6 @@
 # The converter — namespaces → Universal Chart values → Argo CD
 
-One command, `convert_to_universal_chart.py` at the repo root, turns running
+One command, `gitops-factory/convert_to_universal_chart.py`, turns running
 Kubernetes / OpenShift namespaces (or manifest files, or a tree an earlier run
 wrote) into [Universal Chart](https://github.com/devops-ezrahi/universal-chart)
 values files and the Argo CD wiring that deploys them. It renders every release
@@ -8,12 +8,13 @@ with `helm template` against the chart beside it and proves no two releases
 claim the same object before it reports success.
 
 ```bash
-python convert_to_universal_chart.py -n shop-dev -n shop-prd -o out
+python gitops-factory/convert_to_universal_chart.py -n shop-dev -n shop-prd -o out
 ```
 
-The chart is the repo root, so `--chart` defaults to it and nothing else needs
-cloning. (This used to be the separate, now archived, `devops-ezrahi/gitops-factory` repo,
-and later the `gitops-factory/` folder.)
+Run it from the repo root. The chart is the repo root, so `--chart` defaults to
+it and nothing else needs cloning; the command's engine, importer and sources are
+the `converter/` package there. (This used to be the separate, now archived,
+`devops-ezrahi/gitops-factory` repo.)
 
 Everything the tools generate lands in `.generated/` (gitignored):
 `python tools/convert_and_verify.py` rebuilds the showcase from
@@ -56,13 +57,12 @@ Everything the tools generate lands in `.generated/` (gitignored):
 
 | Path | Purpose |
 |---|---|
-| `convert_to_universal_chart.py` | **The command.** Reads a source (`-n`, `--link`, `--from-yaml`, `--input`, `--upgrade`), converts, verifies. `--help` lists every option. |
+| `gitops-factory/convert_to_universal_chart.py` | **The command.** Reads a source (`-n`, `--link`, `--from-yaml`, `--input`, `--upgrade`), converts, verifies. `--help` lists every option. |
 | `converter/engine.py` | The conversion itself: dump in, `base/` + per-folder `defaults.yaml` / `values/` (+ Argo CD wiring) out, then render-verification and the opt-in fidelity check. |
 | `converter/importer.py` | Pulls a namespace (or one app / one resource) through `oc` and writes the dump: `<dump>/<namespace>/<microservice>.yaml` + `shared.yaml`, cleaned of runtime metadata. An ExternalSecret brings its SecretStore/ClusterSecretStore along, with the store's Vault CA and ServiceAccount. |
 | `converter/sources.py` | The sources the command reads, all ending in that dump. |
 | `tools/convert_and_verify.py` | Showcase convert + name check + fidelity check + sanitize, in one command. |
 | `tools/values_editor.py` | Values-authoring CLI for microservices you add or tune **by hand** — defaults.yaml-aware. See [values_editor.py](#values_editorpy--hand-authoring-microservices). |
-| `ui/multi-app-manager.html` | The same as a browser UI. See [ui/multi-app-manager.html](#uimulti-app-managerhtml--browser-ui). |
 | `tools/generate_mock_environment.py` | A large, deliberately messy mock dump. |
 | `tests/converter/` | The pytest suite: one `regression/` folder per fixed defect (`STATUS.md`, fixtures, a test) plus the end-to-end tests. Run `python -m pytest -q` there. |
 | `examples/showcase/`, `examples/live-demo/` | Raw demo namespaces (dump layout). |
@@ -72,25 +72,25 @@ Everything the tools generate lands in `.generated/` (gitignored):
 
 ```bash
 # Live cluster (oc on PATH, logged in)
-python convert_to_universal_chart.py -n shop-dev -n shop-prd -o out
+python gitops-factory/convert_to_universal_chart.py -n shop-dev -n shop-prd -o out
 
 # Plain Kubernetes
-python convert_to_universal_chart.py -n shop-dev,shop-prd -o out --oc kubectl --kubeconfig ~/.kube/lab
+python gitops-factory/convert_to_universal_chart.py -n shop-dev,shop-prd -o out --oc kubectl --kubeconfig ~/.kube/lab
 
 # OpenShift console links: a namespace page, a topology app, or one resource (pulled with its app)
-python convert_to_universal_chart.py -o out \
+python gitops-factory/convert_to_universal_chart.py -o out \
     --link "https://console.apps.ocp.example.com/topology/ns/shop-dev?selectId=group%3Astorefront" \
     --link "https://console.apps.ocp.example.com/k8s/ns/shop-prd/deployments/web"
 
 # No cluster: manifest files or folders (everything in them is converted)
-python convert_to_universal_chart.py --from-yaml dump/ extra.yaml -o out
+python gitops-factory/convert_to_universal_chart.py --from-yaml dump/ extra.yaml -o out
 
 # A dump already in <namespace>/<microservice>.yaml layout
-python convert_to_universal_chart.py --input dump/ -o out
+python gitops-factory/convert_to_universal_chart.py --input dump/ -o out
 
 # Pull now, review or edit the dump, convert later
-python convert_to_universal_chart.py -n shop-dev --pull-only -o dump/
-python convert_to_universal_chart.py --input dump/ -o out
+python gitops-factory/convert_to_universal_chart.py -n shop-dev --pull-only -o dump/
+python gitops-factory/convert_to_universal_chart.py --input dump/ -o out
 ```
 
 ### What it does
@@ -135,14 +135,14 @@ Everything else in `--help` is a conversion option and works with every source.
 ```bash
 # Environment suffixes stripped from names, colour variants grouped,
 # Argo CD wiring written, report kept outside the tree
-python convert_to_universal_chart.py -n pay-dev,pay-stg,pay-prd -o values \
+python gitops-factory/convert_to_universal_chart.py -n pay-dev,pay-stg,pay-prd -o values \
     --env-suffixes dev,stg,prd --env-group color=black,yellow \
     --argocd-manifests true --values-repo-url https://git.example.com/gitops/pay-values.git \
     --report values-report
 
 # A packaged chart, rendered first, converted like any other manifests
 helm template shop ./shop-chart -n shop-dev > shop.yaml
-python convert_to_universal_chart.py --from-yaml shop.yaml --default-namespace shop-dev -o out
+python gitops-factory/convert_to_universal_chart.py --from-yaml shop.yaml --default-namespace shop-dev -o out
 ```
 
 ### What it prints
@@ -163,7 +163,7 @@ The exit code is the conversion's: `0` means converted **and** verified.
   namespace, so a ClusterRole, ClusterRoleBinding or StorageClass that no
   namespaced object points at is not pulled. Add those to the converter's
   input by hand: `--dump pulled/`, drop them in, then run
-  `convert_to_universal_chart.py --input pulled …` yourself.
+  `gitops-factory/convert_to_universal_chart.py --input pulled …` yourself.
 - **Variant folders.** A cluster has namespaces, not `prd/yellow`; variant
   folders come from the converter's `--env-group`, or from a hand-arranged
   `--dump`.
@@ -180,8 +180,8 @@ lists, the v3.0 `NAME: value` shorthand — comes up to what the converter
 writes today with one command:
 
 ```bash
-python convert_to_universal_chart.py --upgrade old-tree/ -o new-tree/      # into a new folder
-python convert_to_universal_chart.py --upgrade values-repo/ -o values-repo/  # in place
+python gitops-factory/convert_to_universal_chart.py --upgrade old-tree/ -o new-tree/      # into a new folder
+python gitops-factory/convert_to_universal_chart.py --upgrade values-repo/ -o values-repo/  # in place
 ```
 
 **The old tree is only read for what to convert**, never interpreted with
@@ -216,7 +216,7 @@ tree is rendered with that release's chart — no git date needed, so it also
 works for a tree that is not in git. It implies `--upgrade-offline`.
 
 ```bash
-python convert_to_universal_chart.py --upgrade old-tree/ --upgrade-version 2.4.0 -o old-tree/
+python gitops-factory/convert_to_universal_chart.py --upgrade old-tree/ --upgrade-version 2.4.0 -o old-tree/
 ```
 
 `3.1.0` and `v3.1.0` are the same release; `3.1` or `3` take the latest release
@@ -421,9 +421,9 @@ Two ways to say which releases are copies:
 
 ```bash
 # numbered: every release named x-<id>
-python convert_to_universal_chart.py -n shop-dev -o out --instances x
+python gitops-factory/convert_to_universal_chart.py -n shop-dev -o out --instances x
 # any names: exactly these releases are copies of x
-python convert_to_universal_chart.py -n shop-dev -o out --instances x=alpha,beta,gamma
+python gitops-factory/convert_to_universal_chart.py -n shop-dev -o out --instances x=alpha,beta,gamma
 ```
 
 Either way the output is one base plus one small values file per copy:
@@ -675,73 +675,6 @@ for anything without a dedicated flag — the value is parsed as YAML, so
 `80` becomes an int, `true` a bool, `[a,b]`/`{a: 1}` a real list/dict, and
 anything else stays a plain string.
 
-## ui/multi-app-manager.html — browser UI
-
-It reads the converter's tree: the shared `base/`, and every folder —
-namespace (`dev/`) or variant (`dev/yellow/`) — with its `defaults.yaml` and
-`values/` (group sub-folders included). **Base (shared)** edits
-`base/<release>.yaml`, which every folder running that release reads;
-**Values (this folder)** edits the folder's own file where it sits. A new
-microservice whose `base/` file already exists reuses it and only writes the
-folder's values file, like `values_editor.py new`.
-
-The same idea as `values_editor.py`, as a single self-contained HTML file —
-open it directly in **Chrome or Edge** (no server, no install, no build
-step). It reads and writes real files on your machine via the browser's
-[File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API)
-— nothing is uploaded anywhere, and it works fully offline (the YAML parser
-it depends on, [js-yaml](https://github.com/nodeca/js-yaml), is vendored
-inline in the file, not fetched from a CDN).
-
-**"+ Open App Folder"** picks a local directory — the same `<app-dir>` shape
-`values_editor.py` operates on — and adds it as a tab. Open **multiple** app
-folders at once (the multi-app-repo architecture this whole project is built
-around) and switch between them with the tabs at the top.
-
-Within an app: the sidebar lists namespaces (with how many keys each
-`defaults.yaml` covers) and, once expanded, its microservices plus a
-**"+ New microservice"** entry. Selecting a microservice gives you four
-views:
-
-- **Effective (merged)** — read-only, meant to match `values_editor.py show`
-  (base → namespace defaults → values, the same chain the chart builds).
-- **Values** / **Minimal** — the raw YAML for that file, editable directly,
-  saved straight back to disk.
-- **Form editor** — structured fields mirroring `values_editor.py new`'s
-  flags (image, ports, service ports, route host, resources, replicas,
-  literal env vars). Pre-filled from the effective values when editing an
-  existing microservice. On save, anything you entered that's identical to
-  what `defaults.yaml` already supplies is reported and **left out** of the
-  file that gets written — the same no-duplication guarantee as the CLI,
-  just visual.
-
-Browser support note: File System Access API is Chromium-only (Chrome,
-Edge) as of this writing — Firefox and Safari aren't supported. The page
-detects this and tells you plainly rather than failing silently.
-
-### Testing this file
-
-Since it can't be driven by the CLI-oriented tools elsewhere in this repo,
-it has its own test setup:
-
-```bash
-npm install jsdom          # dev-only, not a runtime dependency of the page itself
-node ui/core-logic.test.js # pure-JS unit tests for the deepMerge/subtractDefaults
-                            # logic embedded in the page — mirrors
-                            # convert_to_universal_chart.py's deep_merge /
-                            # common_subtree / subtract_defaults; keep these in
-                            # sync if either side changes
-node ui/e2e-test.js <path-to-an-app-dir-copy>
-                            # loads the REAL html/js into jsdom, wraps a real
-                            # directory on disk behind a minimal File System
-                            # Access API-compatible adapter, and drives it
-                            # exactly like a browser would (opens the app,
-                            # views effective values, edits an existing
-                            # microservice via both the form and the raw YAML
-                            # tab, creates a new one) - point it at a
-                            # disposable COPY of an app-dir, since it writes
-                            # real files
-```
 
 ## Why it's conflict-free
 
@@ -848,7 +781,7 @@ python tools/generate_mock_environment.py --output namespaces --seed 42
 #      - resolves/renames naming conflicts deterministically (logged)
 #      - renders every generated release for real with `helm template` and
 #        checks no two releases claim the same Kubernetes object
-python convert_to_universal_chart.py --input namespaces --output output \
+python gitops-factory/convert_to_universal_chart.py --input namespaces --output output \
     --argocd-manifests true \
     --chart-repo-url  https://github.com/devops-ezrahi/universal-chart.git \
     --values-repo-url https://git.example.com/gitops/microservices-values.git
@@ -923,7 +856,7 @@ Both scripts are idempotent given the same `--seed`/input. To start over:
 ```bash
 rm -rf namespaces output
 python tools/generate_mock_environment.py --output namespaces --seed 42
-python convert_to_universal_chart.py --input namespaces --output output
+python gitops-factory/convert_to_universal_chart.py --input namespaces --output output
 ```
 
 ## Onboarding a real application/namespace
@@ -932,14 +865,14 @@ The mock fixture above exists to stress-test the converter at scale; onboarding 
 real app follows the exact same input contract, just with real data:
 
 > Steps 1 and 3 in one command, with verification:
-> `python convert_to_universal_chart.py -n <namespace> -o out` ([details](#convert_to_universal_chartpy--any-source-in-chart-out)).
+> `python gitops-factory/convert_to_universal_chart.py -n <namespace> -o out` ([details](#convert_to_universal_chartpy--any-source-in-chart-out)).
 
 1. **Dump the namespace's desired state.** The easy way is
    `converter/importer.py`, which splits the namespace into per-microservice
    files and a `shared.yaml` for you (and brings each ExternalSecret's
    SecretStore, Vault CA and ServiceAccount along):
    ```bash
-   python convert_to_universal_chart.py -n <namespace> --pull-only -o namespaces [--kubeconfig <file>]
+   python gitops-factory/convert_to_universal_chart.py -n <namespace> --pull-only -o namespaces [--kubeconfig <file>]
    ```
    By hand, for each namespace you're onboarding:
    ```bash
@@ -974,7 +907,7 @@ real app follows the exact same input contract, just with real data:
 3. **Run the converter** exactly as in the mock walkthrough above, pointing
    `--input` at your real `namespaces/` tree:
    ```bash
-   python convert_to_universal_chart.py --input namespaces --output output \
+   python gitops-factory/convert_to_universal_chart.py --input namespaces --output output \
        --chart . \
        --chart-repo-url  https://<your-git-host>/gitops/universal-chart.git \
        --values-repo-url https://<your-git-host>/gitops/microservices-values.git

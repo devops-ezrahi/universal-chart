@@ -25,7 +25,7 @@ def dep(name, **pod_spec):
 
 
 def run_converter(src: Path, out: Path, *flags):
-    subprocess.run([sys.executable, str(ROOT / "convert_to_universal_chart.py"),
+    subprocess.run([sys.executable, str(ROOT / "gitops-factory" / "convert_to_universal_chart.py"),
                     "--input", str(src), "--output", str(out), "--skip-verify", *flags],
                    check=True, capture_output=True, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
 

@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         banner(1, "CONVERT", "skipped (--skip-convert)")
     else:
         banner(1, "CONVERT", "raw manifests -> Helm values, and check for conflicts")
-        cmd = [PY, str(HERE.parent / "convert_to_universal_chart.py"),
+        cmd = [PY, str(HERE.parent / "gitops-factory" / "convert_to_universal_chart.py"),
                "--input", str(src), "--output", str(out),
                "--chart", str(chart), "--verify-fidelity", "--argocd-manifests", "true"]
         if a.cluster_scoped:

@@ -5,5 +5,5 @@ importer   pulls namespaces from a cluster (or answers its reads from YAML) into
 sources    the inputs the command accepts, all ending in that one layout
 yaml_style YAML emitting shared by engine and importer
 
-The command is convert_to_universal_chart.py at the repo root.
+The command is gitops-factory/convert_to_universal_chart.py.
 """

@@ -307,10 +307,11 @@ def run(a, ns, git, work, gitroot, wt, branch):
             docs += kjson("-n", ns, "get", kind, "-l", f"{INSTANCE}={app}")["items"]
         (inp / f"{ms}.yaml").write_text(yaml.safe_dump_all(docs, sort_keys=False))
     out = work / "out"
-    # The command moved to the repo root; older revisions keep it in gitops-factory/.
-    conv = wt / "convert_to_universal_chart.py"
+    # The command lives in gitops-factory/ — on every revision but the few that
+    # had it at the repo root.
+    conv = wt / "gitops-factory" / "convert_to_universal_chart.py"
     if not conv.exists():
-        conv = wt / "gitops-factory" / "convert_to_universal_chart.py"
+        conv = wt / "convert_to_universal_chart.py"
     args = ["python3", str(conv), "--input", str(work / "in"), "--output", str(out), "--chart", str(wt),
             "--argocd-manifests", "true", "--values-repo-url", f"{git}/new-{ns}.git", "--values-revision", "main",
             "--chart-repo-url", f"{git}/chart.git", "--chart-revision", branch, "--root-set-name", f"new-{ns}"]

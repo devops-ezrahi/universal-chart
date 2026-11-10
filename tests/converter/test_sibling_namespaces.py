@@ -53,7 +53,7 @@ def _named_after_namespace(root: Path) -> Path:
 
 
 def _convert(src: Path, out: Path, *flags, check=True):
-    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--input", str(src),
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--input", str(src),
                         "--output", str(out), "--chart", str(REPO), *flags],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     if check:

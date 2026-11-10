@@ -32,7 +32,7 @@ def run(tmp_path):
             {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "common", "namespace": ns},
              "data": {"LOG": "info"}}), encoding="utf-8")
     out = tmp_path / "out"
-    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
                         "--output", str(out), "--skip-verify"],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
