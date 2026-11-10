@@ -12,3 +12,5 @@ gitops-factory/
 requirements.txt
 .generated/
 .github/
+.opencode/
+AGENTS.md

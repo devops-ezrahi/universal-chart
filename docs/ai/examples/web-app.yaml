@@ -1,0 +1,95 @@
+# Verified example: a stateless web app. Renders with
+#   helm template web ../../.. -f web-app.yaml
+fullnameOverride: orders-api      # object names = exactly this (no "<release>-<chart>")
+
+image:
+  repository: registry.example.com/shop/orders-api
+  tag: "1.4.2"
+
+replicaCount: 2
+
+ports:                            # MAP keyed by port name
+  http:
+    containerPort: 8080
+
+env:                              # MAP keyed by var name; each says value or valueFrom
+  LOG_LEVEL:
+    value: info
+  DB_PASSWORD:
+    valueFrom:
+      secretKeyRef:
+        name: orders-db
+        key: password
+  POD_NAME:
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+
+envFrom:                          # MAP keyed by ConfigMap/Secret name
+  orders-api-config:
+    type: configMapRef
+
+configMaps:                       # map key = the ConfigMap's real name
+  orders-api-config:
+    data:
+      FEATURE_X: "true"
+      app.properties: |
+        cache.ttl=60
+
+volumes:                          # MAP keyed by volume name
+  app-props:
+    configMap:
+      name: orders-api-config
+      items:
+        - key: app.properties
+          path: app.properties
+
+volumeMounts:                     # a LIST, rendered in the order written
+  - name: app-props
+    mountPath: /etc/orders/app.properties
+    subPath: app.properties
+    readOnly: true
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {cpu: "1", memory: 512Mi}
+
+readinessProbe:
+  httpGet: {path: /ready, port: http}
+livenessProbe:
+  httpGet: {path: /health, port: http}
+  initialDelaySeconds: 20
+
+service:
+  enabled: true                   # off by default
+  ports:
+    http:
+      port: 80
+      targetPort: http
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: orders.{{ .Release.Namespace }}.example.com   # values go through tpl
+      paths:
+        - path: /
+          pathType: Prefix
+          portName: http
+
+hpa:
+  enabled: true                   # removes spec.replicas from the Deployment
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 70}
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+checksums:
+  enabled: true                   # roll pods when the chart's ConfigMaps/Secrets change
