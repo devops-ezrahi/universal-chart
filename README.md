@@ -20,6 +20,7 @@ In my workflow, I publish this chart to ChartMuseum and reference it from my app
 - [GitOps / ArgoCD Pattern](#gitops--argocd-pattern)
 - [Chart Validation](#chart-validation)
 - [Examples Directory](#examples-directory)
+- [Publishing to the External Org](#publishing-to-the-external-org)
 
 ---
 
@@ -778,3 +779,26 @@ helm unittest .
 3. Update `values.yaml` with new keys (with comments)
 4. Update `values.schema.json` if adding/removing top-level keys
 5. Test with `helm unittest .` and `helm lint .`
+
+---
+
+## Publishing to the External Org
+
+`scripts/sync-to-external.sh` publishes a release to a copy of this repo in another GitHub organization (one that signs in through Microsoft Entra ID) as **one snapshot commit** plus the matching `v*` tag. Internal commit history is never pushed. Someone runs it by hand on a PC that is signed in to that org.
+
+One-time setup on the PC ([GitHub CLI](https://cli.github.com) 2.40 or later; on Windows, run the script from Git Bash):
+
+```bash
+gh auth login --hostname github.com --web
+```
+
+- If the org uses **SAML single sign-on** and the script reports that access is refused, authorize *GitHub CLI* for that org under <https://github.com/settings/applications>.
+- If the org uses **Enterprise Managed Users** (usernames like `jdoe_contoso`), sign in with the managed account too and pass `--user jdoe_contoso`.
+
+Publish the latest stable release:
+
+```bash
+scripts/sync-to-external.sh --target OTHER-ORG/universal-chart
+```
+
+Useful flags: `--dry-run` (build the commit and show it, push nothing), `--ref v3.0.0` (publish a specific release), `--pr` (open a pull request instead of pushing, for a protected branch). See `--help` for all flags. Paths in `.sync-external-ignore` are not published; by default that is CI (`.github/workflows`) and the sync tooling itself. To avoid typing `--target` each time, put `TARGET_REPO=OTHER-ORG/universal-chart` in `scripts/sync-to-external.conf`.
