@@ -22,7 +22,9 @@ valuesGlob: "*.yaml"
 # prune and selfHeal). false leaves every microservice's Application OutOfSync
 # until someone presses Sync in Argo CD. The default keeps the existing
 # behaviour; convert_to_universal_chart.py's rootApplicationSet passes false
-# unless run with --auto-sync true.
+# unless run with --auto-sync true. That rootApplicationSet reads it per folder:
+# `autoSync: false|true` in a folder's defaults.yaml overrides the tree's value
+# (the converter's --namespace-auto-sync writes it).
 autoSync: true
 
 # The ApplicationSet controller puts resources-finalizer.argocd.argoproj.io on
