@@ -31,6 +31,16 @@ jobs:
       - run: helm lint ms-applicationSet
       - run: helm unittest .
       - run: helm unittest ms-applicationSet
+      # The AI docs' examples (docs/ai/examples) are what agents copy from, here
+      # and in every values repo. A chart change that breaks one must update it
+      # in the same PR (see AGENTS.md, "keep the AI docs current").
+      - name: AI doc examples render
+        run: |
+          fail=0
+          for f in docs/ai/examples/*.yaml; do
+            helm template t . -f "$f" >/dev/null || { echo "::error file=$f::does not render"; fail=1; }
+          done
+          exit $fail
 
       # The converter's regression suite renders every fixture with the helm
       # installed above, so it lives in the same job.

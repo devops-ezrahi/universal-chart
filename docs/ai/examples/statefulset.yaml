@@ -1,0 +1,49 @@
+# Verified example: a database StatefulSet with a headless governing Service.
+fullnameOverride: orders-db
+
+workload:
+  type: statefulset
+
+image:
+  repository: postgres
+  tag: "16"
+
+serviceName: orders-db            # the governing Service; must be headless
+
+ports:
+  postgres:
+    containerPort: 5432
+
+env:
+  PGDATA:
+    value: /var/lib/postgresql/data/pgdata
+  POSTGRES_PASSWORD:
+    valueFrom:
+      secretKeyRef:
+        name: orders-db
+        key: password
+
+service:
+  enabled: true
+  clusterIP: None
+  ports:
+    postgres:
+      port: 5432
+      targetPort: postgres
+
+volumeClaimTemplates:             # one PVC per replica: data-orders-db-0, ...
+  data:
+    accessModes: [ReadWriteOnce]
+    size: 20Gi
+
+volumeMounts:
+  - name: data
+    mountPath: /var/lib/postgresql/data
+
+persistentVolumeClaimRetentionPolicy:
+  whenDeleted: Retain
+  whenScaled: Retain
+
+readinessProbe:
+  exec:
+    command: ["pg_isready", "-U", "postgres"]

@@ -1,0 +1,57 @@
+# Verified example: no compute workload; RBAC, a ConfigMap, an ExternalSecret,
+# a CronJob and an Argo CD PreSync Job.
+fullnameOverride: orders-ops
+
+workload:
+  type: none                      # no Deployment/StatefulSet/DaemonSet; hpa/vpa/pdb must stay off
+
+image:                            # used by jobs that set no image of their own
+  repository: registry.example.com/shop/orders-tools
+  tag: "2.0.0"
+
+serviceAccount:
+  create: true
+  name: orders-ops
+
+rbac:
+  roles:
+    orders-ops-reader:            # map key = the Role's real name
+      rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          verbs: ["get", "list"]
+  roleBindings:
+    orders-ops-reader:
+      roleRef: orders-ops-reader
+      subjects:
+        - kind: ServiceAccount
+          name: orders-ops
+
+externalSecrets:
+  orders-db:                      # creates Secret "orders-db"
+    secretStoreRef:
+      name: vault-backend
+      kind: ClusterSecretStore
+    refreshInterval: 1h
+    data:
+      - secretKey: password
+        remoteRef:
+          key: shop/orders/db
+          property: password
+
+cronjobs:
+  orders-nightly-cleanup:         # CronJob/orders-nightly-cleanup, verbatim (no release prefix)
+    schedule: "0 2 * * *"
+    jobTemplate:
+      command: ["/bin/cleanup.sh"]
+      env:
+        DRY_RUN:
+          value: "false"
+
+jobs:
+  orders-db-migrate:
+    command: ["/bin/migrate.sh"]
+    backoffLimit: 2
+    annotations:
+      argocd.argoproj.io/hook: PreSync
+      argocd.argoproj.io/hook-delete-policy: BeforeHookCreation

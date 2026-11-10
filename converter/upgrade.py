@@ -159,6 +159,9 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
                 s["auto_sync"] = str(params["autoSync"]).lower() == "true"
     if tree.has_wiring():
         s["argocd_manifests"] = True
+    agents = tree.root / engine.AGENTS_FILE_NAME
+    if agents.is_file() and engine.AGENTS_MARKER in agents.read_text(encoding="utf-8", errors="replace"):
+        s["agents_md"] = True
     if tree.cluster_shared:
         s["cluster_scoped"] = True
 
