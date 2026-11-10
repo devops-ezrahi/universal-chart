@@ -11,7 +11,8 @@ Read those for full option tables. This file is the map.
   base/shared.yaml               # objects shared within a namespace (the "shared" release)
   <namespace>/
     defaults.yaml                # what every release in this namespace has in common
-                                 # (e.g. environment: dev, common labels, cluster: {...})
+                                 # (e.g. environment: dev, common labels, cluster: {...},
+                                 #  autoSync: false to make this folder's Applications manual-sync)
     values/<release>.yaml        # image tag + whatever differs from base here
     values/<group>/<release>.yaml   # optional grouping folder; release name unchanged
     <variant>/                   # optional, e.g. prd/yellow: deploys INTO <namespace>,
@@ -47,7 +48,11 @@ helm template ms1 . -n dev -f $o/base/ms1.yaml -f $o/dev/defaults.yaml -f $o/dev
 - It emits one ApplicationSet whose git-files generator globs
   `<folder>/values/<valuesGlob>` and makes one Application per file, with the
   three `valueFiles` above.
-- `autoSync` (chart default `true`; converter-generated wiring passes `false`).
+- `autoSync` (chart default `true`). Converter-generated wiring reads it per folder
+  from that folder's `defaults.yaml` (`autoSync: true|false`) and falls back to the
+  tree's `--auto-sync` (default `false`). To switch one environment between manual
+  and automatic sync, edit that line in its `defaults.yaml`. It doesn't affect
+  `cluster-shared-application.yaml`.
 - `preserveResourcesOnDeletion: true` (default): deleting an Application
   leaves the workloads running. `false` makes deletes cascade.
 - `applicationsSync`: `create-only` / `create-delete` stop the controller from
@@ -84,7 +89,8 @@ python gitops-factory/convert_to_universal_chart.py --help                      
   - `--argocd-manifests true`: also write the root Application and ApplicationSet.
   - `--agents-md`: also write an `AGENTS.md` that points AI agents at the chart's docs
     at the deployed chart revision. It never overwrites a hand-written one.
-  - `--auto-sync`: off by default.
+  - `--auto-sync`: off by default. `--namespace-auto-sync NS=true|false` overrides it
+    per namespace (written as `autoSync:` in that namespace's `defaults.yaml`).
   - `--include`, `--exclude`, `--keep`: select stacks.
   - `--cluster-scoped`: cluster objects go to the `cluster-shared` release.
   - `--instances x`: an instance layout.

@@ -406,6 +406,28 @@ def parse_namespace_clusters(specs) -> dict:
     return out
 
 
+# Whether a namespace's microservice Applications sync themselves
+# (--namespace-auto-sync), written to its folders' defaults.yaml under this
+# key. The root ApplicationSet reads it from there like CLUSTER_KEY, falling
+# back to the tree's --auto-sync, so a hand-written `autoSync: false` in any
+# folder's defaults.yaml also switches that folder to manual sync.
+AUTO_SYNC_KEY = "autoSync"
+
+
+def parse_namespace_auto_sync(specs) -> dict:
+    """['shop-prd=false', 'shop-dev=true'] -> {'shop-prd': False, 'shop-dev': True}."""
+    out: dict = {}
+    for spec in specs:
+        ns, _, flag = spec.partition("=")
+        ns, flag = ns.strip(), flag.strip().lower()
+        if not ns or "/" in ns or flag not in ("true", "yes", "1", "on", "false", "no", "0", "off"):
+            sys.exit(f"--namespace-auto-sync {spec!r}: use NAMESPACE=true or NAMESPACE=false")
+        if ns in out:
+            sys.exit(f"--namespace-auto-sync {spec!r}: '{ns}' is given twice")
+        out[ns] = flag in ("true", "yes", "1", "on")
+    return out
+
+
 def combine_values(per_ns: dict, groups: list) -> "tuple[str, dict] | None":
     """Express per-namespace strings {namespace: value} as one template.
 
@@ -4885,7 +4907,9 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                                   ("chartPath", chart_path)) if v != APPSET_CHART_DEFAULTS[k]],
         # The microservice Applications the chart renders: manual sync unless
         # --auto-sync true. Always written — the chart's own default is true.
-        ("autoSync", q("true" if auto_sync else "false")),
+        # Read per folder from its defaults.yaml (AUTO_SYNC_KEY, set by hand or
+        # by --namespace-auto-sync), the tree's --auto-sync where it is absent.
+        ("autoSync", q('{{ dig "%s" "%s" . | toString }}' % (AUTO_SYNC_KEY, "true" if auto_sync else "false"))),
         # Navigation links (ms-applicationSet's `links`): every object a
         # microservice deploys points back at its Argo CD Application, and its
         # workload at its OpenShift console page from Argo CD's resource tree.
@@ -6634,6 +6658,12 @@ def build_parser() -> argparse.ArgumentParser:
                           "Written to the namespace's defaults.yaml as cluster.server / "
                           "cluster.name, which the root ApplicationSet reads, so moving a "
                           "namespace later is an edit to that file.")
+    ap.add_argument("--namespace-auto-sync", action="append", default=[], metavar="NAMESPACE=true|false",
+                     help="override --auto-sync for one namespace (all its variant folders). Repeat "
+                          "for each namespace. Written to the namespace's defaults.yaml as "
+                          "autoSync: true|false, which the root ApplicationSet reads, so switching "
+                          "an environment between manual and automatic sync later is an edit to "
+                          "that file.")
     # Variant sub-folders in the input are detected on their own now.
     ap.add_argument("--variants", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--cluster-scoped", action="store_true",
@@ -6819,8 +6849,10 @@ def run(args: argparse.Namespace) -> None:
         for opt in (args.exclude, args.keep, args.include))
     chart_keys = set((yaml.safe_load((Path(args.chart) / "values.yaml").read_text(encoding="utf-8"))
                       if (Path(args.chart) / "values.yaml").is_file() else None) or {})
-    env_groups = [parse_env_group(spec, chart_keys | {CLUSTER_KEY}) for spec in args.env_group]
+    env_groups = [parse_env_group(spec, chart_keys | {CLUSTER_KEY, AUTO_SYNC_KEY})
+                  for spec in args.env_group]
     namespace_clusters = parse_namespace_clusters(args.namespace_cluster)
+    namespace_auto_sync = parse_namespace_auto_sync(args.namespace_auto_sync)
     suffixes = [t.strip() for t in args.env_suffixes.split(",") if t.strip()]
     if suffixes:
         KNOWN_ENV_SUFFIXES.clear()  # the list replaces the default trailing-suffix rule
@@ -7283,6 +7315,9 @@ def run(args: argparse.Namespace) -> None:
     unknown = sorted(set(namespace_clusters) - {k8s_ns(k) for k in out_keys})
     if unknown:
         all_warnings.append(f"--namespace-cluster: no namespace {', '.join(unknown)} in this run — ignored")
+    unknown = sorted(set(namespace_auto_sync) - {k8s_ns(k) for k in out_keys})
+    if unknown:
+        all_warnings.append(f"--namespace-auto-sync: no namespace {', '.join(unknown)} in this run — ignored")
     for namespace in sorted(out_keys):
         out_ns_dir = output_dir / namespace
         ms_contexts = out_ms.get(namespace, [])
@@ -7336,6 +7371,8 @@ def run(args: argparse.Namespace) -> None:
         namespace_defaults.update(folder_values(namespace, env_groups))
         if k8s_ns(namespace) in namespace_clusters:
             namespace_defaults[CLUSTER_KEY] = namespace_clusters[k8s_ns(namespace)]
+        if k8s_ns(namespace) in namespace_auto_sync:
+            namespace_defaults[AUTO_SYNC_KEY] = namespace_auto_sync[k8s_ns(namespace)]
 
         out_ns_dir.mkdir(parents=True, exist_ok=True)
         header_ns_defaults = (

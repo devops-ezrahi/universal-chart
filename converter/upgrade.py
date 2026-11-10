@@ -48,7 +48,7 @@ from converter import engine  # noqa: E402
 # annotations and checksum stamps when it re-imports a chart-deployed object.
 STAMP_LABELS = ("argocd.argoproj.io/instance",)
 STAMP_ANNOTATION_PREFIXES = ("argocd.argoproj.io/", "meta.helm.sh/")
-DEFAULTS_SETTING_KEYS = {"environment", engine.CLUSTER_KEY, "labels", "podLabels", "commonLabels", "namespace"}
+DEFAULTS_SETTING_KEYS = {"environment", engine.CLUSTER_KEY, engine.AUTO_SYNC_KEY, "labels", "podLabels", "commonLabels", "namespace"}
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +155,12 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
                 v = params.get(param)
                 if isinstance(v, str) and v and "{{" not in v:
                     s[dest] = v
-            if str(params.get("autoSync", "")).lower() in ("true", "false"):
-                s["auto_sync"] = str(params["autoSync"]).lower() == "true"
+            auto = str(params.get("autoSync", ""))
+            # Plain true/false, or (since --namespace-auto-sync) a per-folder
+            # lookup whose fallback is the tree's --auto-sync.
+            m = re.search(r'dig "%s" "(true|false)"' % engine.AUTO_SYNC_KEY, auto)
+            if m or auto.lower() in ("true", "false"):
+                s["auto_sync"] = (m.group(1) if m else auto.lower()) == "true"
     if tree.has_wiring():
         s["argocd_manifests"] = True
     agents = tree.root / engine.AGENTS_FILE_NAME
@@ -170,6 +174,7 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
     groups: dict[str, dict[str, str]] = {}
     envs: list[str] = []
     clusters: dict[str, str] = {}
+    auto_syncs: dict[str, bool] = {}
     for folder, d in tree.defaults.items():
         parts = folder.split("/")
         group_keys = [k for k, v in d.items() if k not in DEFAULTS_SETTING_KEYS and isinstance(v, str)]
@@ -183,6 +188,9 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
         c = d.get(engine.CLUSTER_KEY)
         if isinstance(c, dict) and (c.get("server") or c.get("name")):
             clusters[engine.k8s_ns(folder)] = c.get("server") or c.get("name")
+        a = str(d.get(engine.AUTO_SYNC_KEY, "")).lower()
+        if a in ("true", "false"):
+            auto_syncs[engine.k8s_ns(folder)] = a == "true"
     if groups:
         s["env_group"] = [f"{g}=" + ",".join(t if v == t else f"{t}:{v}" for t, v in toks.items())
                           for g, toks in groups.items()]
@@ -190,6 +198,8 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
         s["env_suffixes"] = ",".join(dict.fromkeys(envs))
     if clusters:
         s["namespace_cluster"] = [f"{n}={c}" for n, c in clusters.items()]
+    if auto_syncs:
+        s["namespace_auto_sync"] = [f"{n}={str(v).lower()}" for n, v in auto_syncs.items()]
     instances: dict[str, list[str]] = {}
     for folder, rels in tree.releases.items():
         for stem, rel in rels.items():

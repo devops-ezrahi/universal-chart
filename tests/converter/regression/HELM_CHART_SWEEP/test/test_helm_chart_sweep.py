@@ -234,7 +234,7 @@ def test_generated_wiring_leaves_sync_manual_by_default():
     appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
                                                            "https://v", "main"))
     params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
-    assert {"name": "autoSync", "value": "false"} in params
+    assert {"name": "autoSync", "value": '{{ dig "autoSync" "false" . | toString }}'} in params
     app = conv.build_cluster_shared_application("platform", "https://c", ".", "main", "https://v", "main")
     assert "automated" not in app["spec"]["syncPolicy"]
 
@@ -243,7 +243,7 @@ def test_auto_sync_true_turns_it_back_on():
     appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
                                                            "https://v", "main", auto_sync=True))
     params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
-    assert {"name": "autoSync", "value": "true"} in params
+    assert {"name": "autoSync", "value": '{{ dig "autoSync" "true" . | toString }}'} in params
 
 
 @needs_helm
