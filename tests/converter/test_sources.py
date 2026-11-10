@@ -16,7 +16,7 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-CMD = REPO / "convert_to_universal_chart.py"
+CMD = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 sys.path.insert(0, str(REPO))
 from converter import sources  # noqa: E402
 

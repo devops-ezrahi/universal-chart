@@ -31,7 +31,7 @@ GITOPS_DIR = TEST_DIR.parents[3]                    # universal/gitops-factory
 REPO = GITOPS_DIR.parents[1]  # the universal-chart checkout
 UNIVERSAL_DIR = REPO                   # universal
 CHART_DIR = UNIVERSAL_DIR  # gitops-factory lives inside the chart repo
-CONVERTER_PY = REPO / "convert_to_universal_chart.py"
+CONVERTER_PY = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 FIXTURE_DIR = TEST_DIR / "fixture"
 FIXTURE_STS = FIXTURE_DIR / "platform-data" / "postgres.yaml"
 

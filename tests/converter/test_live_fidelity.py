@@ -70,7 +70,7 @@ def test_render_matches_live_labels_selector_and_pod_spec(tmp_path):
     ns.mkdir(parents=True)
     (ns / "redis-b2c.yaml").write_text(RAW, encoding="utf-8")
     out = tmp_path / "out"
-    subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
+    subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
                     "--output", str(out), "--chart", str(REPO), "--skip-verify"], check=True)
     # A release name unlike the live instance, as the ApplicationSet produces.
     rendered = subprocess.run(

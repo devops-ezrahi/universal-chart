@@ -47,7 +47,6 @@ jobs:
       - run: python tools/convert_and_verify.py --cluster-scoped
       - run: python -m pytest -q
         working-directory: tests/converter
-      - run: node ui/core-logic.test.js
 
       # The committed examples/converted/ trees must be exactly what the
       # converter writes today, and must render back to their input manifests
@@ -59,7 +58,7 @@ jobs:
           for t in flat grouped; do
             extra=""; [ "$t" = grouped ] && extra="--env-group color=black,yellow"
             out="$RUNNER_TEMP/$t/output"
-            python convert_to_universal_chart.py --input examples/converted/$t/input --output "$out" \
+            python gitops-factory/convert_to_universal_chart.py --input examples/converted/$t/input --output "$out" \
               --chart . --env-suffixes dev,prd $extra --argocd-manifests true \
               --values-repo-url https://github.com/devops-ezrahi/universal-chart-example-$t.git \
               --root-set-name example-$t --verify-fidelity --fidelity-strict
@@ -68,38 +67,6 @@ jobs:
             done
             diff -r -x report -x rootApplication.yaml.txt "$out" examples/converted/$t/output
           done
-
-      # multi-app-manager.html driven in jsdom against converter output.
-      - run: npm ci --prefix ui --silent
-      - name: multi-app-manager e2e
-        env:
-          NODE_PATH: ${{ github.workspace }}/ui/node_modules
-        run: |
-          set -e
-          app="$RUNNER_TEMP/e2e-app"
-          python convert_to_universal_chart.py --input tests/converter/regression/ERRORS_NEW_ANALYSIS/Env_Suffix_Folders/fixture \
-            --output "$app" --env-group color=black,yellow --env-suffixes dev,prd --skip-verify
-          mkdir -p "$app/dev/black/values/group1"
-          mv "$app/dev/black/values/ms1.yaml" "$app/dev/black/values/group1/"
-          node ui/e2e-test.js "$app"
-
-  # The studio (ui/) is a standalone page, not part of the chart that gets
-  # released — so its tests report here but do not gate `pack`.
-  # ponytail: move into `test` once ui/generate.test.js is green again.
-  ui:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ui
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - run: npm ci
-      - run: npm test
 
   # Release + whitening pack on push to main (stable) or dev (prerelease).
   # Gated on `test` so a broken commit is never released or handed off.

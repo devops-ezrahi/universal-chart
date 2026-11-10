@@ -98,14 +98,14 @@ resolves collisions deterministically:
 
 Usage
 -----
-    python convert_to_universal_chart.py --input namespaces --output output
+    python gitops-factory/convert_to_universal_chart.py --input namespaces --output output
 
-    # --chart defaults to '..' (this repo's root IS the Universal Chart); pass
+    # --chart defaults to this repo's root (it IS the Universal Chart); pass
     # --skip-verify to skip the helm-template render-verification step entirely
     # (e.g. helm isn't installed):
-    python convert_to_universal_chart.py --input namespaces --output output --chart ..
+    python gitops-factory/convert_to_universal_chart.py --input namespaces --output output --chart .
 
-See README.md for the full end-to-end verification workflow.
+See gitops-factory/README.md for the full end-to-end verification workflow.
 """
 from __future__ import annotations
 
@@ -6545,7 +6545,7 @@ def _bool_arg(v: str) -> bool:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Every conversion option. The command at the repo root adds its source
+    """Every conversion option. The command (gitops-factory/) adds its source
     options (-n, --from-yaml, --upgrade, ...) to this same parser."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--input", default="namespaces", help="root folder containing <namespace>/<microservice>.yaml")

@@ -30,7 +30,7 @@ TEST_DIR = pathlib.Path(__file__).resolve().parent
 GITOPS_DIR = TEST_DIR.parents[3]
 REPO = GITOPS_DIR.parents[1]  # the universal-chart checkout
 CHART_DIR = REPO
-CONVERTER_PY = REPO / "convert_to_universal_chart.py"
+CONVERTER_PY = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 
 # The folder-7 fixture is the canonical reproduction: Services and Routes whose
 # raw names carry '-service' / '-route' suffixes. Reused rather than duplicated

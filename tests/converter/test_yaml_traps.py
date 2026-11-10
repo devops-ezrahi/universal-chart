@@ -58,7 +58,7 @@ def test_trap_env_values_render_as_the_same_strings(tmp_path):
                   for i, v in enumerate(TRAPS + PLAIN))
     (ns / "traps.yaml").write_text(DEPLOY + env, encoding="utf-8")
     out = tmp_path / "out"
-    subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
+    subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
                     "--output", str(out), "--chart", str(REPO), "--skip-verify"], check=True)
     rendered = subprocess.run(
         ["helm", "template", "traps", str(REPO), "-n", "edge", "-f", str(out / "base/traps.yaml"),
@@ -75,7 +75,7 @@ def test_release_name_over_53_chars_is_reported(tmp_path):
     ns.mkdir(parents=True)
     (ns / f"{name}.yaml").write_text(DEPLOY.replace("traps", name) + "        - {name: X, value: x}\n", encoding="utf-8")
     out = tmp_path / "out"
-    subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
+    subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
                     "--output", str(out), "--chart", str(REPO), "--skip-verify"], check=True,
                    capture_output=True)
     report = (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")

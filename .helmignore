@@ -8,7 +8,7 @@ converter/
 tools/
 tests/converter/
 docs/
-ui/
+gitops-factory/
 requirements.txt
 .generated/
 .github/

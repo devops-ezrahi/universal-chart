@@ -143,7 +143,7 @@ def assert_every_namespace_keeps_its_env(inp: Path, out: Path) -> int:
 
 def convert(inp: Path, out: Path, *flags) -> None:
     verify = ["--verify-fidelity", "--fidelity-strict"] if HELM else ["--skip-verify"]
-    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--input", str(inp),
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--input", str(inp),
                         "--output", str(out), "--chart", str(CHART), *verify, *flags],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(HERE))
     report_path = out / "report" / "fidelity_report.txt"

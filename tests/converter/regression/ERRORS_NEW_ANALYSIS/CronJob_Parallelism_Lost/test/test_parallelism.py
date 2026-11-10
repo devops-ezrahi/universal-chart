@@ -39,7 +39,7 @@ TEST_DIR = pathlib.Path(__file__).resolve().parent
 GITOPS_DIR = TEST_DIR.parents[3]
 REPO = GITOPS_DIR.parents[1]  # the universal-chart checkout
 CHART_DIR = REPO
-CONVERTER_PY = REPO / "convert_to_universal_chart.py"
+CONVERTER_PY = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 ENGINE_PY = REPO / "converter" / "engine.py"  # what the command runs; loaded for its functions
 SHOWCASE = REPO / "examples" / "showcase"
 

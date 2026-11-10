@@ -2122,7 +2122,7 @@ clusterSecretStores:
 > reasoning as `storageClasses`/`scc` elsewhere in this chart) — only put an entry
 > here if THIS release is genuinely meant to own that cluster-wide definition (e.g.
 > a platform/namespace-shared release), not per application microservice. If you're
-> generating values with [`convert_to_universal_chart.py`](docs/converter.md), route
+> generating values with [`convert_to_universal_chart.py`](gitops-factory/README.md), route
 > `ClusterSecretStore` through its cluster-scoped dedup path (`--cluster-scoped`)
 > rather than declaring it per microservice.
 >

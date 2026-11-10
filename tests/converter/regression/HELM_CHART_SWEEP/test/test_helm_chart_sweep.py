@@ -18,7 +18,7 @@ TEST_DIR = pathlib.Path(__file__).resolve().parent
 GITOPS_DIR = TEST_DIR.parents[2]
 REPO = GITOPS_DIR.parents[1]  # the universal-chart checkout
 CHART_DIR = REPO
-CONVERTER = REPO / "convert_to_universal_chart.py"
+CONVERTER = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 
 
 def _load(name, path):

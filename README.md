@@ -12,13 +12,7 @@ In my workflow, I publish this chart to ChartMuseum and reference it from my app
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
-- [UI — values.yaml Generator](#ui--valuesyaml-generator)
-  - [How to Open](#how-to-open)
-  - [Features](#features)
-  - [Import from Existing Manifests](#import-from-existing-manifests)
-  - [Multi-Environment (GitOps) Mode](#multi-environment-gitops-mode)
 - [Tests](#tests)
-  - [UI Tests (Jest)](#ui-tests-jest)
   - [Helm Chart Tests (helm-unittest)](#helm-chart-tests-helm-unittest)
 - [Workload Types](#workload-types)
 - [Key Features Reference](#key-features-reference)
@@ -37,8 +31,7 @@ In my workflow, I publish this chart to ChartMuseum and reference it from my app
 - Add sidecars, init containers, ConfigMaps, Secrets, PVCs — all from values
 - Built-in support for HPA, VPA, PDB, RBAC, NetworkPolicies, CronJobs, Jobs
 - Works on both plain **Kubernetes** and **OpenShift** (Route and SCC support)
-- Comes with a **browser-based UI** to visually generate your `values.yaml`
-- Full **Helm unit test** suite (`tests/`) and **UI Jest test** suite (`ui/`)
+- Full **Helm unit test** suite (`tests/`)
 
 ---
 
@@ -118,20 +111,14 @@ universal-chart/
 │   ├── extra_deploy_test.yaml
 │   └── validation_test.yaml
 │
-├── convert_to_universal_chart.py     # The converter: namespaces -> values tree (docs/converter.md)
+├── gitops-factory/                   # The converter: namespaces -> values tree
+│   ├── convert_to_universal_chart.py #   the command
+│   └── README.md                     #   how to use it
 ├── converter/                        # Its engine, importer and sources
 ├── tools/                            # convert_and_verify, values_editor, mock generators
 ├── tests/converter/                  # The converter's pytest suite and regression fixtures
-├── docs/                             # converter.md and the bug-fix reports
+├── docs/                             # The bug-fix reports
 │                                     # (all of the above excluded from the chart via .helmignore)
-│
-├── ui/                               # Browser-based values.yaml generator
-│   ├── index.html                    # Single-file UI app (open in browser)
-│   ├── package.json                  # Jest test runner config
-│   ├── test-helpers.js               # Pure utility functions (no DOM)
-│   ├── test-helpers.test.js          # Unit tests for utility functions
-│   ├── generate.test.js              # Tests for YAML generation logic
-│   └── environments.test.js          # Tests for multi-env / GitOps features
 │
 └── examples/
     ├── simple-webapp.yaml            # Minimal deployment example
@@ -155,8 +142,6 @@ universal-chart/
 |---|---|---|
 | `helm` ≥ 3.10 | Deploy the chart | [helm.sh](https://helm.sh/docs/intro/install/) |
 | `helm-unittest` plugin | Run `tests/` | See below |
-| `node` ≥ 18 + `npm` | Run `ui/` Jest tests | [nodejs.org](https://nodejs.org) |
-| A browser | Open `ui/index.html` | Any modern browser |
 
 **Install helm-unittest plugin:**
 
@@ -210,210 +195,9 @@ ingress:
 
 ---
 
-## UI — values.yaml Generator
-
-The `ui/index.html` is a **standalone, zero-dependency browser app** that generates a complete `values.yaml` for this chart.
-No server, no build step — just open the file.
-
-### How to Open
-
-**Option A — Double-click**
-
-```
-Open ui/index.html directly in your browser (Chrome, Firefox, Edge, etc.)
-```
-
-**Option B — Local HTTP server (recommended, avoids browser file:// restrictions)**
-
-```bash
-# Using Python
-cd ui
-python -m http.server 8080
-# Then open: http://localhost:8080
-
-# Using Node.js npx
-npx serve ui
-# Then open the printed URL
-```
-
-### Features
-
-The UI covers every chart feature via a form:
-
-| Section | What you configure |
-|---|---|
-| **Workload** | Type (Deployment/StatefulSet/DaemonSet), replicas, strategy, name overrides |
-| **Image** | Repository, tag, pull policy, image pull secrets |
-| **Ports** | Container ports (name, port, protocol, hostPort) |
-| **Environment** | Literal values, ConfigMap refs, Secret refs, fieldRef, envFrom |
-| **Resources** | CPU/memory requests and limits |
-| **Probes** | Liveness, readiness, startup (httpGet, tcpSocket, exec) |
-| **Security** | Pod security context, container security context, capabilities |
-| **Lifecycle** | postStart / preStop exec hooks |
-| **Volumes** | VolumeMounts, volumes (emptyDir, PVC, ConfigMap, Secret) |
-| **Sidecars** | Extra containers alongside main container |
-| **Init containers** | Run-before-main containers |
-| **Service** | Type, ports, annotations |
-| **Ingress** | Hosts, paths, TLS, className, annotations |
-| **OpenShift Route** | Host, path, TLS termination |
-| **OpenShift SCC** | SecurityContextConstraints (privileges, strategies, etc.) |
-| **ConfigMaps** | Key-value data, multi-line files |
-| **Secrets** | Opaque, TLS, Docker registry secrets |
-| **PVC / PV** | Storage claims and persistent volumes |
-| **StatefulSet VCTs** | volumeClaimTemplates per-pod storage |
-| **HPA** | Min/max replicas, CPU/memory targets |
-| **VPA** | Vertical autoscaler update mode |
-| **PDB** | Pod disruption budget |
-| **RBAC** | Roles, RoleBindings, ClusterRoles |
-| **NetworkPolicies** | Ingress/egress rules |
-| **CronJobs** | Scheduled jobs with cron expressions |
-| **Jobs** | One-off jobs (e.g. DB migrations) |
-| **ServiceMonitor** | Prometheus scraping config |
-| **Scheduling** | nodeSelector, tolerations, affinity, topology spread |
-| **Advanced** | hostNetwork, DNS, graceful shutdown, priority class |
-| **extraDeploy** | Raw YAML injection for CRDs or anything else |
-
-Once configured, click **Generate** — the YAML output appears on the right, ready to copy or download.
-
-### Import from Existing Manifests
-
-The UI can **import your existing kubectl YAML** and convert it to chart values:
-
-1. Click the **Import** button (or paste area) at the top of the UI
-2. Paste your raw Kubernetes YAML (Deployment, StatefulSet, Service, etc.)
-3. Multiple resources separated by `---` are all parsed at once
-4. The form pre-fills with the imported values
-5. Click **Generate** to produce the equivalent `values.yaml`
-
-This is useful for migrating existing workloads to the chart.
-
-### Multi-Environment (GitOps) Mode
-
-The UI supports a **base + per-environment override** model, designed for GitOps workflows:
-
-1. Configure your **base** values as normal (shown in the main form)
-2. Click **+ Add Environment** — enter a name (e.g. `dev`, `staging`, `prod`)
-3. Switch to the environment tab
-4. Click **+ Add Override** and select which sections differ in that environment
-5. Modify only those sections — everything else inherits from base
-6. The YAML output switches to **override-only** YAML (environment comment header + only overridden sections)
-7. Click **Download GitOps Zip** to get a ready-to-use directory structure:
-
-```
-values.yaml            ← base values
-envs/
-  dev/
-    values.yaml        ← dev overrides only
-  staging/
-    values.yaml        ← staging overrides only
-  prod/
-    values.yaml        ← prod overrides only
-```
-
-This maps directly to how ArgoCD ApplicationSets layer values files.
-
----
-
 ## Tests
 
-The project has **two separate test suites** for different purposes.
-
----
-
-### UI Tests (Jest)
-
-Located in `ui/`, these test the JavaScript logic inside `index.html` using [Jest](https://jestjs.io/) and [jsdom](https://github.com/jsdom/jsdom).
-
-#### Setup & Run
-
-```bash
-cd ui
-npm install      # install Jest + jsdom (first time only)
-npm test         # run all tests with verbose output
-```
-
-#### Test Files
-
-| File | What it tests |
-|---|---|
-| `generate.test.js` | Core YAML generation — every form field, all workload types, probes, security contexts, import logic, `parseSimpleYaml` parser |
-| `environments.test.js` | Multi-environment feature — adding/removing/switching envs, section overrides, env YAML generation, GitOps zip creation |
-| `test-helpers.test.js` | Pure utility functions — `yamlVal`, `parseValue`, `parseSimpleYaml`, `cleanK8sObject`, HTML escaping |
-
-#### How the UI Tests Work
-
-The tests load `index.html` into a jsdom virtual browser environment:
-
-```js
-const html = fs.readFileSync('index.html', 'utf-8');
-const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'http://localhost' });
-```
-
-Then they:
-1. **Set form field values** via `document.getElementById('fieldId').value = 'value'`
-2. **Call `window.generate()`** to trigger YAML generation
-3. **Assert on `yaml-output` text content** to verify the correct YAML was produced
-
-Example test:
-```js
-test('sets CPU and memory requests', () => {
-  setVal('reqCpu', '100m');
-  setVal('reqMem', '128Mi');
-  const yaml = generate();
-  expect(yaml).toContain('    cpu: 100m');
-  expect(yaml).toContain('    memory: 128Mi');
-});
-```
-
-#### Test Coverage Areas
-
-`generate.test.js` covers:
-- Default YAML output (workload, image, service, serviceAccount, securityContext)
-- Workload types (deployment, statefulset, daemonset)
-- Image configuration (repo, tag, pull policy, pull secrets)
-- Replicas and update strategy (RollingUpdate, Recreate)
-- Container ports (single, multiple, hostPort)
-- Environment variables (literal, configMapKeyRef, secretKeyRef, fieldRef, envFrom)
-- Resource requests and limits
-- Liveness, readiness, and startup probes (httpGet, tcpSocket, exec)
-- Lifecycle hooks (postStart, preStop)
-- Security contexts (pod-level vs. container-level separation)
-- StatefulSet security context import edge cases
-- Service configuration (type, ports, disabled)
-- Ingress configuration (hosts, TLS, annotations)
-- OpenShift Route
-- ConfigMaps, Secrets
-- HPA and VPA
-- PDB
-- RBAC (roles, clusterRoles)
-- CronJobs
-- Jobs
-- NetworkPolicies
-- Sidecars, init containers
-- Volumes and volumeMounts
-- StatefulSet volumeClaimTemplates
-- Scheduling (nodeSelector, tolerations, affinity, topology spread)
-- Import from existing Kubernetes manifests (Deployment, StatefulSet, Service)
-- `parseSimpleYaml` block scalar (`|`) support
-
-`environments.test.js` covers:
-- Data model (environments array, section mapping completeness)
-- Adding / removing / switching environments
-- Section overrides (add, remove, restore base values)
-- UI state (env-mode class, override bar, tabs, GitOps zip button)
-- Environment YAML generation (only overridden sections, comment header)
-- Zip file creation (valid PK header, correct file count via EOCD)
-- `generateEnvOnlyYaml` function
-- Environment renaming via inline input
-- Multi-app support
-
-`test-helpers.test.js` covers:
-- `yamlVal` — YAML value quoting rules (integers, booleans, reserved words, special chars)
-- `esc` / `escHtml` — HTML entity escaping
-- `isNum` — numeric string detection
-- `parseValue` — string-to-typed-value conversion
-- `parseSimpleYaml` — minimal YAML parser (objects, arrays, inline arrays, block scalars, booleans, nulls)
-- `cleanK8sObject` — stripping runtime metadata fields from imported manifests
+The chart's templates are tested with helm-unittest; the converter has its own pytest suite in `tests/converter/` (see [gitops-factory/README.md](gitops-factory/README.md)).
 
 ---
 
@@ -839,7 +623,7 @@ ordinary value the chart renders wherever `base/` says `{{ .Values.instance }}`,
 so `alpha` renders `alpha`, `alpha-config`, ... Each copy is still its own
 Application and Helm release. The converter writes this layout with
 `--instances x` or `--instances x=alpha,beta,gamma` (see
-`docs/converter.md`), and `values_editor.py new --name delta --base-file x`
+`gitops-factory/README.md`), and `values_editor.py new --name delta --base-file x`
 adds another copy by hand.
 
 ```bash
@@ -927,7 +711,7 @@ same delete removes every workload. `cluster-shared-resources` (from
 Application object.
 
 Values repos in this shape are produced by
-[`convert_to_universal_chart.py`](docs/converter.md) (in this repo), which
+[`convert_to_universal_chart.py`](gitops-factory/README.md) (in this repo), which
 converts running namespaces (or manifest dumps) into exactly this layout
 (ServiceMonitors in the dump are deliberately not converted).
 
@@ -994,5 +778,3 @@ helm unittest .
 3. Update `values.yaml` with new keys (with comments)
 4. Update `values.schema.json` if adding/removing top-level keys
 5. Test with `helm unittest .` and `helm lint .`
-6. For UI changes, update `ui/index.html` and add tests in the relevant `ui/*.test.js` file
-7. Run `cd ui && npm test` to ensure all UI tests pass

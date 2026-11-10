@@ -41,7 +41,7 @@ GITOPS_DIR = TEST_DIR.parents[3]
 REPO = GITOPS_DIR.parents[1]  # the universal-chart checkout
 CHART_DIR = REPO
 TEMPLATES = CHART_DIR / "templates"
-CONVERTER_PY = REPO / "convert_to_universal_chart.py"
+CONVERTER_PY = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 FIXTURE_DIR = TEST_DIR / "fixture"
 FIXTURE = FIXTURE_DIR / "shop-web" / "api-gateway.yaml"
 

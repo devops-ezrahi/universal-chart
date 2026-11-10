@@ -59,7 +59,7 @@ def convert(tmp_path, env, *flags, doc=None):
     ns.mkdir(parents=True)
     (ns / "api.yaml").write_text(yaml.safe_dump(doc or workload(env)), encoding="utf-8")
     out = tmp_path / "out"
-    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--input", str(tmp_path / "in"),
                         "--output", str(out), "--skip-verify", *flags],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]

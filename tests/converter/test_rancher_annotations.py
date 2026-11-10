@@ -12,7 +12,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-CMD = REPO / "convert_to_universal_chart.py"
+CMD = REPO / "gitops-factory" / "convert_to_universal_chart.py"
 
 ENDPOINTS = '[{"addresses":["172.18.0.3"],"port":80,"protocol":"HTTP","serviceName":"shop:web"}]'
 DUMP = f"""

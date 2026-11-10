@@ -91,7 +91,7 @@ def goldenbell(ns, style, overlap):
 def run(tmp_path, docs, *flags):
     src = tmp_path / "in.yaml"; src.write_text(yaml.safe_dump_all(docs), encoding="utf-8")
     out, rep = tmp_path / "out", tmp_path / "report"
-    r = subprocess.run([sys.executable, str(REPO / "convert_to_universal_chart.py"), "--from-yaml", str(src), "-o", str(out),
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"), "--from-yaml", str(src), "-o", str(out),
                         "--report", str(rep), "--chart", str(REPO), "--verify-fidelity", "--fidelity-strict", *flags],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-4000:]
