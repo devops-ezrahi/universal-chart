@@ -234,7 +234,7 @@ def test_generated_wiring_leaves_sync_manual_by_default():
     appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
                                                            "https://v", "main"))
     params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
-    assert {"name": "autoSync", "value": '{{ dig "autoSync" "false" . | toString }}'} in params
+    assert {"name": "autoSync", "value": "false"} in params
     app = conv.build_cluster_shared_application("platform", "https://c", ".", "main", "https://v", "main")
     assert "automated" not in app["spec"]["syncPolicy"]
 
@@ -243,7 +243,7 @@ def test_auto_sync_true_turns_it_back_on():
     appset = yaml.safe_load(conv.build_root_applicationset("root", "https://c", "ms-applicationSet", "main", ".",
                                                            "https://v", "main", auto_sync=True))
     params = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
-    assert {"name": "autoSync", "value": '{{ dig "autoSync" "true" . | toString }}'} in params
+    assert {"name": "autoSync", "value": "true"} in params
 
 
 @needs_helm
@@ -254,7 +254,8 @@ def test_ms_applicationset_autosync(flag, automated):
                         "--set", "namespace=a,originRepoURL=r,originBranch=m", *flag],
                        capture_output=True, text=True, check=True)
     doc = yaml.safe_load(r.stdout)
-    assert ("automated" in doc["spec"]["template"]["spec"]["syncPolicy"]) is automated
+    # The chart's value is only the fallback of the per-folder dig.
+    assert ('dig "autoSync" "%s" .' % str(automated).lower()) in doc["spec"]["templatePatch"]
 
 
 # --- navigation links ---------------------------------------------------------

@@ -1,5 +1,6 @@
-"""Per-namespace auto-sync: the root ApplicationSet reads `autoSync` from each
-folder's defaults.yaml, falling back to the tree's --auto-sync, and
+"""Per-namespace auto-sync: the root ApplicationSet passes the tree's
+--auto-sync as a plain true/false, the ms-applicationSet chart digs `autoSync`
+out of each folder's defaults.yaml with that as the fallback, and
 --namespace-auto-sync writes that key so it survives a reconversion."""
 import subprocess
 import sys
@@ -16,13 +17,13 @@ from test_namespace_cluster import REPO, deployment, params, run  # noqa: E402
 
 def test_root_reads_autosync_per_folder_with_the_tree_default(tmp_path):
     out, load = run(tmp_path)
-    assert params(load)["autoSync"] == '{{ dig "autoSync" "false" . | toString }}'
+    assert params(load)["autoSync"] == "false"
     assert "autoSync" not in load("shop-dev/defaults.yaml")
 
 
 def test_tree_default_true_is_the_fallback(tmp_path):
     out, load = run(tmp_path, "--auto-sync", "true")
-    assert params(load)["autoSync"] == '{{ dig "autoSync" "true" . | toString }}'
+    assert params(load)["autoSync"] == "true"
 
 
 def test_namespace_auto_sync_writes_each_folder_of_that_namespace(tmp_path):

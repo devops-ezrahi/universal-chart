@@ -129,12 +129,24 @@ spec:
   syncPolicy:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- /* A matrix of the folder's values files and its defaults.yaml, so each
+         Application also sees defaults.yaml's top-level keys (autoSync, read
+         in templatePatch below). pathParamPrefix keeps defaults.yaml's own
+         path under .defaults, so .path is still the values file. */}}
   generators:
-    - git:
-        repoURL: {{ $repo | quote }}
-        revision: {{ $branch | quote }}
-        files:
-          - path: '{{ $prefix }}{{ $folder }}/values/{{ .Values.valuesGlob | default "*.yaml" }}'
+    - matrix:
+        generators:
+          - git:
+              repoURL: {{ $repo | quote }}
+              revision: {{ $branch | quote }}
+              files:
+                - path: '{{ $prefix }}{{ $folder }}/values/{{ .Values.valuesGlob | default "*.yaml" }}'
+          - git:
+              repoURL: {{ $repo | quote }}
+              revision: {{ $branch | quote }}
+              pathParamPrefix: defaults
+              files:
+                - path: '{{ $defaultsFile }}'
   template:
     metadata:
       name: '{{ $appName }}'
@@ -191,17 +203,6 @@ spec:
         - repoURL: {{ $repo | quote }}
           targetRevision: {{ $branch | quote }}
           ref: Values
-      syncPolicy:
-        {{- /* toString: Argo CD hands helm parameters over as --set, but a
-               value typed into its UI or a values file may arrive as "false". */}}
-        {{- if ne (lower (toString .Values.autoSync)) "false" }}
-        automated:
-          prune: true
-          selfHeal: true
-        {{- end }}
-        syncOptions:
-          - CreateNamespace=true
-          - ServerSideApply=true
       # OpenShift/Kubernetes admission mutates these on the LIVE object; Helm's
       # desired manifest never sets them, so without this every Application
       # flips OutOfSync -> Synced on each reconcile and selfHeal fights the
@@ -255,3 +256,22 @@ spec:
           jsonPointers:
             - /secrets
             - /imagePullSecrets
+  {{- /* syncPolicy per Application. `autoSync: true|false` in the folder's
+         defaults.yaml wins; the chart's autoSync (passed by the root
+         ApplicationSet) is the fallback. Argo CD evaluates the dig per
+         Application, so a goTemplate decides whether `automated` exists at
+         all, which only templatePatch can do (Argo CD 2.10+). toString/lower:
+         a helm parameter arrives as a string ("true", "False") and a YAML
+         boolean in defaults.yaml as a bool; anything but "false" is on. */}}
+  {{- $autoSync := ternary "false" "true" (eq (lower (toString .Values.autoSync)) "false") }}
+  templatePatch: |
+    spec:
+      syncPolicy:
+        {{ printf "{{- if ne (dig \"autoSync\" \"%s\" . | toString | lower) \"false\" }}" $autoSync }}
+        automated:
+          prune: true
+          selfHeal: true
+        {{ "{{- end }}" }}
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

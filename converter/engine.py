@@ -408,9 +408,11 @@ def parse_namespace_clusters(specs) -> dict:
 
 # Whether a namespace's microservice Applications sync themselves
 # (--namespace-auto-sync), written to its folders' defaults.yaml under this
-# key. The root ApplicationSet reads it from there like CLUSTER_KEY, falling
-# back to the tree's --auto-sync, so a hand-written `autoSync: false` in any
-# folder's defaults.yaml also switches that folder to manual sync.
+# key. The ApplicationSet ms-applicationSet renders for that folder reads it
+# from there (a dig in its templatePatch), falling back to the tree's
+# --auto-sync, which the root ApplicationSet passes as a plain true/false, so a
+# hand-written `autoSync: false` in any folder's defaults.yaml also switches
+# that folder to manual sync.
 AUTO_SYNC_KEY = "autoSync"
 
 
@@ -4907,9 +4909,10 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                                   ("chartPath", chart_path)) if v != APPSET_CHART_DEFAULTS[k]],
         # The microservice Applications the chart renders: manual sync unless
         # --auto-sync true. Always written — the chart's own default is true.
-        # Read per folder from its defaults.yaml (AUTO_SYNC_KEY, set by hand or
-        # by --namespace-auto-sync), the tree's --auto-sync where it is absent.
-        ("autoSync", q('{{ dig "%s" "%s" . | toString }}' % (AUTO_SYNC_KEY, "true" if auto_sync else "false"))),
+        # Only the tree's default: the chart digs AUTO_SYNC_KEY out of each
+        # folder's defaults.yaml (set by hand or by --namespace-auto-sync) and
+        # falls back to this where it is absent.
+        ("autoSync", q("true" if auto_sync else "false")),
         # Navigation links (ms-applicationSet's `links`): every object a
         # microservice deploys points back at its Argo CD Application, and its
         # workload at its OpenShift console page from Argo CD's resource tree.
@@ -6661,7 +6664,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--namespace-auto-sync", action="append", default=[], metavar="NAMESPACE=true|false",
                      help="override --auto-sync for one namespace (all its variant folders). Repeat "
                           "for each namespace. Written to the namespace's defaults.yaml as "
-                          "autoSync: true|false, which the root ApplicationSet reads, so switching "
+                          "autoSync: true|false, which the ms-applicationSet chart reads, so switching "
                           "an environment between manual and automatic sync later is an edit to "
                           "that file.")
     # Variant sub-folders in the input are detected on their own now.

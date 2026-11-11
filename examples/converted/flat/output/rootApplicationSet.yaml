@@ -48,7 +48,7 @@ spec:
           - name: destinationServer
             value: https://kubernetes.default.svc
           - name: autoSync
-            value: '{{ dig "autoSync" "false" . | toString }}'
+            value: 'false'
           - name: links.argocdUrl
             value: ''
           - name: links.consoleUrl

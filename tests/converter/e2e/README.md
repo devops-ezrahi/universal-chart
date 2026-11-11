@@ -38,8 +38,8 @@ python3 argo_cutover_e2e.py --ns cutover-neg --chart-ref origin/main --expect re
 ## Requirements
 
 - A cluster: kubectl on `KUBECONFIG`.
-- Argo CD 2.6 or later in `argocd`, because `ms-applicationSet` uses multi-source
-  apps, with `application.instanceLabelKey: argocd.argoproj.io/instance` and
+- Argo CD 2.10 or later in `argocd`, because `ms-applicationSet` uses multi-source
+  apps and `templatePatch`, with `application.instanceLabelKey: argocd.argoproj.io/instance` and
   `server.insecure: "true"`.
 - The OpenShift Route CRD.
 - On the host: the `argocd` CLI, `helm`, `git` and PyYAML.
