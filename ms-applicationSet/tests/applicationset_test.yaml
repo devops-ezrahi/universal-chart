@@ -54,22 +54,44 @@ tests:
           value:
             applicationsSync: create-only
 
-  - it: leaves each Application to sync by hand when autoSync is false
+  - it: reads each folder's defaults.yaml alongside its values files
+    asserts:
+      - equal:
+          path: spec.generators[0].matrix.generators[0].git.files[0].path
+          value: rakia-fac1/black/values/*.yaml
+      - equal:
+          path: spec.generators[0].matrix.generators[1].git.files[0].path
+          value: rakia-fac1/black/defaults.yaml
+      - equal:
+          path: spec.generators[0].matrix.generators[1].git.pathParamPrefix
+          value: defaults
+      - notExists:
+          path: spec.template.spec.syncPolicy
+
+  - it: digs autoSync from defaults.yaml, falling back to the chart's autoSync (true)
+    asserts:
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: '\{\{- if ne \(dig "autoSync" "true" \. \| toString \| lower\) "false" \}\}\n\s+automated:'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'CreateNamespace=true'
+
+  - it: falls back to manual sync when autoSync is false
     set:
       autoSync: "false"
     asserts:
-      - notExists:
-          path: spec.template.spec.syncPolicy.automated
-      - contains:
-          path: spec.template.spec.syncPolicy.syncOptions
-          content: CreateNamespace=true
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'dig "autoSync" "false" \.'
 
   - it: treats autoSync "False" from Argo CD's UI as false
     set:
       autoSync: "False"
     asserts:
-      - notExists:
-          path: spec.template.spec.syncPolicy.automated
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'dig "autoSync" "false" \.'
 
   - it: derives the values-file link from an https Bitbucket Server URL
     set:

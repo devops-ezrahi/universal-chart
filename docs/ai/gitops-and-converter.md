@@ -12,7 +12,7 @@ Read those for full option tables. This file is the map.
   <namespace>/
     defaults.yaml                # what every release in this namespace has in common
                                  # (e.g. environment: dev, common labels, cluster: {...},
-                                 #  autoSync: false to make this folder's Applications manual-sync)
+                                 #  autoSync: true|false to override the tree's default sync mode)
     values/<release>.yaml        # image tag + whatever differs from base here
     values/<group>/<release>.yaml   # optional grouping folder; release name unchanged
     <variant>/                   # optional, e.g. prd/yellow: deploys INTO <namespace>,
@@ -45,14 +45,21 @@ helm template ms1 . -n dev -f $o/base/ms1.yaml -f $o/dev/defaults.yaml -f $o/dev
 - Optional values: `originPath`, `folder`, `valuesGlob` (default `*.yaml`;
   `**/*.yaml` with Argo CD's new globbing), `project`, `destinationServer` /
   `destinationName`, `chartRepoURL` / `chartRevision` / `chartPath`.
-- It emits one ApplicationSet whose git-files generator globs
-  `<folder>/values/<valuesGlob>` and makes one Application per file, with the
-  three `valueFiles` above.
-- `autoSync` (chart default `true`). Converter-generated wiring reads it per folder
-  from that folder's `defaults.yaml` (`autoSync: true|false`) and falls back to the
-  tree's `--auto-sync` (default `false`). To switch one environment between manual
-  and automatic sync, edit that line in its `defaults.yaml`. It doesn't affect
-  `cluster-shared-application.yaml`.
+- It emits one ApplicationSet with a matrix generator: a git-files generator
+  globbing `<folder>/values/<valuesGlob>` (one Application per file, with the
+  three `valueFiles` above) times one reading `<folder>/defaults.yaml`
+  (`pathParamPrefix: defaults`, so `.path` is still the values file). So each
+  Application also sees `defaults.yaml`'s top-level keys. The folder must have a
+  `defaults.yaml`, or no Applications are generated.
+- `autoSync` (chart default `true`) is the folder's **default** only. The root
+  ApplicationSet passes the tree's value as a plain `"true"`/`"false"`
+  (the converter's `--auto-sync`, default `false`). `autoSync: true|false` in the
+  folder's own `defaults.yaml` overrides it. ms-applicationSet decides this,
+  not the root: its `templatePatch` emits `syncPolicy.automated` (prune +
+  selfHeal) unless `{{ dig "autoSync" "<chart autoSync>" . | toString | lower }}`
+  is `"false"`. `templatePatch` needs Argo CD 2.10 or later. To switch one
+  environment between manual and automatic sync, edit that line in its
+  `defaults.yaml`. It doesn't affect `cluster-shared-application.yaml`.
 - `preserveResourcesOnDeletion: true` (default): deleting an Application
   leaves the workloads running. `false` makes deletes cascade.
 - `applicationsSync`: `create-only` / `create-delete` stop the controller from
@@ -90,7 +97,8 @@ python gitops-factory/convert_to_universal_chart.py --help                      
   - `--agents-md`: also write an `AGENTS.md` that points AI agents at the chart's docs
     at the deployed chart revision. It never overwrites a hand-written one.
   - `--auto-sync`: off by default. `--namespace-auto-sync NS=true|false` overrides it
-    per namespace (written as `autoSync:` in that namespace's `defaults.yaml`).
+    per namespace (written as `autoSync:` in that namespace's `defaults.yaml`, which
+    ms-applicationSet reads; the root ApplicationSet passes only `--auto-sync`).
   - `--include`, `--exclude`, `--keep`: select stacks.
   - `--cluster-scoped`: cluster objects go to the `cluster-shared` release.
   - `--instances x`: an instance layout.
