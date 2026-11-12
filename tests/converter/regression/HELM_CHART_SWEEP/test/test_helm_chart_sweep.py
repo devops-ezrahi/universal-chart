@@ -383,7 +383,7 @@ def test_ms_applicationset_hands_links_to_the_chart():
     appset = next(d for d in docs if d["kind"] == "ApplicationSet")
     params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
     assert params["links.argocd"] == ('https://argo/applications/openshift-gitops/'
-                                      '{{ .path.filename | trimSuffix ".yaml" }}-dev')
+                                      '{{ if eq .path.filename "configMaps.yaml" }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-dev')
     assert params["links.console"] == "https://console"
     link = next(d for d in docs if d["kind"] == "ConsoleLink")
     assert link["spec"]["namespaceDashboard"]["namespaces"] == ["shop-dev"]

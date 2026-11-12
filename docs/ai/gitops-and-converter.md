@@ -15,6 +15,8 @@ Read those for full option tables. This file is the map.
                                  #  autoSync: true|false to override the tree's default sync mode)
     values/<release>.yaml        # image tag + whatever differs from base here
     values/<group>/<release>.yaml   # optional grouping folder; release name unchanged
+    values/configMaps.yaml       # optional: NOT a microservice, the list of configMaps/ files to deploy
+    configMaps/<name>.yaml       # optional: chart values snippets (configMaps: {...}), one Application per folder
     <variant>/                   # optional, e.g. prd/yellow: deploys INTO <namespace>,
       defaults.yaml              #   shares base/, carries its group value (color: yellow)
       values/<release>.yaml
@@ -26,6 +28,16 @@ Read those for full option tables. This file is the map.
 - **Adding a microservice = adding `values/<release>.yaml`** (plus `base/` if new).
 - **Adding a namespace = adding a folder with `defaults.yaml`.**
 - Layering per release, lowest to highest: `base/<file>` → `<folder>/defaults.yaml` → `<folder>/values/<file>`.
+- **ConfigMaps folder:** a namespace's shared ConfigMaps. `values/configMaps.yaml`
+  holds `configMapFiles: [env1, namespace-conf]` (plus optional extra chart
+  values); each name is a `<folder>/configMaps/<name>.yaml` holding chart values,
+  e.g. `configMaps: {env1: {data: {LOG_LEVEL: info}}}`. They become ONE
+  Application, `configmaps-<ns suffix>`, layering the listed files in order, then
+  `values/configMaps.yaml`, with `workload.type=none`: no `base/`, no
+  `defaults.yaml`, no pods. Microservices consume them by name (`envFrom`,
+  `volumes`). Hand-written; the converter keeps them, verifies them and never
+  prunes them. Render it like Argo CD:
+  `helm template configmaps-dev . -n dev -f dev/configMaps/env1.yaml -f dev/configMaps/namespace-conf.yaml -f dev/values/configMaps.yaml --set workload.type=none`.
 - **Instances:** several releases sharing one base. Each values file sets
   `BaseFile: x` (Argo CD layers `base/x.yaml`) and `instance: alpha`
   (`base/x.yaml` uses `{{ .Values.instance }}`).
@@ -43,25 +55,43 @@ helm template ms1 . -n dev -f $o/base/ms1.yaml -f $o/dev/defaults.yaml -f $o/dev
 - The root ApplicationSet renders it **once per namespace or variant folder**.
 - Required values: `namespace`, `originRepoURL`, `originBranch`.
 - Optional values: `originPath`, `folder`, `valuesGlob` (default `*.yaml`;
-  `**/*.yaml` with Argo CD's new globbing), `project`, `destinationServer` /
-  `destinationName`, `chartRepoURL` / `chartRevision` / `chartPath`.
+  `**/*.yaml` with Argo CD's new globbing), `project`, `destinationName`, `chartPath`.
+- **Rule: ApplicationSet-level settings live in each values repo's
+  `rootApplicationSet.yaml` (helm parameters), never in
+  `ms-applicationSet/values.yaml`.** These keys are deliberately absent from
+  `values.yaml`; the template falls back to the default in brackets for a root
+  file that leaves one out: `destinationServer` [`https://kubernetes.default.svc`],
+  `chartRepoURL` [`https://github.com/devops-ezrahi/universal-chart.git`],
+  `chartRevision` [`main`], `autoSync` [`"true"`], `preserveResourcesOnDeletion`
+  [`"true"`], `configMaps.enabled` [`"true"`], `configMaps.file`
+  [`configMaps.yaml`], `configMaps.dir` [`configMaps`], `configMaps.listKey`
+  [`configMapFiles`]. The converter always writes all of them. A new setting
+  follows the same rule: a default in the template, a parameter written by
+  `build_root_applicationset`, a comment in `values.yaml`, no key there.
 - It emits one ApplicationSet with a matrix generator: a git-files generator
   globbing `<folder>/values/<valuesGlob>` (one Application per file, with the
   three `valueFiles` above) times one reading `<folder>/defaults.yaml`
   (`pathParamPrefix: defaults`, so `.path` is still the values file). So each
   Application also sees `defaults.yaml`'s top-level keys. The folder must have a
   `defaults.yaml`, or no Applications are generated.
-- `autoSync` (chart default `true`) is the folder's **default** only. The root
+- `autoSync` (fallback `true`) is the folder's **default** only. The root
   ApplicationSet passes the tree's value as a plain `"true"`/`"false"`
   (the converter's `--auto-sync`, default `false`). `autoSync: true|false` in the
   folder's own `defaults.yaml` overrides it. ms-applicationSet decides this,
   not the root: its `templatePatch` emits `syncPolicy.automated` (prune +
-  selfHeal) unless `{{ dig "autoSync" "<chart autoSync>" . | toString | lower }}`
+  selfHeal) unless `{{ dig "autoSync" "<root autoSync>" . | toString | lower }}`
   is `"false"`. `templatePatch` needs Argo CD 2.10 or later. To switch one
   environment between manual and automatic sync, edit that line in its
   `defaults.yaml`. It doesn't affect `cluster-shared-application.yaml`.
-- `preserveResourcesOnDeletion: true` (default): deleting an Application
+- `preserveResourcesOnDeletion` (fallback `"true"`, converter
+  `--preserve-resources-on-deletion`, default true): deleting an Application
   leaves the workloads running. `false` makes deletes cascade.
+- `configMaps.*` (converter `--config-maps`, `--config-maps-file`,
+  `--config-maps-dir`, `--config-maps-list-key`): the ConfigMaps folder above.
+  The values file named `configMaps.file` gets its own `templatePatch` branch
+  that replaces `spec.sources` and drops the base/defaults link annotations; a
+  missing list key fails that Application's generation with a message.
+  `configMaps.enabled: "false"` makes the file an ordinary release.
 - `applicationsSync`: `create-only` / `create-delete` stop the controller from
   updating existing Applications.
 - `links.repoWebUrl` / `argocdUrl` / `consoleUrl` / `consoleLink` produce the

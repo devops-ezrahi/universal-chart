@@ -5,8 +5,31 @@
 {{- if .Values.originPath }}{{- $prefix = printf "%s/" .Values.originPath -}}{{- end -}}
 {{- $folder := .Values.folder | default $ns -}}
 {{- $suffix := ternary "" (printf "-%s" (trimPrefix (printf "%s/" $ns) $folder | replace "/" "-")) (eq $folder $ns) -}}
-{{- /* The Application's name, as a goTemplate expression for the ApplicationSet. */ -}}
-{{- $appName := printf "{{ .path.filename | trimSuffix \".yaml\" }}-%s%s" ($ns | splitList "-" | last) $suffix -}}
+{{- /* Settings that live in each values repo's rootApplicationSet.yaml (helm
+       parameters), never in values.yaml. Each falls back here to the value it
+       had before it moved, so a root file that leaves one out keeps working. */ -}}
+{{- $chartRepoURL := .Values.chartRepoURL | default "https://github.com/devops-ezrahi/universal-chart.git" -}}
+{{- $chartRevision := .Values.chartRevision | default "main" -}}
+{{- $chartPath := .Values.chartPath | default "." -}}
+{{- $destinationServer := .Values.destinationServer | default "https://kubernetes.default.svc" -}}
+{{- /* hasKey, not default: false/"false" must stay false. Absent = true. */ -}}
+{{- $preserve := ternary (toString .Values.preserveResourcesOnDeletion) "true" (hasKey .Values "preserveResourcesOnDeletion") | lower -}}
+{{- $autoSyncIn := ternary (toString .Values.autoSync) "true" (hasKey .Values "autoSync") | lower -}}
+{{- /* The namespace's ConfigMaps Application (see "ConfigMaps folder" below):
+       values/<cmFile> lists, under <cmListKey>, which <folder>/<cmDir>/*.yaml
+       files to deploy. Off with configMaps.enabled "false". */ -}}
+{{- $cmOn := ne (lower (toString (dig "configMaps" "enabled" "true" .Values.AsMap))) "false" -}}
+{{- $cmFile := dig "configMaps" "file" "configMaps.yaml" .Values.AsMap | toString -}}
+{{- $cmDir := dig "configMaps" "dir" "configMaps" .Values.AsMap | toString | trimSuffix "/" -}}
+{{- $cmListKey := dig "configMaps" "listKey" "configMapFiles" .Values.AsMap | toString -}}
+{{- /* The Application's name, as a goTemplate expression for the ApplicationSet.
+       The ConfigMaps file is named after its folder, lower-cased: configMaps.yaml
+       would make "configMaps-dev", which Kubernetes rejects. */ -}}
+{{- $appStem := "{{ .path.filename | trimSuffix \".yaml\" }}" -}}
+{{- if $cmOn -}}
+{{- $appStem = printf "{{ if eq .path.filename %s }}%s{{ else }}{{ .path.filename | trimSuffix \".yaml\" }}{{ end }}" ($cmFile | quote) ($cmFile | trimSuffix ".yaml" | trimSuffix ".yml" | lower) -}}
+{{- end -}}
+{{- $appName := printf "%s-%s%s" $appStem ($ns | splitList "-" | last) $suffix -}}
 {{- /* Links (see values.yaml `links`). $fileUrl holds PATH where a repo path
        goes (a replace, not printf: a web URL may carry %-escapes): Bitbucket Server browses at /browse/<path>?at=<branch>,
        GitHub at /blob/<branch>/<path>, GitLab at /-/blob/<branch>/<path>. */ -}}
@@ -119,7 +142,7 @@ spec:
          the whole sync. toString/lower: an Argo CD helm parameter arrives as
          a string ("true", "True"). */}}
   {{- $appsetSync := dict }}
-  {{- if eq (lower (toString .Values.preserveResourcesOnDeletion)) "true" }}
+  {{- if eq $preserve "true" }}
   {{- $_ := set $appsetSync "preserveResourcesOnDeletion" true }}
   {{- end }}
   {{- with trim (toString (.Values.applicationsSync | default "")) }}
@@ -171,13 +194,13 @@ spec:
         {{- if .Values.destinationName }}
         name: {{ .Values.destinationName | quote }}
         {{- else }}
-        server: {{ .Values.destinationServer | quote }}
+        server: {{ $destinationServer | quote }}
         {{- end }}
         namespace: {{ $ns | quote }}
       sources:
-        - repoURL: {{ .Values.chartRepoURL | quote }}
-          targetRevision: {{ .Values.chartRevision | quote }}
-          path: {{ .Values.chartPath | quote }}
+        - repoURL: {{ $chartRepoURL | quote }}
+          targetRevision: {{ $chartRevision | quote }}
+          path: {{ $chartPath | quote }}
           helm:
             valueFiles:
               - '$Values/{{ $baseFile }}'
@@ -263,9 +286,63 @@ spec:
          all, which only templatePatch can do (Argo CD 2.10+). toString/lower:
          a helm parameter arrives as a string ("true", "False") and a YAML
          boolean in defaults.yaml as a bool; anything but "false" is on. */}}
-  {{- $autoSync := ternary "false" "true" (eq (lower (toString .Values.autoSync)) "false") }}
+  {{- $autoSync := ternary "false" "true" (eq $autoSyncIn "false") }}
+  {{- /* ConfigMaps folder. values/<cmFile> is not a microservice: it lists,
+         under <cmListKey>, which <folder>/<cmDir>/<name>.yaml files to deploy
+         (chart values snippets, e.g. configMaps: {env1: {data: ...}}). Its
+         Application layers those files in list order, then the list file
+         itself, and nothing else: no base/ (it has none) and no defaults.yaml
+         (that holds the microservices' workload settings). workload.type=none
+         renders no pods, only what the files define. The source list varies
+         per Application, so only the goTemplate templatePatch can build it; a
+         patch replaces spec.sources whole. Every other Application is left as
+         the template above writes it. */}}
+  {{- $cmAppName := printf "%s-%s%s" ($cmFile | trimSuffix ".yaml" | trimSuffix ".yml" | lower) ($ns | splitList "-" | last) $suffix }}
   templatePatch: |
+    {{- if $cmOn }}
+    {{ printf "{{- if eq .path.filename %s }}" ($cmFile | quote) }}
+    {{ printf "{{- if not (hasKey . %s) }}{{ fail %s }}{{ end }}" ($cmListKey | quote) (printf "%s%s/values/%s must list the %s/ files to deploy under %s" $prefix $folder $cmFile $cmDir $cmListKey | quote) }}
+    {{- if $fileUrl }}
+    metadata:
+      annotations:
+        universal-chart/base-file: null
+        universal-chart/defaults-file: null
+    {{- end }}
+    {{ "{{- end }}" }}
+    {{- end }}
     spec:
+      {{- if $cmOn }}
+      {{ printf "{{- if eq .path.filename %s }}" ($cmFile | quote) }}
+      sources:
+        - repoURL: {{ $chartRepoURL | quote }}
+          targetRevision: {{ $chartRevision | quote }}
+          path: {{ $chartPath | quote }}
+          helm:
+            valueFiles:
+              {{ printf "{{- range (index . %s) }}" ($cmListKey | quote) }}
+              - '$Values/{{ $prefix }}{{ $folder }}/{{ $cmDir }}/{{ "{{" }} . | toString | trimSuffix ".yaml" {{ "}}" }}.yaml'
+              {{ "{{- end }}" }}
+              - '$Values/{{ $valuesFile }}'
+            parameters:
+              - name: workload.type
+                value: none
+              {{- if ne (toString $links.objects) "false" }}
+              {{- with $argocd }}
+              - name: links.argocd
+                value: {{ printf "%s/applications/%s/%s" . $argocdNs $cmAppName | quote }}
+                forceString: true
+              {{- end }}
+              {{- with $console }}
+              - name: links.console
+                value: {{ . | quote }}
+                forceString: true
+              {{- end }}
+              {{- end }}
+        - repoURL: {{ $repo | quote }}
+          targetRevision: {{ $branch | quote }}
+          ref: Values
+      {{ "{{- end }}" }}
+      {{- end }}
       syncPolicy:
         {{ printf "{{- if ne (dig \"autoSync\" \"%s\" . | toString | lower) \"false\" }}" $autoSync }}
         automated:

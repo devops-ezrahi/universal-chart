@@ -638,14 +638,28 @@ helm template appset ms-applicationSet \
 `folder` (a variant folder such as `prd/yellow`, deploying into `namespace`;
 empty = the namespace folder itself), `valuesGlob` (default `*.yaml`; use
 `**/*.yaml` with Argo CD's new git-file globbing), `project`,
-`destinationServer`, `destinationName` (a registered cluster name, wins over
-`destinationServer`), `chartRepoURL`, `chartRevision` and `chartPath`
-have defaults in its `values.yaml`.
+`destinationName` (a registered cluster name, wins over `destinationServer`)
+and `chartPath` have defaults in its `values.yaml`.
+
+`destinationServer`, `chartRepoURL`, `chartRevision`, `autoSync`,
+`preserveResourcesOnDeletion` and `configMaps.*` are set only in the values
+repo's `rootApplicationSet.yaml` (helm parameters, always written by the
+converter), never in `ms-applicationSet/values.yaml`. A root file that leaves
+one out gets the template's fallback: `https://kubernetes.default.svc`, this
+repo on GitHub, `main`, `true`, `true`, and the ConfigMaps folder on with
+`configMaps.yaml` / `configMaps/` / `configMapFiles`.
+
+A namespace's ConfigMaps folder: `values/configMaps.yaml` lists
+(`configMapFiles: [env1, namespace-conf]`) chart-values files under
+`<folder>/configMaps/`. It is not a microservice: it becomes one Application,
+`configmaps-<ns suffix>`, layering the listed files in order, then
+`values/configMaps.yaml`, with `workload.type=none` and no `base/` or
+`defaults.yaml`. Microservices mount those ConfigMaps by name.
 
 Argo CD's ApplicationSet controller puts `resources-finalizer.argocd.argoproj.io`
 on every Application it generates and restores it if it is removed by hand, so
 deleting an Application or its ApplicationSet also deletes its workloads.
-`preserveResourcesOnDeletion` (default `true`) stops the controller adding the
+`preserveResourcesOnDeletion` (fallback `true`) stops the controller adding the
 finalizer, so those deletes leave the workloads running; set it to `false` for
 deletes that cascade to the workloads. `applicationsSync` sets
 the ApplicationSet's `syncPolicy.applicationsSync`; `create-only` or
