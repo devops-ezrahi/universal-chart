@@ -20,7 +20,7 @@ done until the docs match the code, in the same change (commit/PR)**:
 |---|---|
 | a template, helper, default or validation (`templates/`, `values.yaml`, `values.schema.json`) | `docs/ai/values-guide.md`, and the golden rules below if a rule changed |
 | a values key (added, renamed, removed, new default) | `docs/ai/values-guide.md`, and `docs/ai/examples/*.yaml` if they use it |
-| `ms-applicationSet/` (parameters, naming, layering) | `docs/ai/gitops-and-converter.md` |
+| `ms-applicationSet/` (parameters, naming, layering) | `docs/ai/gitops-and-converter.md`. A new ApplicationSet-level setting goes in `rootApplicationSet.yaml` (a fallback in the template, a parameter written by `build_root_applicationset`), never as a key in `ms-applicationSet/values.yaml` |
 | converter options or output layout (`converter/`, `gitops-factory/`) | `docs/ai/gitops-and-converter.md`, `gitops-factory/README.md` |
 | the values-repo layout, or how agents should find the chart | `converter/values_repo_agents.md` (the AGENTS.md written into values repos) |
 | a breaking change for existing values | all of the above that apply, plus a clear `feat!:`/`fix!:` commit |
@@ -42,7 +42,7 @@ Three things live here. Keep them apart in your head:
 | Part | Path | What it is |
 |---|---|---|
 | **The chart** | repo root (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `tests/`) | `super-universal-chart` v4: ONE generic Helm chart that deploys any app from values alone. No app-specific templates, ever. |
-| **ms-applicationSet** | `ms-applicationSet/` | A small separate chart: one Argo CD ApplicationSet per namespace folder of a values repo. It fans out over `values/*.yaml` and deploys each file with the chart. |
+| **ms-applicationSet** | `ms-applicationSet/` | A small separate chart: one Argo CD ApplicationSet per namespace folder of a values repo. It fans out over `values/*.yaml` and deploys each file with the chart (`values/configMaps.yaml` is the exception: one Application for the namespace's `configMaps/` folder). |
 | **The converter** | `gitops-factory/convert_to_universal_chart.py`, `converter/`, `tools/`, `tests/converter/` | Python. It converts running namespaces or manifest dumps into a values repo (`base/` + `<ns>/defaults.yaml` + `<ns>/values/`) and verifies it by rendering every release. |
 
 `.helmignore` excludes everything except the chart itself (Argo CD renders the

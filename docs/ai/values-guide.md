@@ -75,6 +75,12 @@ envFromOrder: []            # when two sources share a key (later wins)
 - A Kubernetes-style list still renders as written, but it can't be partially
   overridden. Avoid it.
 - Sidecars, init containers and `cronjobs.<n>.jobTemplate` take the same `env` map.
+- A ConfigMap from the namespace's `configMaps/` folder (its own Application,
+  see `gitops-and-converter.md`) is used like any existing ConfigMap: by name,
+  `envFrom: {env1: {type: configMapRef}}` or a `volumes` entry with
+  `configMap: {name: namespace-conf}`. Don't also define it in the release's
+  `configMaps`, because two Applications would own one object. `checksums` doesn't
+  see it, so a change there doesn't roll the pods.
 
 ## 4. Workloads
 

@@ -818,10 +818,58 @@ def namespace_dirs_of(root: Path, is_ns=is_output_ns) -> list[tuple[str, Path]]:
     return out
 
 
+# The namespace's ConfigMaps folder (ms-applicationSet's configMaps.*
+# parameters, written into rootApplicationSet.yaml by --config-maps*). With it
+# on, values/<CONFIG_MAPS_FILE> is NOT a microservice: it lists, under
+# CONFIG_MAPS_LIST_KEY, which <folder>/<CONFIG_MAPS_DIR>/<name>.yaml files
+# (chart values snippets) to deploy, and Argo CD renders them as ONE release,
+# "<file stem, lower-cased>-<ns>", layering those files in list order, then
+# the list file, then workload.type=none. No base/, no defaults.yaml. The
+# folder is written by hand; the converter only keeps it, verifies it and
+# never prunes it.
+CONFIG_MAPS = True
+CONFIG_MAPS_FILE = "configMaps.yaml"
+CONFIG_MAPS_DIR = "configMaps"
+CONFIG_MAPS_LIST_KEY = "configMapFiles"
+# The helm parameter the ApplicationSet passes it, as a values file layered last.
+CONFIG_MAPS_PARAMS_FILE = Path(__file__).with_name("config_maps_params.yaml")
+
+
+def is_config_maps_file(vf: Path) -> bool:
+    return CONFIG_MAPS and vf.name == CONFIG_MAPS_FILE
+
+
 def values_files(values_dir: Path) -> list[Path]:
     """Every release file under values/, sub-folders included: they are only
-    for grouping (values/group1/ms1.yaml), the release is still the file name."""
-    return sorted(values_dir.rglob("*.yaml")) if values_dir.is_dir() else []
+    for grouping (values/group1/ms1.yaml), the release is still the file name.
+    The ConfigMaps list file is not a release (see CONFIG_MAPS)."""
+    return sorted(f for f in values_dir.rglob("*.yaml") if not is_config_maps_file(f)) \
+        if values_dir.is_dir() else []
+
+
+def config_maps_files(values_dir: Path) -> list[Path]:
+    """The ConfigMaps list file(s) under values/ (see CONFIG_MAPS)."""
+    return sorted(f for f in values_dir.rglob("*.yaml") if is_config_maps_file(f)) \
+        if values_dir.is_dir() else []
+
+
+def config_maps_release(ns_dir: Path, vf: Path) -> str:
+    """The release (file) part of the ConfigMaps Application's name."""
+    return vf.name.removesuffix(".yaml").removesuffix(".yml").lower()
+
+
+def config_maps_chain(ns_dir: Path, vf: Path) -> tuple[list[Path], str]:
+    """(value files Argo CD layers, problem). The listed snippets in order, the
+    list file, then workload.type=none; problem is "" when the list is usable."""
+    try:
+        data = yaml.safe_load(vf.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        return [], f"is not valid YAML: {e}"
+    names = data.get(CONFIG_MAPS_LIST_KEY) if isinstance(data, dict) else None
+    if not isinstance(names, list) or not names:
+        return [], f"must list the {CONFIG_MAPS_DIR}/ files to deploy under '{CONFIG_MAPS_LIST_KEY}'"
+    files = [ns_dir / CONFIG_MAPS_DIR / f"{str(n).removesuffix('.yaml')}.yaml" for n in names]
+    return files + [vf, CONFIG_MAPS_PARAMS_FILE], ""
 
 
 # Instances (--instances): one release deployed several times side by side in
@@ -4870,7 +4918,10 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               destination_server: str = "https://kubernetes.default.svc",
                               destination_name: str = "", auto_sync: bool = False,
                               argocd_url: str = "", console_url: str = "",
-                              repo_web_url: str = "", per_namespace_cluster: bool = False) -> str:
+                              repo_web_url: str = "", per_namespace_cluster: bool = False,
+                              preserve_resources_on_deletion: bool = True, config_maps: bool = True,
+                              config_maps_file: str = "configMaps.yaml", config_maps_dir: str = "configMaps",
+                              config_maps_list_key: str = "configMapFiles") -> str:
     """One Application per namespace folder in this tree, as YAML text.
 
     Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
@@ -4905,8 +4956,19 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         *(_cluster_params(destination_server, destination_name) if per_namespace_cluster else [
             ("destinationServer", q(destination_server)),
             *([("destinationName", q(destination_name))] if destination_name else [])]),
-        *[(k, q(v)) for k, v in (("chartRepoURL", chart_repo_url), ("chartRevision", chart_revision),
-                                  ("chartPath", chart_path)) if v != APPSET_CHART_DEFAULTS[k]],
+        # The ApplicationSet-level settings live HERE, never in
+        # ms-applicationSet/values.yaml: always written, so this file says
+        # in full what the tree deploys with. (The chart falls back to the
+        # same defaults for a root file written before they were.)
+        ("chartRepoURL", q(chart_repo_url)),
+        ("chartRevision", q(chart_revision)),
+        *([("chartPath", q(chart_path))] if chart_path != APPSET_CHART_DEFAULTS["chartPath"] else []),
+        ("preserveResourcesOnDeletion", q("true" if preserve_resources_on_deletion else "false")),
+        # The namespace's ConfigMaps folder (see CONFIG_MAPS).
+        ("configMaps.enabled", q("true" if config_maps else "false")),
+        ("configMaps.file", q(config_maps_file)),
+        ("configMaps.dir", q(config_maps_dir)),
+        ("configMaps.listKey", q(config_maps_list_key)),
         # The microservice Applications the chart renders: manual sync unless
         # --auto-sync true. Always written — the chart's own default is true.
         # Only the tree's default: the chart digs AUTO_SYNC_KEY out of each
@@ -5160,6 +5222,46 @@ def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozens
     conflicts: list[str] = []
     rendered = 0
 
+    def claim(namespace: str, release: str, docs: list) -> None:
+        for doc in docs:
+            kind = doc.get("kind")
+            name = (doc.get("metadata") or {}).get("name")
+            if not kind or not name:
+                continue
+            if kind in CLUSTER_SCOPED_KINDS:
+                key = (kind, name)
+                # Claimed by NAMESPACE + release, not release alone. Two
+                # namespaces each running a release called 'log-agent' are
+                # two independent ArgoCD Applications, and if both render
+                # ClusterRole/log-agent-reader they genuinely both claim one
+                # cluster object — comparing bare release names called that
+                # "the same owner" and stayed silent. It went unnoticed
+                # while handle_cluster_scoped namespace-prefixed these
+                # names, because then they never actually collided; strict
+                # naming removes the prefix and makes the real conflict
+                # reachable, so the detector has to be able to see it.
+                owner = f"{namespace}/{release}"
+                if key in cluster_claims and cluster_claims[key] != owner:
+                    conflicts.append(f"CLUSTER CONFLICT: {kind}/{name} claimed by both "
+                                     f"'{cluster_claims[key]}' and '{owner}'. Cluster-scoped "
+                                     f"objects are global: these two releases will overwrite "
+                                     f"each other. Deploy it once via --cluster-scoped, or give "
+                                     f"the copies distinct names in the raw manifests.")
+                else:
+                    cluster_claims[key] = owner
+            else:
+                key = (kind, name)
+                # --variants: prd/yellow and prd/black share namespace
+                # 'prd', so their releases are checked against each other.
+                claims, owner = ns_claims[k8s_ns(namespace)], release
+                if "/" in namespace:
+                    owner = f"{namespace.split('/', 1)[1]}/{release}"
+                if key in claims and claims[key] != owner:
+                    conflicts.append(f"NAMESPACE CONFLICT in '{k8s_ns(namespace)}': {kind}/{name} claimed by both "
+                                     f"'{claims[key]}' and '{owner}'")
+                else:
+                    claims[key] = owner
+
     base_dir = output_dir / BASE_DIR_NAME
     jobs = []
     for namespace, ns_dir in namespace_dirs_of(output_dir):
@@ -5200,46 +5302,26 @@ def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozens
                     + ". ArgoCD fails the entire sync on a valueFiles entry that does "
                       "not exist — every release needs all three layers on disk.")
                 continue
-            docs = helm_template(chart, argo_release_name(namespace, release), namespace, chain)
+            claim(namespace, release, helm_template(chart, argo_release_name(namespace, release), namespace, chain))
             rendered += 1
-            for doc in docs:
-                kind = doc.get("kind")
-                name = (doc.get("metadata") or {}).get("name")
-                if not kind or not name:
-                    continue
-                if kind in CLUSTER_SCOPED_KINDS:
-                    key = (kind, name)
-                    # Claimed by NAMESPACE + release, not release alone. Two
-                    # namespaces each running a release called 'log-agent' are
-                    # two independent ArgoCD Applications, and if both render
-                    # ClusterRole/log-agent-reader they genuinely both claim one
-                    # cluster object — comparing bare release names called that
-                    # "the same owner" and stayed silent. It went unnoticed
-                    # while handle_cluster_scoped namespace-prefixed these
-                    # names, because then they never actually collided; strict
-                    # naming removes the prefix and makes the real conflict
-                    # reachable, so the detector has to be able to see it.
-                    owner = f"{namespace}/{release}"
-                    if key in cluster_claims and cluster_claims[key] != owner:
-                        conflicts.append(f"CLUSTER CONFLICT: {kind}/{name} claimed by both "
-                                         f"'{cluster_claims[key]}' and '{owner}'. Cluster-scoped "
-                                         f"objects are global: these two releases will overwrite "
-                                         f"each other. Deploy it once via --cluster-scoped, or give "
-                                         f"the copies distinct names in the raw manifests.")
-                    else:
-                        cluster_claims[key] = owner
-                else:
-                    key = (kind, name)
-                    # --variants: prd/yellow and prd/black share namespace
-                    # 'prd', so their releases are checked against each other.
-                    claims, owner = ns_claims[k8s_ns(namespace)], release
-                    if "/" in namespace:
-                        owner = f"{namespace.split('/', 1)[1]}/{release}"
-                    if key in claims and claims[key] != owner:
-                        conflicts.append(f"NAMESPACE CONFLICT in '{k8s_ns(namespace)}': {kind}/{name} claimed by both "
-                                         f"'{claims[key]}' and '{owner}'")
-                    else:
-                        claims[key] = owner
+        # The ConfigMaps release (see CONFIG_MAPS): its own chain, claimed
+        # like any release, so a ConfigMap a microservice also renders shows
+        # up as a NAMESPACE CONFLICT.
+        for vf in config_maps_files(values_dir):
+            if vf in skip:
+                continue
+            release = config_maps_release(ns_dir, vf)
+            cm_chain, problem = config_maps_chain(ns_dir, vf)
+            missing = [f for f in cm_chain if not f.exists()]
+            if problem or missing:
+                conflicts.append(
+                    f"BROKEN CHAIN in '{namespace}': {vf.relative_to(output_dir)} "
+                    + (problem if problem else "lists files that do not exist: "
+                       + ", ".join(str(f.relative_to(output_dir)) for f in missing))
+                    + ". ArgoCD fails that Application's sync.")
+                continue
+            claim(namespace, release, helm_template(chart, argo_release_name(namespace, release), namespace, cm_chain))
+            rendered += 1
 
     cluster_shared_dir = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME
     if cluster_shared_dir.exists() and cluster_shared_dir / "cluster-shared-values.yaml" not in skip:
@@ -6714,6 +6796,25 @@ def build_parser() -> argparse.ArgumentParser:
                           "autoSync parameter) and the cluster-shared one wait for a manual Sync. "
                           "The root Application and root ApplicationSet always reconcile, so a "
                           "new namespace folder still appears in Argo CD on its own.")
+    ap.add_argument("--preserve-resources-on-deletion", nargs="?", const=True, default=True, type=_bool_arg,
+                     metavar="true|false",
+                     help="written into rootApplicationSet.yaml as preserveResourcesOnDeletion. "
+                          "true (default): deleting a microservice's Application, a namespace "
+                          "folder or its ApplicationSet leaves the workloads running. false: "
+                          "deletes cascade to the workloads.")
+    ap.add_argument("--config-maps", nargs="?", const=True, default=True, type=_bool_arg,
+                     metavar="true|false",
+                     help="the namespace ConfigMaps folder (configMaps.enabled in "
+                          "rootApplicationSet.yaml). On by default: values/<--config-maps-file> "
+                          "is not a microservice but a list, under <--config-maps-list-key>, of "
+                          "<namespace>/<--config-maps-dir>/<name>.yaml files to deploy as one "
+                          "Application per namespace. false: that file is an ordinary release.")
+    ap.add_argument("--config-maps-file", default="configMaps.yaml", metavar="FILE",
+                     help="the ConfigMaps list file under values/ (default configMaps.yaml)")
+    ap.add_argument("--config-maps-dir", default="configMaps", metavar="DIR",
+                     help="the ConfigMaps folder under each namespace folder (default configMaps)")
+    ap.add_argument("--config-maps-list-key", default="configMapFiles", metavar="KEY",
+                     help="the key in the list file naming the files to deploy (default configMapFiles)")
     ap.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
                      help="skip whole stacks: a microservice file with any object whose name or "
                           "label/annotation VALUE contains PATTERN (case-insensitive) is skipped "
@@ -6841,6 +6942,9 @@ def run(args: argparse.Namespace) -> None:
             sys.exit(f"--instances {base}: give a release name, optionally =copy1,copy2,...")
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
+    global CONFIG_MAPS, CONFIG_MAPS_FILE, CONFIG_MAPS_DIR, CONFIG_MAPS_LIST_KEY
+    CONFIG_MAPS, CONFIG_MAPS_FILE = args.config_maps, args.config_maps_file
+    CONFIG_MAPS_DIR, CONFIG_MAPS_LIST_KEY = args.config_maps_dir.strip("/"), args.config_maps_list_key
     ENV_IN_VALUES = args.env_in_values
     PREVENT_RESTART_FLAG = args.prevent_restart
     EXACT_COPY = args.exact_copy
@@ -7514,7 +7618,10 @@ def run(args: argparse.Namespace) -> None:
             argocd_namespace=args.argocd_namespace, project=args.argocd_project,
             destination_server=args.destination_server, destination_name=args.argocd_cluster,
             auto_sync=args.auto_sync, argocd_url=args.argocd_url, console_url=args.console_url,
-            repo_web_url=args.repo_web_url, per_namespace_cluster=bool(namespace_clusters))
+            repo_web_url=args.repo_web_url, per_namespace_cluster=bool(namespace_clusters),
+            preserve_resources_on_deletion=args.preserve_resources_on_deletion,
+            config_maps=args.config_maps, config_maps_file=args.config_maps_file,
+            config_maps_dir=args.config_maps_dir, config_maps_list_key=args.config_maps_list_key)
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"

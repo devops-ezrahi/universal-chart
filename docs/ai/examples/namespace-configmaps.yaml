@@ -1,0 +1,26 @@
+# Verified example: one file of a namespace's ConfigMaps folder,
+# <values-repo>/<ns>/configMaps/env1.yaml. It holds chart values, usually just
+# `configMaps`. The folder is deployed by ONE Application per namespace
+# (configmaps-<ns>), listed in <ns>/values/configMaps.yaml:
+#
+#   configMapFiles: [env1, namespace-conf]   # files in <ns>/configMaps/, in layering order
+#
+# Argo CD layers: configMaps/env1.yaml -> configMaps/namespace-conf.yaml ->
+# values/configMaps.yaml, plus workload.type=none. No base/, no defaults.yaml.
+# Render it the same way:
+#   helm template configmaps-dev . -n dev -f dev/configMaps/env1.yaml \
+#     -f dev/configMaps/namespace-conf.yaml -f dev/values/configMaps.yaml --set workload.type=none
+# Microservices use these by name: envFrom: {env1: {type: configMapRef}}.
+workload:
+  type: none          # set by the Application; written here so this file renders alone
+
+configMaps:
+  env1:               # map key = the ConfigMap's real name
+    data:
+      LOG_LEVEL: info
+      ENVIRONMENT: "{{ .Release.Namespace }}"
+  env1-files:
+    data:
+      app.properties: |
+        region=eu
+        timeout=30

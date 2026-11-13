@@ -1,0 +1,5 @@
+# Layered last when the converter verifies a namespace's ConfigMaps release:
+# the helm parameter ms-applicationSet passes that Application (see
+# CONFIG_MAPS in engine.py), so it renders only what its files define.
+workload:
+  type: none

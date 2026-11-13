@@ -194,7 +194,7 @@ tests:
           path: spec.template.spec.sources[0].helm.parameters
           value:
             - name: links.argocd
-              value: https://argo.example.com/applications/openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}-fac1-black
+              value: https://argo.example.com/applications/openshift-gitops/{{ if eq .path.filename "configMaps.yaml" }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black
               forceString: true
             - name: links.console
               value: https://console.example.com
@@ -208,3 +208,119 @@ tests:
             - '$Values/base{{ .path.path | trimPrefix "rakia-fac1/black/values" }}/{{ if hasKey . "BaseFile" }}{{ .BaseFile | toString | trimSuffix ".yaml" }}.yaml{{ else }}{{ .path.filename }}{{ end }}'
             - '$Values/rakia-fac1/black/defaults.yaml'
             - '$Values/{{ .path.path }}/{{ .path.filename }}'
+
+  # --- Settings that live in rootApplicationSet.yaml, with built-in fallbacks ---
+
+  - it: falls back to the old destination and chart when the root file sets none
+    asserts:
+      - equal:
+          path: spec.template.spec.destination.server
+          value: https://kubernetes.default.svc
+      - equal:
+          path: spec.template.spec.sources[0].repoURL
+          value: https://github.com/devops-ezrahi/universal-chart.git
+      - equal:
+          path: spec.template.spec.sources[0].targetRevision
+          value: main
+      - equal:
+          path: spec.template.spec.sources[0].path
+          value: "."
+
+  - it: uses the destination and chart the root file passes
+    set:
+      destinationServer: https://api.other.example.com:6443
+      chartRepoURL: https://git.example.com/scm/OPS/universal-chart.git
+      chartRevision: v4.2.0
+    asserts:
+      - equal:
+          path: spec.template.spec.destination.server
+          value: https://api.other.example.com:6443
+      - equal:
+          path: spec.template.spec.sources[0].repoURL
+          value: https://git.example.com/scm/OPS/universal-chart.git
+      - equal:
+          path: spec.template.spec.sources[0].targetRevision
+          value: v4.2.0
+
+  - it: keeps autoSync true when the root file leaves it out
+    asserts:
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'dig "autoSync" "true" \.'
+
+  - it: accepts a boolean false for preserveResourcesOnDeletion
+    set:
+      preserveResourcesOnDeletion: false
+    asserts:
+      - notExists:
+          path: spec.syncPolicy
+
+  # --- ConfigMaps folder ---
+
+  - it: names the ConfigMaps Application after its file, lower-cased
+    asserts:
+      - equal:
+          path: spec.template.metadata.name
+          value: '{{ if eq .path.filename "configMaps.yaml" }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black'
+
+  - it: layers the listed configMaps/ files, then the list file, without base or defaults
+    asserts:
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: '\{\{- if eq \.path\.filename "configMaps\.yaml" \}\}\n\s+sources:'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: '\{\{- range \(index \. "configMapFiles"\) \}\}\n\s+- .\$Values/rakia-fac1/black/configMaps/\{\{ \. \| toString \| trimSuffix "\.yaml" \}\}\.yaml.\n\s+\{\{- end \}\}\n\s+- .\$Values/\{\{ \.path\.path \}\}/\{\{ \.path\.filename \}\}.'
+      - notMatchRegex:
+          path: spec.templatePatch
+          pattern: 'defaults\.yaml|\$Values/base'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'name: workload\.type\n\s+value: none'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'fail "rakia-fac1/black/values/configMaps\.yaml must list'
+
+  - it: reads the ConfigMaps folder under originPath
+    set:
+      originPath: teams/a
+    asserts:
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: '\$Values/teams/a/rakia-fac1/black/configMaps/'
+
+  - it: takes the ConfigMaps file, folder and list key from the root file
+    set:
+      configMaps:
+        file: shared.yaml
+        dir: cms
+        listKey: files
+    asserts:
+      - equal:
+          path: spec.template.metadata.name
+          value: '{{ if eq .path.filename "shared.yaml" }}shared{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'range \(index \. "files"\).*\n.*\$Values/rakia-fac1/black/cms/'
+
+  - it: links the ConfigMaps Application to its own name in Argo CD
+    set:
+      links:
+        argocdUrl: https://argo.example.com
+        argocdNamespace: gitops
+    asserts:
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'value: "https://argo\.example\.com/applications/gitops/configmaps-fac1-black"'
+
+  - it: leaves every Application as before with configMaps.enabled "false"
+    set:
+      configMaps:
+        enabled: "false"
+    asserts:
+      - equal:
+          path: spec.template.metadata.name
+          value: '{{ .path.filename | trimSuffix ".yaml" }}-fac1-black'
+      - notMatchRegex:
+          path: spec.templatePatch
+          pattern: 'configMaps|sources:'

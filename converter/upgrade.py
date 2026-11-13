@@ -74,7 +74,7 @@ class OldTree:
         # {folder: {release stem: path relative to that folder's values/}}
         self.releases: dict[str, dict[str, Path]] = {
             f: {vf.stem: vf.relative_to(d / engine.VALUES_DIR_NAME)
-                for vf in sorted((d / engine.VALUES_DIR_NAME).rglob("*.yaml"))}
+                for vf in engine.values_files(d / engine.VALUES_DIR_NAME)}
             for f, d in self.folders.items()}
         self.defaults = {f: (yaml.safe_load((d / engine.DEFAULTS_FILE_NAME).read_text(encoding="utf-8")) or {})
                          for f, d in self.folders.items()}
@@ -152,6 +152,18 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
             for param, dest in (("destinationServer", "destination_server"), ("links.argocdUrl", "argocd_url"),
                                 ("links.consoleUrl", "console_url"), ("links.repoWebUrl", "repo_web_url"),
                                 ("project", "argocd_project")):
+                v = params.get(param)
+                if isinstance(v, str) and v and "{{" not in v:
+                    s[dest] = v
+            # true/false settings the root file records (rootApplicationSet.yaml
+            # is where they live; ms-applicationSet/values.yaml has none).
+            for param, dest in (("preserveResourcesOnDeletion", "preserve_resources_on_deletion"),
+                                ("configMaps.enabled", "config_maps")):
+                v = str(params.get(param, "")).lower()
+                if v in ("true", "false"):
+                    s[dest] = v == "true"
+            for param, dest in (("configMaps.file", "config_maps_file"), ("configMaps.dir", "config_maps_dir"),
+                                ("configMaps.listKey", "config_maps_list_key")):
                 v = params.get(param)
                 if isinstance(v, str) and v and "{{" not in v:
                     s[dest] = v
