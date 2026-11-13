@@ -134,3 +134,18 @@ def test_rerun_keeps_the_folder_and_list_file(tmp_path):
     convert(tmp_path, "--prune")
     assert (out / "shop-dev" / "values" / "configMaps.yaml").is_file()
     assert (out / "shop-dev" / "configMaps" / "env1.yaml").is_file()
+
+
+def test_upgrade_keeps_the_root_settings_and_skips_the_list_file(tmp_path):
+    from converter import upgrade
+    out = convert(tmp_path, "--preserve-resources-on-deletion", "false", "--config-maps-dir", "cms",
+                  "--config-maps-list-key", "files")
+    (out / "shop-dev" / "values" / "configMaps.yaml").write_text("files: [env1]\n", encoding="utf-8")
+    tree = upgrade.OldTree(out)
+    rec = upgrade.recorded_settings(tree)
+    assert rec["preserve_resources_on_deletion"] is False
+    assert rec["config_maps"] is True
+    assert (rec["config_maps_dir"], rec["config_maps_list_key"], rec["config_maps_file"]) == \
+        ("cms", "files", "configMaps.yaml")
+    # Not a release: an upgrade must not look for base/configMaps.yaml.
+    assert sorted(tree.releases["shop-dev"]) == ["item1", "item2"]
