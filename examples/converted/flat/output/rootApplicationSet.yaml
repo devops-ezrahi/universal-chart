@@ -47,6 +47,20 @@ spec:
             value: *project
           - name: destinationServer
             value: https://kubernetes.default.svc
+          - name: chartRepoURL
+            value: https://github.com/devops-ezrahi/universal-chart.git
+          - name: chartRevision
+            value: main
+          - name: preserveResourcesOnDeletion
+            value: 'true'
+          - name: configMaps.enabled
+            value: 'true'
+          - name: configMaps.file
+            value: configMaps.yaml
+          - name: configMaps.dir
+            value: configMaps
+          - name: configMaps.listKey
+            value: configMapFiles
           - name: autoSync
             value: 'false'
           - name: links.argocdUrl
