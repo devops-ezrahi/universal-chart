@@ -89,8 +89,13 @@ helm template ms1 . -n dev -f $o/base/ms1.yaml -f $o/dev/defaults.yaml -f $o/dev
 - `configMaps.*` (converter `--config-maps`, `--config-maps-file`,
   `--config-maps-dir`, `--config-maps-list-key`): the ConfigMaps folder above.
   The values file named `configMaps.file` gets its own `templatePatch` branch
-  that replaces `spec.sources` and drops the base/defaults link annotations; a
-  missing list key fails that Application's generation with a message.
+  that replaces `spec.sources` and drops the base/defaults link annotations. A
+  list file without the list key makes Argo CD raise that message on the
+  folder's ApplicationSet (condition ErrorOccurred) and pause creating or
+  updating ANY Application in that folder until it is fixed. Nothing is
+  deleted, and existing Applications keep syncing their own files. Failing is
+  deliberate: an empty list would prune the live ConfigMaps. Verified on
+  Argo CD v2.14 (the code path is the same in v3.5).
   `configMaps.enabled: "false"` makes the file an ordinary release.
 - `applicationsSync`: `create-only` / `create-delete` stop the controller from
   updating existing Applications.
