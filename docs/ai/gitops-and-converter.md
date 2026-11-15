@@ -41,8 +41,13 @@ Read those for full option tables. This file is the map.
   The old shape (`values/configMaps.yaml` listing `configMapFiles`, each file
   wrapped in `configMaps: <name>:`) is migrated in place by re-running the
   converter on the tree (report: `report/config_maps_migration.txt`). A wrapped
-  file still renders meanwhile; a leftover `values/configMaps.yaml` does not
-  (Argo CD now treats it as a microservice with no `base/`).
+  file still renders meanwhile. A leftover `values/configMaps.yaml` keeps the
+  old `configmaps-<ns>` Application but empties it: it renders nothing, never
+  syncs itself (so it never prunes), and is labelled `universal-chart/obsolete`.
+  Deleting the file deletes that Application. With
+  `preserveResourcesOnDeletion: "false"` that delete would take the ConfigMaps
+  with it, so in that case the converter keeps the file: delete it by hand once
+  the new `<name>-cm` Applications have synced.
 - **Instances:** several releases sharing one base. Each values file sets
   `BaseFile: x` (Argo CD layers `base/x.yaml`) and `instance: alpha`
   (`base/x.yaml` uses `{{ .Values.instance }}`).

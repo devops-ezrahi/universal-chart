@@ -13,7 +13,7 @@ metadata:
   {{- end }}
 {{- with $spec.data }}
 data:
-  {{- toYaml . | nindent 2 }}
+  {{- include "universal-chart.stringData" . | nindent 2 }}
 {{- end }}
 {{- with $spec.binaryData }}
 binaryData:
@@ -38,7 +38,7 @@ metadata:
   {{- end }}
 {{- with .Values.data }}
 data:
-  {{- toYaml . | nindent 2 }}
+  {{- include "universal-chart.stringData" . | nindent 2 }}
 {{- end }}
 {{- with .Values.binaryData }}
 binaryData:

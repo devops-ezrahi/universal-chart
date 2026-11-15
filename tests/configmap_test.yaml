@@ -139,3 +139,35 @@ tests:
     asserts:
       - hasDocuments:
           count: 2
+
+  - it: quotes numbers and booleans in data, which Kubernetes requires as strings
+    set:
+      configMaps:
+        app:
+          data:
+            PORT: 8080
+            BIG: 1000000
+            RATIO: 1.5
+            DEBUG: true
+            GONE: null
+            S: "007"
+    asserts:
+      - equal:
+          path: data
+          value:
+            PORT: "8080"
+            BIG: "1000000"
+            RATIO: "1.5"
+            DEBUG: "true"
+            S: "007"
+
+  - it: quotes numbers in top-level data too
+    release:
+      name: env1
+    set:
+      data:
+        PORT: 8080
+    asserts:
+      - equal:
+          path: data.PORT
+          value: "8080"

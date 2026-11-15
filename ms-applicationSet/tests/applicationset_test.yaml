@@ -74,7 +74,7 @@ tests:
     asserts:
       - matchRegex:
           path: spec.templatePatch
-          pattern: '\{\{- if ne \(dig "autoSync" "true" \. \| toString \| lower\) "false" \}\}\n\s+automated:'
+          pattern: '\{\{- if and \(ne \(dig "autoSync" "true" \. \| toString \| lower\) "false"\) \(not \(.*\)\) \}\}\n\s+automated:'
       - matchRegex:
           path: spec.templatePatch
           pattern: 'CreateNamespace=true'
@@ -196,7 +196,7 @@ tests:
           path: spec.template.spec.sources[0].helm.parameters
           value:
             - name: links.argocd
-              value: https://argo.example.com/applications/openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}{{ if or (eq .path.path "rakia-fac1/black/configMaps") (hasPrefix "rakia-fac1/black/configMaps/" .path.path) }}-cm{{ end }}-fac1-black
+              value: https://argo.example.com/applications/openshift-gitops/{{ if and (eq .path.filename "configMaps.yaml") (eq .path.path "rakia-fac1/black/values") }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ if or (eq .path.path "rakia-fac1/black/configMaps") (hasPrefix "rakia-fac1/black/configMaps/" .path.path) }}-cm{{ end }}{{ end }}-fac1-black
               forceString: true
             - name: links.console
               value: https://console.example.com
@@ -275,7 +275,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.metadata.name
-          value: '{{ .path.filename | trimSuffix ".yaml" }}{{ if or (eq .path.path "rakia-fac1/black/configMaps") (hasPrefix "rakia-fac1/black/configMaps/" .path.path) }}-cm{{ end }}-fac1-black'
+          value: '{{ if and (eq .path.filename "configMaps.yaml") (eq .path.path "rakia-fac1/black/values") }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ if or (eq .path.path "rakia-fac1/black/configMaps") (hasPrefix "rakia-fac1/black/configMaps/" .path.path) }}-cm{{ end }}{{ end }}-fac1-black'
 
   - it: renders only the file itself, named after it, with no base or defaults
     asserts:
@@ -329,7 +329,7 @@ tests:
     asserts:
       - matchRegex:
           path: spec.templatePatch
-          pattern: 'value: .https://argo\.example\.com/applications/gitops/\{\{ \.path\.filename \| trimSuffix "\.yaml" \}\}\{\{ if or .*-cm\{\{ end \}\}-fac1-black.'
+          pattern: 'value: .https://argo\.example\.com/applications/gitops/\{\{ if and .*configmaps\{\{ else \}\}\{\{ \.path\.filename \| trimSuffix "\.yaml" \}\}\{\{ if or .*-cm\{\{ end \}\}\{\{ end \}\}-fac1-black.'
 
   - it: leaves every Application as before with configMaps.enabled "false"
     set:
@@ -344,3 +344,25 @@ tests:
           pattern: 'configMaps|sources:'
       - notExists:
           path: spec.generators[1]
+
+  # --- a leftover values/configMaps.yaml (the old list file) ---
+
+  - it: names a leftover list file configmaps, never the invalid configMaps
+    asserts:
+      - matchRegex:
+          path: spec.template.metadata.name
+          pattern: '^\{\{ if and \(eq \.path\.filename "configMaps\.yaml"\) \(eq \.path\.path "rakia-fac1/black/values"\) \}\}configmaps\{\{ else \}\}'
+
+  - it: makes a leftover list file an empty Application that never syncs itself
+    set:
+      autoSync: "true"
+    asserts:
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: '\{\{- if and \(eq \.path\.filename "configMaps\.yaml"\) \(eq \.path\.path "rakia-fac1/black/values"\) \}\}\n\s+sources:\n(.*\n){4}\s+valueFiles:\n\s+- .\$Values/\{\{ \.path\.path \}\}/\{\{ \.path\.filename \}\}.\n\s+parameters:\n\s+- name: workload\.type\n\s+value: none'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'if and \(ne \(dig "autoSync" "true" \. \| toString \| lower\) "false"\) \(not \(and \(eq \.path\.filename "configMaps\.yaml"\)'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'universal-chart/obsolete: "true"'

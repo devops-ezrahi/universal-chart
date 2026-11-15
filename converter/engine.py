@@ -869,7 +869,7 @@ def config_maps_render_args(vf: Path) -> tuple[list[Path], tuple[str, ...]]:
     return [vf, CONFIG_MAPS_PARAMS_FILE], (f"fullnameOverride={vf.stem}",)
 
 
-def migrate_config_maps(ns_dir: Path) -> list[str]:
+def migrate_config_maps(ns_dir: Path, keep_list_file: bool = False) -> list[str]:
     """Bring a namespace's ConfigMaps folder from the old shape to the current
     one, in place. Returns one note per change or per file it left alone.
 
@@ -879,6 +879,11 @@ def migrate_config_maps(ns_dir: Path) -> list[str]:
       with several ConfigMaps is split, one file each.
     - values/configMaps.yaml (the list) is deleted. Every file in the folder
       is now deployed, so the ones it did NOT list are named in the notes.
+      keep_list_file (preserveResourcesOnDeletion false): it stays, because
+      deleting it deletes the old configmaps-<ns> Application and, with it,
+      the ConfigMaps. ms-applicationSet keeps that Application empty and on
+      manual sync while the file exists, so delete it once the new
+      <name>-cm Applications have synced.
     """
     notes: list[str] = []
     if not CONFIG_MAPS:
@@ -925,9 +930,15 @@ def migrate_config_maps(ns_dir: Path) -> list[str]:
         except (yaml.YAMLError, AttributeError):
             listed_raw = None
         listed = {str(n).removesuffix(".yaml") for n in listed_raw or []} if isinstance(listed_raw, list) else set()
-        legacy.unlink()
-        notes.append(f"CONFIGMAPS: deleted {rel(legacy)}: every file in {ns_dir.name}/{CONFIG_MAPS_DIR}/ is "
-                     f"now deployed, one Application each.")
+        if keep_list_file:
+            notes.append(f"CONFIGMAPS: kept {rel(legacy)} (preserveResourcesOnDeletion is false): deleting it "
+                         f"deletes the old configmaps Application AND its ConfigMaps. It deploys nothing now. "
+                         f"Delete it by hand once the new <name>-cm Applications have synced.")
+        else:
+            legacy.unlink()
+            notes.append(f"CONFIGMAPS: deleted {rel(legacy)}: every file in {ns_dir.name}/{CONFIG_MAPS_DIR}/ is "
+                         f"now deployed, one Application each (the old configmaps Application is deleted; "
+                         f"preserveResourcesOnDeletion keeps its ConfigMaps for the new ones to adopt).")
         unlisted = [rel(f) for f in config_maps_files(ns_dir) if f.stem not in listed]
         if unlisted and listed_raw is not None:
             notes.append(f"CONFIGMAPS: NOW DEPLOYED, not listed before: {', '.join(unlisted)} - delete any "
@@ -5461,13 +5472,8 @@ def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozens
         # The ConfigMaps folder (see CONFIG_MAPS): one release per file,
         # claimed like any release, so a ConfigMap a microservice also renders
         # shows up as a NAMESPACE CONFLICT.
-        legacy = values_dir / LEGACY_CONFIG_MAPS_FILE
-        if CONFIG_MAPS and legacy.is_file() and legacy not in skip:
-            conflicts.append(
-                f"BROKEN CHAIN in '{namespace}': {legacy.relative_to(output_dir)} is the old ConfigMaps "
-                f"list. ms-applicationSet no longer reads it and deploys it as a microservice with no "
-                f"base/ - delete it (re-running the converter does) and make each "
-                f"{CONFIG_MAPS_DIR}/ file start at `data:`.")
+        # A leftover values/configMaps.yaml (the old list) is not rendered:
+        # ms-applicationSet turns it into an empty, manual-sync Application.
         for stem, n in Counter(f.stem for f in config_maps_files(ns_dir)).items():
             if n > 1:
                 conflicts.append(f"DUPLICATE RELEASE in '{namespace}': {n} files named '{stem}.yaml' "
@@ -7849,7 +7855,8 @@ def run(args: argparse.Namespace) -> None:
 
     # The ConfigMaps folders: rewrite the old shape in place (see
     # migrate_config_maps), reported in its own file.
-    cm_notes = [n for _, ns_dir in namespace_dirs_of(output_dir) for n in migrate_config_maps(ns_dir)]
+    cm_notes = [n for _, ns_dir in namespace_dirs_of(output_dir)
+                for n in migrate_config_maps(ns_dir, keep_list_file=not args.preserve_resources_on_deletion)]
     if cm_notes:
         report_dir.mkdir(parents=True, exist_ok=True)
         (report_dir / "config_maps_migration.txt").write_text("\n".join(cm_notes) + "\n", encoding="utf-8")

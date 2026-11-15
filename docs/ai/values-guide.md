@@ -207,8 +207,8 @@ doesn't model. Use it last. Prefer a real values key when one exists.
 - [ ] Unescaped `{{` in ConfigMap data
 - [ ] A `configMaps/<name>.yaml` that wraps its data in `configMaps: <name>:`
       (old shape; it starts at `data:` now), or a leftover `values/configMaps.yaml`
-- [ ] A number in ConfigMap `data` left unquoted (`PORT: "8080"`, not `8080`):
-      Kubernetes wants strings
+- [ ] (handled) A number or boolean in ConfigMap `data` (`PORT: 8080`) is
+      rendered quoted, as Kubernetes requires; writing it quoted is still clearer
 - [ ] A cronjob key written as a short suffix, expecting a release prefix
 - [ ] A changed selector or pod-template field on a live workload (immutable, or a restart)
 - [ ] A key invented that exists nowhere in `values.yaml`/schema/templates

@@ -28,9 +28,14 @@
 {{- /* The Application's name, as a goTemplate expression for the ApplicationSet.
        A ConfigMaps file gets "-cm", so ConfigMap app-conf (app-conf-cm-dev)
        never collides with a microservice called app-conf (app-conf-dev). */ -}}
+{{- /* The old ConfigMaps list file, values/configMaps.yaml, left in a values
+       repo not yet re-converted. It deploys nothing now (see templatePatch);
+       it is named "configmaps", lower-cased, because "configMaps-dev" is not a
+       valid Application name and would stall the whole ApplicationSet. */ -}}
+{{- $isLegacy := printf "and (eq .path.filename \"configMaps.yaml\") (eq .path.path %s)" (printf "%s%s/values" $prefix $folder | quote) -}}
 {{- $appStem := "{{ .path.filename | trimSuffix \".yaml\" }}" -}}
 {{- if $cmOn -}}
-{{- $appStem = printf "{{ .path.filename | trimSuffix \".yaml\" }}{{ if %s }}-cm{{ end }}" $isCm -}}
+{{- $appStem = printf "{{ if %s }}configmaps{{ else }}{{ .path.filename | trimSuffix \".yaml\" }}{{ if %s }}-cm{{ end }}{{ end }}" $isLegacy $isCm -}}
 {{- end -}}
 {{- $appName := printf "%s-%s%s" $appStem ($ns | splitList "-" | last) $suffix -}}
 {{- /* Links (see values.yaml `links`). $fileUrl holds PATH where a repo path
@@ -334,9 +339,38 @@ spec:
         universal-chart/defaults-file: null
       {{- end }}
     {{ "{{- end }}" }}
+    {{ printf "{{- if %s }}" $isLegacy }}
+    metadata:
+      labels:
+        universal-chart/obsolete: "true"
+      annotations:
+        universal-chart/obsolete: "values/configMaps.yaml is no longer read: every configMaps/<name>.yaml is its own Application. Delete this file (re-running the converter does)."
+        {{- if $fileUrl }}
+        universal-chart/base-file: null
+        universal-chart/defaults-file: null
+        {{- end }}
+    {{ "{{- end }}" }}
     {{- end }}
     spec:
       {{- if $cmOn }}
+      {{- /* The old list file: renders nothing (workload.type none, no base/),
+             and never syncs itself, so it can never prune the ConfigMaps the
+             new per-file Applications now own. */}}
+      {{ printf "{{- if %s }}" $isLegacy }}
+      sources:
+        - repoURL: {{ $chartRepoURL | quote }}
+          targetRevision: {{ $chartRevision | quote }}
+          path: {{ $chartPath | quote }}
+          helm:
+            valueFiles:
+              - '$Values/{{ $valuesFile }}'
+            parameters:
+              - name: workload.type
+                value: none
+        - repoURL: {{ $repo | quote }}
+          targetRevision: {{ $branch | quote }}
+          ref: Values
+      {{ "{{- end }}" }}
       {{ printf "{{- if %s }}" $isCm }}
       sources:
         - repoURL: {{ $chartRepoURL | quote }}
@@ -369,7 +403,7 @@ spec:
       {{ "{{- end }}" }}
       {{- end }}
       syncPolicy:
-        {{ printf "{{- if ne (dig \"autoSync\" \"%s\" . | toString | lower) \"false\" }}" $autoSync }}
+        {{ printf "{{- if and (ne (dig \"autoSync\" \"%s\" . | toString | lower) \"false\") (not (%s)) }}" $autoSync (ternary $isLegacy "false" $cmOn) }}
         automated:
           prune: true
           selfHeal: true

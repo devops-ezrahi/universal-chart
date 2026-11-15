@@ -120,12 +120,23 @@ def test_verify_still_renders_a_file_in_the_old_wrapped_shape(tmp_path):
     assert conflicts == [] and rendered == 3
 
 
-def test_verify_reports_a_leftover_list_file(tmp_path):
+def test_a_leftover_list_file_is_not_rendered(tmp_path):
     out = convert(tmp_path)
     add_config_maps(out, {"env1": {"A": "1"}})
     (out / "shop-dev" / "values" / "configMaps.yaml").write_text("configMapFiles: [env1]\n", encoding="utf-8")
-    _, conflicts = engine.verify_no_conflicts(REPO, out)
-    assert any("BROKEN CHAIN" in c and "old ConfigMaps list" in c for c in conflicts), conflicts
+    rendered, conflicts = engine.verify_no_conflicts(REPO, out)
+    assert conflicts == [] and rendered == 3
+
+
+def test_migration_keeps_the_list_file_when_deletes_cascade(tmp_path):
+    out = convert(tmp_path)
+    add_legacy_config_maps(out, ["env1"], {"env1": {"data": {"A": "1"}}})
+    convert(tmp_path, "--preserve-resources-on-deletion", "false")
+    assert (out / "shop-dev" / "values" / "configMaps.yaml").is_file()
+    assert yaml.safe_load((out / "shop-dev" / "configMaps" / "env1.yaml").read_text(encoding="utf-8")) == \
+        {"data": {"A": "1"}}
+    report = (out / "report" / "config_maps_migration.txt").read_text(encoding="utf-8")
+    assert "kept shop-dev/values/configMaps.yaml" in report
 
 
 def test_verify_reports_a_config_map_a_release_also_renders(tmp_path):
