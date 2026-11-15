@@ -14,20 +14,23 @@
 {{- $destinationServer := .Values.destinationServer | default "https://kubernetes.default.svc" -}}
 {{- /* hasKey, not default: false/"false" must stay false. Absent = true. */ -}}
 {{- $preserve := ternary (toString .Values.preserveResourcesOnDeletion) "true" (hasKey .Values "preserveResourcesOnDeletion") | lower -}}
-{{- $autoSyncIn := ternary (toString .Values.autoSync) "true" (hasKey .Values "autoSync") | lower -}}
-{{- /* The namespace's ConfigMaps Application (see "ConfigMaps folder" below):
-       values/<cmFile> lists, under <cmListKey>, which <folder>/<cmDir>/*.yaml
-       files to deploy. Off with configMaps.enabled "false". */ -}}
+{{- /* Absent = false: Applications sync by hand unless the root file (or a
+       folder's defaults.yaml) says autoSync true. */ -}}
+{{- $autoSyncIn := ternary (toString .Values.autoSync) "false" (hasKey .Values "autoSync") | lower -}}
+{{- /* The namespace's ConfigMaps folder (see "ConfigMaps folder" below): every
+       <folder>/<cmDir>/<name>.yaml is its own Application, deploying
+       ConfigMap/<name>. Off with configMaps.enabled "false". */ -}}
 {{- $cmOn := ne (lower (toString (dig "configMaps" "enabled" "true" .Values.AsMap))) "false" -}}
-{{- $cmFile := dig "configMaps" "file" "configMaps.yaml" .Values.AsMap | toString -}}
 {{- $cmDir := dig "configMaps" "dir" "configMaps" .Values.AsMap | toString | trimSuffix "/" -}}
-{{- $cmListKey := dig "configMaps" "listKey" "configMapFiles" .Values.AsMap | toString -}}
+{{- $cmPath := printf "%s%s/%s" $prefix $folder $cmDir -}}
+{{- /* goTemplate condition: this Application's file is in the ConfigMaps folder. */ -}}
+{{- $isCm := printf "or (eq .path.path %s) (hasPrefix %s .path.path)" ($cmPath | quote) (printf "%s/" $cmPath | quote) -}}
 {{- /* The Application's name, as a goTemplate expression for the ApplicationSet.
-       The ConfigMaps file is named after its folder, lower-cased: configMaps.yaml
-       would make "configMaps-dev", which Kubernetes rejects. */ -}}
+       A ConfigMaps file gets "-cm", so ConfigMap app-conf (app-conf-cm-dev)
+       never collides with a microservice called app-conf (app-conf-dev). */ -}}
 {{- $appStem := "{{ .path.filename | trimSuffix \".yaml\" }}" -}}
 {{- if $cmOn -}}
-{{- $appStem = printf "{{ if eq .path.filename %s }}%s{{ else }}{{ .path.filename | trimSuffix \".yaml\" }}{{ end }}" ($cmFile | quote) ($cmFile | trimSuffix ".yaml" | trimSuffix ".yml" | lower) -}}
+{{- $appStem = printf "{{ .path.filename | trimSuffix \".yaml\" }}{{ if %s }}-cm{{ end }}" $isCm -}}
 {{- end -}}
 {{- $appName := printf "%s-%s%s" $appStem ($ns | splitList "-" | last) $suffix -}}
 {{- /* Links (see values.yaml `links`). $fileUrl holds PATH where a repo path
@@ -118,6 +121,10 @@
   Legacy git-file globbing lets '*' cross '/', so the default glob finds them;
   with --enable-new-git-file-globbing set valuesGlob (see values.yaml).
 
+  ConfigMaps folder: <folder>/configMaps/<name>.yaml (configMaps.dir) is not
+  in values/ and not a microservice. Each file starts at `data:` and is its own
+  Application, <name>-cm-<ns>, rendering ConfigMap/<name> (see templatePatch).
+
   Variant folders (<namespace>/<variant>/..., e.g. prd/yellow and prd/black, both
   deploying into namespace prd and sharing the one base/): namespace=prd,
   folder=prd/yellow. The folder below the namespace is appended to every
@@ -170,6 +177,23 @@ spec:
               pathParamPrefix: defaults
               files:
                 - path: '{{ $defaultsFile }}'
+    {{- /* The ConfigMaps folder: one Application per file, also matrixed with
+           defaults.yaml so a folder's autoSync applies to them too. */}}
+    {{- if $cmOn }}
+    - matrix:
+        generators:
+          - git:
+              repoURL: {{ $repo | quote }}
+              revision: {{ $branch | quote }}
+              files:
+                - path: '{{ $cmPath }}/*.yaml'
+          - git:
+              repoURL: {{ $repo | quote }}
+              revision: {{ $branch | quote }}
+              pathParamPrefix: defaults
+              files:
+                - path: '{{ $defaultsFile }}'
+    {{- end }}
   template:
     metadata:
       name: '{{ $appName }}'
@@ -287,49 +311,50 @@ spec:
          a helm parameter arrives as a string ("true", "False") and a YAML
          boolean in defaults.yaml as a bool; anything but "false" is on. */}}
   {{- $autoSync := ternary "false" "true" (eq $autoSyncIn "false") }}
-  {{- /* ConfigMaps folder. values/<cmFile> is not a microservice: it lists,
-         under <cmListKey>, which <folder>/<cmDir>/<name>.yaml files to deploy
-         (chart values snippets, e.g. configMaps: {env1: {data: ...}}). Its
-         Application layers those files in list order, then the list file
-         itself, and nothing else: no base/ (it has none) and no defaults.yaml
-         (that holds the microservices' workload settings). workload.type=none
-         renders no pods, only what the files define. The source list varies
-         per Application, so only the goTemplate templatePatch can build it; a
-         patch replaces spec.sources whole. Every other Application is left as
-         the template above writes it. */}}
-  {{- $cmAppName := printf "%s-%s%s" ($cmFile | trimSuffix ".yaml" | trimSuffix ".yml" | lower) ($ns | splitList "-" | last) $suffix }}
+  {{- /* ConfigMaps folder. Each <folder>/<cmDir>/<name>.yaml is NOT a
+         microservice: it starts at `data:` (the chart's top-level data /
+         binaryData, see the chart's values.yaml) and becomes its own
+         Application, "<name>-cm-<ns>", rendering ConfigMap/<name>: only that
+         file, fullnameOverride=<name>, workload.type=none. No base/ and no
+         defaults.yaml layered (defaults.yaml holds the microservices'
+         workload settings; its autoSync still applies). A file still in the
+         old shape (configMaps: {<name>: {data: ...}}) renders as before. The
+         source differs per Application, so only the goTemplate templatePatch
+         can build it; a patch replaces spec.sources whole. Every other
+         Application is left as the template above writes it. */}}
   templatePatch: |
     {{- if $cmOn }}
-    {{ printf "{{- if eq .path.filename %s }}" ($cmFile | quote) }}
-    {{ printf "{{- if not (hasKey . %s) }}{{ fail %s }}{{ end }}" ($cmListKey | quote) (printf "%s%s/values/%s must list the %s/ files to deploy under %s" $prefix $folder $cmFile $cmDir $cmListKey | quote) }}
-    {{- if $fileUrl }}
+    {{ printf "{{- if %s }}" $isCm }}
     metadata:
+      labels:
+        configmaps: {{ $folder | replace "/" "-" | trunc 63 | trimSuffix "-" | quote }}
+      {{- if $fileUrl }}
       annotations:
         universal-chart/base-file: null
         universal-chart/defaults-file: null
-    {{- end }}
+      {{- end }}
     {{ "{{- end }}" }}
     {{- end }}
     spec:
       {{- if $cmOn }}
-      {{ printf "{{- if eq .path.filename %s }}" ($cmFile | quote) }}
+      {{ printf "{{- if %s }}" $isCm }}
       sources:
         - repoURL: {{ $chartRepoURL | quote }}
           targetRevision: {{ $chartRevision | quote }}
           path: {{ $chartPath | quote }}
           helm:
             valueFiles:
-              {{ printf "{{- range (index . %s) }}" ($cmListKey | quote) }}
-              - '$Values/{{ $prefix }}{{ $folder }}/{{ $cmDir }}/{{ "{{" }} . | toString | trimSuffix ".yaml" {{ "}}" }}.yaml'
-              {{ "{{- end }}" }}
               - '$Values/{{ $valuesFile }}'
             parameters:
               - name: workload.type
                 value: none
+              - name: fullnameOverride
+                value: '{{ "{{" }} .path.filename | trimSuffix ".yaml" {{ "}}" }}'
+                forceString: true
               {{- if ne (toString $links.objects) "false" }}
               {{- with $argocd }}
               - name: links.argocd
-                value: {{ printf "%s/applications/%s/%s" . $argocdNs $cmAppName | quote }}
+                value: '{{ . }}/applications/{{ $argocdNs }}/{{ $appName }}'
                 forceString: true
               {{- end }}
               {{- with $console }}

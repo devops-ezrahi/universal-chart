@@ -133,6 +133,8 @@
     "services": { "type": "object" },
     "scc":                   { "type": "object" },
     "configMaps":            { "type": "object" },
+    "data":                  { "type": "object" },
+    "binaryData":            { "type": "object" },
     "secrets":               { "type": "object" },
     "externalSecretsApiVersion": { "type": "string" },
     "secretStores":          { "type": "object" },

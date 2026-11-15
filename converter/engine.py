@@ -820,56 +820,118 @@ def namespace_dirs_of(root: Path, is_ns=is_output_ns) -> list[tuple[str, Path]]:
 
 # The namespace's ConfigMaps folder (ms-applicationSet's configMaps.*
 # parameters, written into rootApplicationSet.yaml by --config-maps*). With it
-# on, values/<CONFIG_MAPS_FILE> is NOT a microservice: it lists, under
-# CONFIG_MAPS_LIST_KEY, which <folder>/<CONFIG_MAPS_DIR>/<name>.yaml files
-# (chart values snippets) to deploy, and Argo CD renders them as ONE release,
-# "<file stem, lower-cased>-<ns>", layering those files in list order, then
-# the list file, then workload.type=none. No base/, no defaults.yaml. The
-# folder is written by hand; the converter only keeps it, verifies it and
+# on, every <folder>/<CONFIG_MAPS_DIR>/<name>.yaml is its own Argo CD
+# Application, "<name>-cm-<ns>", rendering ConfigMap/<name>: the file starts at
+# `data:` (the chart's top-level data/binaryData), and Argo CD layers only that
+# file, with fullnameOverride=<name> and workload.type=none. No base/, no
+# defaults.yaml, no list file. The folder is written by hand; the converter
+# keeps it, migrates the old shape (see migrate_config_maps), verifies it and
 # never prunes it.
 CONFIG_MAPS = True
-CONFIG_MAPS_FILE = "configMaps.yaml"
 CONFIG_MAPS_DIR = "configMaps"
-CONFIG_MAPS_LIST_KEY = "configMapFiles"
+# The old shape (before 5.0): values/configMaps.yaml listed the files to deploy
+# under configMapFiles, and each file wrapped its ConfigMap as
+# configMaps: {<name>: {data: ...}}. migrate_config_maps rewrites both.
+LEGACY_CONFIG_MAPS_FILE = "configMaps.yaml"
+LEGACY_CONFIG_MAPS_LIST_KEY = "configMapFiles"
 # The helm parameter the ApplicationSet passes it, as a values file layered last.
 CONFIG_MAPS_PARAMS_FILE = Path(__file__).with_name("config_maps_params.yaml")
 
 
-def is_config_maps_file(vf: Path) -> bool:
-    return CONFIG_MAPS and vf.name == CONFIG_MAPS_FILE
+def is_legacy_config_maps_file(vf: Path) -> bool:
+    return CONFIG_MAPS and vf.name == LEGACY_CONFIG_MAPS_FILE
 
 
 def values_files(values_dir: Path) -> list[Path]:
     """Every release file under values/, sub-folders included: they are only
     for grouping (values/group1/ms1.yaml), the release is still the file name.
-    The ConfigMaps list file is not a release (see CONFIG_MAPS)."""
-    return sorted(f for f in values_dir.rglob("*.yaml") if not is_config_maps_file(f)) \
+    The old ConfigMaps list file is not a release (see migrate_config_maps)."""
+    return sorted(f for f in values_dir.rglob("*.yaml") if not is_legacy_config_maps_file(f)) \
         if values_dir.is_dir() else []
 
 
-def config_maps_files(values_dir: Path) -> list[Path]:
-    """The ConfigMaps list file(s) under values/ (see CONFIG_MAPS)."""
-    return sorted(f for f in values_dir.rglob("*.yaml") if is_config_maps_file(f)) \
-        if values_dir.is_dir() else []
+def config_maps_files(ns_dir: Path) -> list[Path]:
+    """Every ConfigMap file in the namespace folder's ConfigMaps folder. rglob:
+    Argo CD's legacy git-file globbing lets configMaps/*.yaml cross '/'."""
+    d = ns_dir / CONFIG_MAPS_DIR
+    return sorted(d.rglob("*.yaml")) if CONFIG_MAPS and d.is_dir() else []
 
 
-def config_maps_release(ns_dir: Path, vf: Path) -> str:
-    """The release (file) part of the ConfigMaps Application's name."""
-    return vf.name.removesuffix(".yaml").removesuffix(".yml").lower()
+def config_maps_release(vf: Path) -> str:
+    """The release (file) part of a ConfigMap file's Application name."""
+    return f"{vf.stem}-cm"
 
 
-def config_maps_chain(ns_dir: Path, vf: Path) -> tuple[list[Path], str]:
-    """(value files Argo CD layers, problem). The listed snippets in order, the
-    list file, then workload.type=none; problem is "" when the list is usable."""
-    try:
-        data = yaml.safe_load(vf.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as e:
-        return [], f"is not valid YAML: {e}"
-    names = data.get(CONFIG_MAPS_LIST_KEY) if isinstance(data, dict) else None
-    if not isinstance(names, list) or not names:
-        return [], f"must list the {CONFIG_MAPS_DIR}/ files to deploy under '{CONFIG_MAPS_LIST_KEY}'"
-    files = [ns_dir / CONFIG_MAPS_DIR / f"{str(n).removesuffix('.yaml')}.yaml" for n in names]
-    return files + [vf, CONFIG_MAPS_PARAMS_FILE], ""
+def config_maps_render_args(vf: Path) -> tuple[list[Path], tuple[str, ...]]:
+    """(value files, --set-string pairs) Argo CD renders a ConfigMap file with:
+    the file alone, workload.type=none and fullnameOverride=<file stem>."""
+    return [vf, CONFIG_MAPS_PARAMS_FILE], (f"fullnameOverride={vf.stem}",)
+
+
+def migrate_config_maps(ns_dir: Path) -> list[str]:
+    """Bring a namespace's ConfigMaps folder from the old shape to the current
+    one, in place. Returns one note per change or per file it left alone.
+
+    - configMaps/<f>.yaml holding only `configMaps: {<name>: spec}` becomes
+      configMaps/<name>.yaml holding spec at top level (data, binaryData;
+      its labels/annotations become commonLabels/commonAnnotations). A file
+      with several ConfigMaps is split, one file each.
+    - values/configMaps.yaml (the list) is deleted. Every file in the folder
+      is now deployed, so the ones it did NOT list are named in the notes.
+    """
+    notes: list[str] = []
+    if not CONFIG_MAPS:
+        return notes
+    cm_dir = ns_dir / CONFIG_MAPS_DIR
+    rel = lambda f: f"{ns_dir.name}/{f.relative_to(ns_dir)}"  # noqa: E731
+    for f in config_maps_files(ns_dir):
+        try:
+            data = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except yaml.YAMLError as e:
+            notes.append(f"CONFIGMAPS: {rel(f)} is not valid YAML ({e}) - left as is.")
+            continue
+        if not (isinstance(data, dict) and set(data) == {"configMaps"} and isinstance(data["configMaps"], dict)
+                and data["configMaps"] and all(isinstance(v, dict) for v in data["configMaps"].values())):
+            if isinstance(data, dict) and "configMaps" in data:
+                notes.append(f"CONFIGMAPS: {rel(f)} still uses `configMaps:` next to other keys - it still "
+                             f"renders, but rewrite it by hand to start at `data:`.")
+            continue
+        entries = data["configMaps"]
+        targets = {name: f.parent / f"{name}.yaml" for name in entries}
+        clash = [t for t in targets.values() if t != f and t.exists()]
+        if clash:
+            notes.append(f"CONFIGMAPS: {rel(f)} not migrated: {', '.join(rel(t) for t in clash)} already "
+                         f"exists. It still renders; merge them by hand.")
+            continue
+        for name, spec in entries.items():
+            new = {k: spec[k] for k in ("data", "binaryData") if spec.get(k)}
+            if spec.get("labels"):
+                new["commonLabels"] = spec["labels"]
+            if spec.get("annotations"):
+                new["commonAnnotations"] = spec["annotations"]
+            for k in sorted(set(spec) - {"data", "binaryData", "labels", "annotations"}):
+                notes.append(f"CONFIGMAPS: {rel(f)}: ConfigMap/{name} key '{k}' is not rendered by the "
+                             f"chart - dropped.")
+            targets[name].write_text(dump_yaml(new), encoding="utf-8")
+        if f not in targets.values():
+            f.unlink()
+        notes.append(f"CONFIGMAPS: {rel(f)} rewritten to start at `data:` -> "
+                     + ", ".join(rel(t) for t in targets.values()))
+    legacy = ns_dir / VALUES_DIR_NAME / LEGACY_CONFIG_MAPS_FILE
+    if legacy.is_file():
+        try:
+            listed_raw = (yaml.safe_load(legacy.read_text(encoding="utf-8")) or {}).get(LEGACY_CONFIG_MAPS_LIST_KEY)
+        except (yaml.YAMLError, AttributeError):
+            listed_raw = None
+        listed = {str(n).removesuffix(".yaml") for n in listed_raw or []} if isinstance(listed_raw, list) else set()
+        legacy.unlink()
+        notes.append(f"CONFIGMAPS: deleted {rel(legacy)}: every file in {ns_dir.name}/{CONFIG_MAPS_DIR}/ is "
+                     f"now deployed, one Application each.")
+        unlisted = [rel(f) for f in config_maps_files(ns_dir) if f.stem not in listed]
+        if unlisted and listed_raw is not None:
+            notes.append(f"CONFIGMAPS: NOW DEPLOYED, not listed before: {', '.join(unlisted)} - delete any "
+                         f"that should not reach the cluster.")
+    return notes
 
 
 # Instances (--instances): one release deployed several times side by side in
@@ -2827,7 +2889,55 @@ def rewire_service_selectors(releases: list[tuple["MicroserviceContext", list[di
     return notes
 
 
+# Codepages that turn UTF-8 text into "random characters" when UTF-8 bytes are
+# decoded with them: Windows Hebrew, Windows Western, DOS Hebrew (the console).
+MOJIBAKE_CODEPAGES = ("cp1255", "cp1252", "cp862")
+
+
+def find_mojibake(value: str) -> "tuple[str, str] | None":
+    """(codepage, repaired text) when `value` reads as UTF-8 text that was
+    decoded with a single-byte codepage, e.g. '׳©׳׳•׳' for 'שלום'. None for
+    clean text: real Hebrew does not survive encode(cp1255).decode(utf-8)."""
+    if value.isascii():
+        return None
+    for cp in MOJIBAKE_CODEPAGES:
+        try:
+            fixed = value.encode(cp).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if fixed != value:
+            return cp, fixed
+    # Lossy: bytes the codepage has no character for already became U+FFFD, so
+    # the text cannot be repaired. Every UTF-8 Hebrew letter starts with byte
+    # 0xD7, which reads as '׳' (cp1255/cp862) or '×' (cp1252), always followed
+    # by the letter's second byte (non-ASCII too): text whose non-ASCII
+    # characters are nearly all such pairs was Hebrew once.
+    non_ascii = sum(1 for c in value if not c.isascii())
+    for marker, cp in (("\u05f3", "cp1255"), ("\u00d7", "cp1252")):
+        pairs = sum(1 for a, b in zip(value, value[1:]) if a == marker and not b.isascii())
+        if pairs >= 2 and pairs * 2 * 10 >= non_ascii * 8:
+            return cp, ""
+    return None
+
+
+def _flag_mojibake(doc: dict, ctx: "MicroserviceContext", kind: str, name: str) -> None:
+    """Warn, never rewrite: the text is already broken where it was read (the
+    cluster, or a file the shell saved), and the payload stays as found."""
+    for field in ("data", "stringData"):
+        for key, value in ((doc.get(field) or {}) if isinstance(doc.get(field), dict) else {}).items():
+            hit = find_mojibake(value) if isinstance(value, str) else None
+            if hit:
+                sample = hit[1].strip().splitlines()[0][:40] if hit[1].strip() else ""
+                ctx.warnings.append(
+                    f"[P1] {kind}/{name} {field}.{key}: text looks garbled - UTF-8 that was read as "
+                    f"{hit[0]}" + (f" (it reads '{sample}' when repaired)" if sample else
+                                   " (characters were lost, it cannot be repaired)")
+                    + ". Kept as found: fix it at the source (the object in the cluster, or the file "
+                      "it was applied from).")
+
+
 def handle_configmap(doc: dict, ctx: MicroserviceContext, name: str) -> None:
+    _flag_mojibake(doc, ctx, "ConfigMap", name)
     entry = {}
     if doc.get("data"):
         entry["data"] = doc["data"]
@@ -2866,6 +2976,7 @@ def _flag_redis_config_issues(doc: dict, ctx: MicroserviceContext, name: str) ->
 
 
 def handle_secret(doc: dict, ctx: MicroserviceContext, name: str) -> None:
+    _flag_mojibake({"stringData": doc.get("stringData")}, ctx, "Secret", name)
     entry = {"type": doc.get("type", "Opaque")}
     if doc.get("data"):
         entry["data"] = doc["data"]
@@ -4920,8 +5031,7 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
                               argocd_url: str = "", console_url: str = "",
                               repo_web_url: str = "", per_namespace_cluster: bool = False,
                               preserve_resources_on_deletion: bool = True, config_maps: bool = True,
-                              config_maps_file: str = "configMaps.yaml", config_maps_dir: str = "configMaps",
-                              config_maps_list_key: str = "configMapFiles") -> str:
+                              config_maps_dir: str = "configMaps") -> str:
     """One Application per namespace folder in this tree, as YAML text.
 
     Every namespace folder — plain or variant (prd/yellow, prd/yellow/eu) — has
@@ -4966,11 +5076,10 @@ def build_root_applicationset(name: str, chart_repo_url: str, appset_chart_path:
         ("preserveResourcesOnDeletion", q("true" if preserve_resources_on_deletion else "false")),
         # The namespace's ConfigMaps folder (see CONFIG_MAPS).
         ("configMaps.enabled", q("true" if config_maps else "false")),
-        ("configMaps.file", q(config_maps_file)),
         ("configMaps.dir", q(config_maps_dir)),
-        ("configMaps.listKey", q(config_maps_list_key)),
         # The microservice Applications the chart renders: manual sync unless
-        # --auto-sync true. Always written — the chart's own default is true.
+        # --auto-sync true. Always written, though the chart's own fallback is
+        # false too.
         # Only the tree's default: the chart digs AUTO_SYNC_KEY out of each
         # folder's defaults.yaml (set by hand or by --namespace-auto-sync) and
         # falls back to this where it is absent.
@@ -5140,10 +5249,13 @@ _RENDER_MEMO = True      # reuse a render already done this run (verify -> fidel
 _RENDER_WORKERS = min(8, (__import__('os').cpu_count() or 1))  # >1: render a check's releases concurrently up front
 
 
-def _helm_cmd(chart: Path, release: str, namespace: str, value_files: list[Path]) -> list[str]:
+def _helm_cmd(chart: Path, release: str, namespace: str, value_files: list[Path],
+              sets: tuple[str, ...] = ()) -> list[str]:
     cmd = ["helm", "template", release, str(chart), "--namespace", k8s_ns(namespace)]
     for vf in value_files:
         cmd += ["-f", str(vf)]
+    for kv in sets:
+        cmd += ["--set-string", kv]
     return cmd
 
 
@@ -5159,7 +5271,7 @@ def _helm_run(cmd: list[str]) -> tuple[int, str, str]:
     return out
 
 
-def prerender(jobs: list[tuple[Path, str, str, list[Path]]]) -> None:
+def prerender(jobs: list[tuple]) -> None:
     """Runs the `helm template` calls a check is about to make, concurrently.
     Only fills _RENDER_CACHE: the check then walks its releases in its own
     order exactly as before, so every report line and error comes out in the
@@ -5172,8 +5284,9 @@ def prerender(jobs: list[tuple[Path, str, str, list[Path]]]) -> None:
         list(pool.map(lambda c: _helm_run(list(c)), cmds))
 
 
-def helm_template(chart: Path, release: str, namespace: str, value_files: list[Path]) -> list[dict]:
-    cmd = _helm_cmd(chart, release, namespace, value_files)
+def helm_template(chart: Path, release: str, namespace: str, value_files: list[Path],
+                  sets: tuple[str, ...] = ()) -> list[dict]:
+    cmd = _helm_cmd(chart, release, namespace, value_files, sets)
     # encoding="utf-8" is NOT optional, and its absence was a real data-corruption
     # bug rather than a cosmetic one. `text=True` alone decodes the child's stdout
     # with locale.getpreferredencoding() — on Windows that is the ANSI codepage
@@ -5304,23 +5417,27 @@ def verify_no_conflicts(chart: Path, output_dir: Path, skip: frozenset = frozens
                 continue
             claim(namespace, release, helm_template(chart, argo_release_name(namespace, release), namespace, chain))
             rendered += 1
-        # The ConfigMaps release (see CONFIG_MAPS): its own chain, claimed
-        # like any release, so a ConfigMap a microservice also renders shows
-        # up as a NAMESPACE CONFLICT.
-        for vf in config_maps_files(values_dir):
+        # The ConfigMaps folder (see CONFIG_MAPS): one release per file,
+        # claimed like any release, so a ConfigMap a microservice also renders
+        # shows up as a NAMESPACE CONFLICT.
+        legacy = values_dir / LEGACY_CONFIG_MAPS_FILE
+        if CONFIG_MAPS and legacy.is_file() and legacy not in skip:
+            conflicts.append(
+                f"BROKEN CHAIN in '{namespace}': {legacy.relative_to(output_dir)} is the old ConfigMaps "
+                f"list. ms-applicationSet no longer reads it and deploys it as a microservice with no "
+                f"base/ - delete it (re-running the converter does) and make each "
+                f"{CONFIG_MAPS_DIR}/ file start at `data:`.")
+        for stem, n in Counter(f.stem for f in config_maps_files(ns_dir)).items():
+            if n > 1:
+                conflicts.append(f"DUPLICATE RELEASE in '{namespace}': {n} files named '{stem}.yaml' "
+                                 f"under {CONFIG_MAPS_DIR}/ - one ConfigMap and one Application per name.")
+        for vf in config_maps_files(ns_dir):
             if vf in skip:
                 continue
-            release = config_maps_release(ns_dir, vf)
-            cm_chain, problem = config_maps_chain(ns_dir, vf)
-            missing = [f for f in cm_chain if not f.exists()]
-            if problem or missing:
-                conflicts.append(
-                    f"BROKEN CHAIN in '{namespace}': {vf.relative_to(output_dir)} "
-                    + (problem if problem else "lists files that do not exist: "
-                       + ", ".join(str(f.relative_to(output_dir)) for f in missing))
-                    + ". ArgoCD fails that Application's sync.")
-                continue
-            claim(namespace, release, helm_template(chart, argo_release_name(namespace, release), namespace, cm_chain))
+            files, sets = config_maps_render_args(vf)
+            claim(namespace, config_maps_release(vf),
+                  helm_template(chart, argo_release_name(namespace, config_maps_release(vf)), namespace,
+                                files, sets))
             rendered += 1
 
     cluster_shared_dir = output_dir / CLUSTER_SHARED_DIR_NAME / VALUES_DIR_NAME
@@ -6805,16 +6922,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--config-maps", nargs="?", const=True, default=True, type=_bool_arg,
                      metavar="true|false",
                      help="the namespace ConfigMaps folder (configMaps.enabled in "
-                          "rootApplicationSet.yaml). On by default: values/<--config-maps-file> "
-                          "is not a microservice but a list, under <--config-maps-list-key>, of "
-                          "<namespace>/<--config-maps-dir>/<name>.yaml files to deploy as one "
-                          "Application per namespace. false: that file is an ordinary release.")
-    ap.add_argument("--config-maps-file", default="configMaps.yaml", metavar="FILE",
-                     help="the ConfigMaps list file under values/ (default configMaps.yaml)")
+                          "rootApplicationSet.yaml). On by default: every "
+                          "<namespace>/<--config-maps-dir>/<name>.yaml starts at `data:` and is "
+                          "deployed as ConfigMap/<name> by its own Application, <name>-cm-<ns>. "
+                          "Re-running migrates the old shape (values/configMaps.yaml list, "
+                          "files wrapped in configMaps: <name>:). false: the folder is not deployed.")
     ap.add_argument("--config-maps-dir", default="configMaps", metavar="DIR",
                      help="the ConfigMaps folder under each namespace folder (default configMaps)")
-    ap.add_argument("--config-maps-list-key", default="configMapFiles", metavar="KEY",
-                     help="the key in the list file naming the files to deploy (default configMapFiles)")
     ap.add_argument("--exclude", action="append", default=[], metavar="PATTERN",
                      help="skip whole stacks: a microservice file with any object whose name or "
                           "label/annotation VALUE contains PATTERN (case-insensitive) is skipped "
@@ -6942,9 +7056,8 @@ def run(args: argparse.Namespace) -> None:
             sys.exit(f"--instances {base}: give a release name, optionally =copy1,copy2,...")
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
-    global CONFIG_MAPS, CONFIG_MAPS_FILE, CONFIG_MAPS_DIR, CONFIG_MAPS_LIST_KEY
-    CONFIG_MAPS, CONFIG_MAPS_FILE = args.config_maps, args.config_maps_file
-    CONFIG_MAPS_DIR, CONFIG_MAPS_LIST_KEY = args.config_maps_dir.strip("/"), args.config_maps_list_key
+    global CONFIG_MAPS, CONFIG_MAPS_DIR
+    CONFIG_MAPS, CONFIG_MAPS_DIR = args.config_maps, args.config_maps_dir.strip("/")
     ENV_IN_VALUES = args.env_in_values
     PREVENT_RESTART_FLAG = args.prevent_restart
     EXACT_COPY = args.exact_copy
@@ -7581,13 +7694,13 @@ def run(args: argparse.Namespace) -> None:
     if env_groups:
         summary["env_group_combinations"] = env_group_applied
     report_dir.mkdir(parents=True, exist_ok=True)
-    (report_dir / "conversion_report.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (report_dir / "conversion_report.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     # Read by name_fidelity_check.py, which otherwise reports every deliberate
     # collision rename as an INVENTED name and fails the run. Written every time,
     # including empty, so the checker can tell "no renames happened" from "this
     # output predates the record and cannot be judged". Promotions keep their
     # name (from == to) and are recorded alongside for the same audit trail.
-    (report_dir / "renames.json").write_text(json.dumps(all_renames + all_promotions, indent=2),
+    (report_dir / "renames.json").write_text(json.dumps(all_renames + all_promotions, indent=2, ensure_ascii=False),
                                              encoding="utf-8")
     (report_dir / "conflicts_and_warnings.txt").write_text(
         ("\n".join(all_warnings) + "\n") if all_warnings else "No conflicts detected.\n", encoding="utf-8"
@@ -7620,8 +7733,7 @@ def run(args: argparse.Namespace) -> None:
             auto_sync=args.auto_sync, argocd_url=args.argocd_url, console_url=args.console_url,
             repo_web_url=args.repo_web_url, per_namespace_cluster=bool(namespace_clusters),
             preserve_resources_on_deletion=args.preserve_resources_on_deletion,
-            config_maps=args.config_maps, config_maps_file=args.config_maps_file,
-            config_maps_dir=args.config_maps_dir, config_maps_list_key=args.config_maps_list_key)
+            config_maps=args.config_maps, config_maps_dir=args.config_maps_dir)
         appset_header = (
             "# Auto-generated by convert_to_universal_chart.py — DO NOT EDIT BY HAND.\n"
             "# One Application per NAMESPACE DIRECTORY in this tree, each deploying the\n"
@@ -7660,6 +7772,16 @@ def run(args: argparse.Namespace) -> None:
     # Stale output — always reported, because a leftover <ns>/values/<name>.yaml
     # keeps ArgoCD deploying a microservice that no longer exists in the input.
     stale = find_stale_output(output_dir, expected_values, written_bases)
+
+    # The ConfigMaps folders: rewrite the old shape in place (see
+    # migrate_config_maps), reported in its own file.
+    cm_notes = [n for _, ns_dir in namespace_dirs_of(output_dir) for n in migrate_config_maps(ns_dir)]
+    if cm_notes:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "config_maps_migration.txt").write_text("\n".join(cm_notes) + "\n", encoding="utf-8")
+        print(f"\nConfigMaps folder: {len(cm_notes)} change(s) / note(s):")
+        for n in cm_notes:
+            print(f"  - {n}")
 
     # Every env the run wrote is in the explicit form ({value} / {valueFrom}).
     # A failure here is a converter bug, so it stops the run before anything

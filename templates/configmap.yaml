@@ -20,3 +20,28 @@ binaryData:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
+{{- /* Top-level data/binaryData: ONE ConfigMap named after the release
+       (fullnameOverride, else nameOverride, else the release name). This is
+       what a values repo's <ns>/configMaps/<name>.yaml file holds: it starts at
+       `data:`, and ms-applicationSet deploys it with fullnameOverride=<name>. */}}
+{{- if or .Values.data .Values.binaryData }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "universal-chart.fullname" . }}
+  labels:
+    {{- include "universal-chart.objectLabels" (dict "root" $ "own" dict) | nindent 4 }}
+  {{- with include "universal-chart.annotations" (dict "root" $ "own" dict) | fromYaml }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- with .Values.data }}
+data:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.binaryData }}
+binaryData:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

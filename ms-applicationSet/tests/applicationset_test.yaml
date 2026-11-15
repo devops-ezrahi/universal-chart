@@ -68,7 +68,9 @@ tests:
       - notExists:
           path: spec.template.spec.syncPolicy
 
-  - it: digs autoSync from defaults.yaml, falling back to the chart's autoSync (true)
+  - it: digs autoSync from defaults.yaml, falling back to the root file's autoSync
+    set:
+      autoSync: "true"
     asserts:
       - matchRegex:
           path: spec.templatePatch
@@ -194,7 +196,7 @@ tests:
           path: spec.template.spec.sources[0].helm.parameters
           value:
             - name: links.argocd
-              value: https://argo.example.com/applications/openshift-gitops/{{ if eq .path.filename "configMaps.yaml" }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black
+              value: https://argo.example.com/applications/openshift-gitops/{{ .path.filename | trimSuffix ".yaml" }}{{ if or (eq .path.path "rakia-fac1/black/configMaps") (hasPrefix "rakia-fac1/black/configMaps/" .path.path) }}-cm{{ end }}-fac1-black
               forceString: true
             - name: links.console
               value: https://console.example.com
@@ -242,11 +244,11 @@ tests:
           path: spec.template.spec.sources[0].targetRevision
           value: v4.2.0
 
-  - it: keeps autoSync true when the root file leaves it out
+  - it: falls back to manual sync when the root file leaves autoSync out
     asserts:
       - matchRegex:
           path: spec.templatePatch
-          pattern: 'dig "autoSync" "true" \.'
+          pattern: 'dig "autoSync" "false" \.'
 
   - it: accepts a boolean false for preserveResourcesOnDeletion
     set:
@@ -255,55 +257,71 @@ tests:
       - notExists:
           path: spec.syncPolicy
 
-  # --- ConfigMaps folder ---
+  # --- ConfigMaps folder: one Application per configMaps/<name>.yaml ---
 
-  - it: names the ConfigMaps Application after its file, lower-cased
+  - it: enumerates the ConfigMaps folder with its own generator, matrixed with defaults.yaml
+    asserts:
+      - equal:
+          path: spec.generators[1].matrix.generators[0].git.files[0].path
+          value: rakia-fac1/black/configMaps/*.yaml
+      - equal:
+          path: spec.generators[1].matrix.generators[1].git.files[0].path
+          value: rakia-fac1/black/defaults.yaml
+      - equal:
+          path: spec.generators[1].matrix.generators[1].git.pathParamPrefix
+          value: defaults
+
+  - it: names a ConfigMaps Application <file>-cm, a microservice <file>
     asserts:
       - equal:
           path: spec.template.metadata.name
-          value: '{{ if eq .path.filename "configMaps.yaml" }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black'
+          value: '{{ .path.filename | trimSuffix ".yaml" }}{{ if or (eq .path.path "rakia-fac1/black/configMaps") (hasPrefix "rakia-fac1/black/configMaps/" .path.path) }}-cm{{ end }}-fac1-black'
 
-  - it: layers the listed configMaps/ files, then the list file, without base or defaults
+  - it: renders only the file itself, named after it, with no base or defaults
     asserts:
       - matchRegex:
           path: spec.templatePatch
-          pattern: '\{\{- if eq \.path\.filename "configMaps\.yaml" \}\}\n\s+sources:'
+          pattern: '\{\{- if or \(eq \.path\.path "rakia-fac1/black/configMaps"\) \(hasPrefix "rakia-fac1/black/configMaps/" \.path\.path\) \}\}\n\s+sources:'
       - matchRegex:
           path: spec.templatePatch
-          pattern: '\{\{- range \(index \. "configMapFiles"\) \}\}\n\s+- .\$Values/rakia-fac1/black/configMaps/\{\{ \. \| toString \| trimSuffix "\.yaml" \}\}\.yaml.\n\s+\{\{- end \}\}\n\s+- .\$Values/\{\{ \.path\.path \}\}/\{\{ \.path\.filename \}\}.'
+          pattern: 'valueFiles:\n\s+- .\$Values/\{\{ \.path\.path \}\}/\{\{ \.path\.filename \}\}.\n\s+parameters:'
       - notMatchRegex:
           path: spec.templatePatch
-          pattern: 'defaults\.yaml|\$Values/base'
+          pattern: 'defaults\.yaml|\$Values/base|configMapFiles|fail '
       - matchRegex:
           path: spec.templatePatch
           pattern: 'name: workload\.type\n\s+value: none'
       - matchRegex:
           path: spec.templatePatch
-          pattern: 'fail "rakia-fac1/black/values/configMaps\.yaml must list'
+          pattern: 'name: fullnameOverride\n\s+value: .\{\{ \.path\.filename \| trimSuffix "\.yaml" \}\}.\n\s+forceString: true'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'configmaps: "rakia-fac1-black"'
 
   - it: reads the ConfigMaps folder under originPath
     set:
       originPath: teams/a
     asserts:
+      - equal:
+          path: spec.generators[1].matrix.generators[0].git.files[0].path
+          value: teams/a/rakia-fac1/black/configMaps/*.yaml
       - matchRegex:
           path: spec.templatePatch
-          pattern: '\$Values/teams/a/rakia-fac1/black/configMaps/'
+          pattern: 'eq \.path\.path "teams/a/rakia-fac1/black/configMaps"'
 
-  - it: takes the ConfigMaps file, folder and list key from the root file
+  - it: takes the ConfigMaps folder from the root file
     set:
       configMaps:
-        file: shared.yaml
-        dir: cms
-        listKey: files
+        dir: cms/
     asserts:
       - equal:
-          path: spec.template.metadata.name
-          value: '{{ if eq .path.filename "shared.yaml" }}shared{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black'
+          path: spec.generators[1].matrix.generators[0].git.files[0].path
+          value: rakia-fac1/black/cms/*.yaml
       - matchRegex:
           path: spec.templatePatch
-          pattern: 'range \(index \. "files"\).*\n.*\$Values/rakia-fac1/black/cms/'
+          pattern: 'eq \.path\.path "rakia-fac1/black/cms"'
 
-  - it: links the ConfigMaps Application to its own name in Argo CD
+  - it: links each ConfigMaps Application to its own name in Argo CD
     set:
       links:
         argocdUrl: https://argo.example.com
@@ -311,7 +329,7 @@ tests:
     asserts:
       - matchRegex:
           path: spec.templatePatch
-          pattern: 'value: "https://argo\.example\.com/applications/gitops/configmaps-fac1-black"'
+          pattern: 'value: .https://argo\.example\.com/applications/gitops/\{\{ \.path\.filename \| trimSuffix "\.yaml" \}\}\{\{ if or .*-cm\{\{ end \}\}-fac1-black.'
 
   - it: leaves every Application as before with configMaps.enabled "false"
     set:
@@ -324,3 +342,5 @@ tests:
       - notMatchRegex:
           path: spec.templatePatch
           pattern: 'configMaps|sources:'
+      - notExists:
+          path: spec.generators[1]

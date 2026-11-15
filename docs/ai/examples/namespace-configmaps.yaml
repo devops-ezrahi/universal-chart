@@ -1,26 +1,20 @@
 # Verified example: one file of a namespace's ConfigMaps folder,
-# <values-repo>/<ns>/configMaps/env1.yaml. It holds chart values, usually just
-# `configMaps`. The folder is deployed by ONE Application per namespace
-# (configmaps-<ns>), listed in <ns>/values/configMaps.yaml:
-#
-#   configMapFiles: [env1, namespace-conf]   # files in <ns>/configMaps/, in layering order
-#
-# Argo CD layers: configMaps/env1.yaml -> configMaps/namespace-conf.yaml ->
-# values/configMaps.yaml, plus workload.type=none. No base/, no defaults.yaml.
-# Render it the same way:
-#   helm template configmaps-dev . -n dev -f dev/configMaps/env1.yaml \
-#     -f dev/configMaps/namespace-conf.yaml -f dev/values/configMaps.yaml --set workload.type=none
-# Microservices use these by name: envFrom: {env1: {type: configMapRef}}.
-workload:
-  type: none          # set by the Application; written here so this file renders alone
-
-configMaps:
-  env1:               # map key = the ConfigMap's real name
-    data:
-      LOG_LEVEL: info
-      ENVIRONMENT: "{{ .Release.Namespace }}"
-  env1-files:
-    data:
-      app.properties: |
-        region=eu
-        timeout=30
+# <values-repo>/<ns>/configMaps/env1.yaml. It starts at `data:` (and/or
+# `binaryData:`), nothing before it: the FILE NAME is the ConfigMap's name.
+# Every file in the folder is deployed, no list: ms-applicationSet makes each
+# one its own Application, <name>-cm-<ns> (env1-cm-dev), rendering
+# ConfigMap/env1 from this file alone with fullnameOverride=env1 and
+# workload.type=none. No base/, no defaults.yaml. Render it the same way:
+#   helm template env1-cm-dev . -n dev -f dev/configMaps/env1.yaml \
+#     --set workload.type=none --set-string fullnameOverride=env1
+# Labels/annotations for the ConfigMap: commonLabels / commonAnnotations.
+# Microservices use it by name: envFrom: {env1: {type: configMapRef}}.
+# Values go through tpl like everywhere in the chart; Hebrew and any other
+# UTF-8 text is fine as-is.
+data:
+  LOG_LEVEL: info
+  ENVIRONMENT: "{{ .Release.Namespace }}"
+  GREETING: שלום עולם
+  app.properties: |
+    region=eu
+    timeout=30

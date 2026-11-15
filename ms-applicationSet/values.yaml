@@ -87,24 +87,23 @@ chartPath: "."
 #   chartRepoURL                 [https://github.com/devops-ezrahi/universal-chart.git]
 #   chartRevision                [main]
 #       The Universal Chart each generated Application renders.
-#   autoSync                     ["true"]
+#   autoSync                     ["false"]
 #       Whether each generated Application syncs itself (automated, prune,
 #       selfHeal). The folder's default: `autoSync: true|false` in its own
-#       defaults.yaml overrides it per Application (Argo CD 2.10+). The
-#       converter writes false unless --auto-sync true.
+#       defaults.yaml overrides it per Application (Argo CD 2.10+). Absent =
+#       manual sync. The converter writes false unless --auto-sync true.
 #   preserveResourcesOnDeletion  ["true"]
 #       "true" stops the controller adding resources-finalizer.argocd.argoproj.io
 #       to the Applications it generates, so deleting an Application, a folder
 #       or this ApplicationSet leaves the workloads running. "false" makes
 #       deletes cascade to the workloads.
 #   configMaps.enabled           ["true"]
-#   configMaps.file              [configMaps.yaml]
 #   configMaps.dir               [configMaps]
-#   configMaps.listKey           [configMapFiles]
-#       The namespace's ConfigMaps folder. values/<file> is not a microservice:
-#       it lists, under <listKey>, which <folder>/<dir>/<name>.yaml files
-#       (chart values, e.g. configMaps: {env1: {data: ...}}) to deploy. It
-#       becomes ONE Application, "<file stem, lower-cased>-<ns>" (configmaps-dev),
-#       layering those files in list order, then values/<file> itself: no
-#       base/, no defaults.yaml, workload.type none. "false" makes
-#       values/<file> an ordinary microservice again.
+#       The namespace's ConfigMaps folder. Every <folder>/<dir>/<name>.yaml
+#       becomes its own Application, "<name>-cm-<ns>" (app-conf-cm-dev),
+#       deploying ConfigMap/<name>. The file starts at `data:` (and/or
+#       binaryData:), nothing before it: the chart renders top-level data as
+#       one ConfigMap named after fullnameOverride, which the Application sets
+#       to <name>, with workload.type none. No base/, no defaults.yaml layered
+#       (its autoSync still applies). No list file: adding a ConfigMap is
+#       adding a file. "false" = the folder is not deployed.

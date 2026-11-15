@@ -1,13 +1,14 @@
 """A namespace's ConfigMaps folder and the ApplicationSet settings that live in
 rootApplicationSet.yaml.
 
-values/configMaps.yaml is not a microservice: it lists (configMapFiles) chart
-values files under <ns>/configMaps/, deployed by ms-applicationSet as one
-Application. The converter must not treat it as a release (no base/ for it),
-must render it the way Argo CD does when verifying, and must never call it or
-the folder stale. The root ApplicationSet always carries destinationServer,
-chartRepoURL, chartRevision, autoSync, preserveResourcesOnDeletion and
-configMaps.*, which ms-applicationSet/values.yaml no longer defines."""
+Every <ns>/configMaps/<name>.yaml starts at `data:` and is its own Application
+(<name>-cm-<ns>) deploying ConfigMap/<name>: no list file. The converter must
+render each one the way Argo CD does when verifying, never call the folder
+stale, and migrate the old shape (values/configMaps.yaml list + files wrapped
+in configMaps: <name>:). The root ApplicationSet always carries
+destinationServer, chartRepoURL, chartRevision, autoSync,
+preserveResourcesOnDeletion and configMaps.*, which
+ms-applicationSet/values.yaml no longer defines."""
 import subprocess
 import sys
 from pathlib import Path
@@ -49,13 +50,23 @@ def params(out):
     return {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
 
 
-def add_config_maps(out, listed, files):
-    ns = out / "shop-dev"
-    (ns / "configMaps").mkdir(exist_ok=True)
+def add_config_maps(out, files, ns="shop-dev"):
+    """files: {name: data}, written in the current shape (starting at data:)."""
+    d = out / ns / "configMaps"
+    d.mkdir(exist_ok=True)
     for name, data in files.items():
-        (ns / "configMaps" / f"{name}.yaml").write_text(
-            yaml.safe_dump({"configMaps": {name: {"data": data}}}), encoding="utf-8")
-    (ns / "values" / "configMaps.yaml").write_text(yaml.safe_dump({"configMapFiles": listed}), encoding="utf-8")
+        (d / f"{name}.yaml").write_text(yaml.safe_dump({"data": data}, allow_unicode=True), encoding="utf-8")
+
+
+def add_legacy_config_maps(out, listed, files, ns="shop-dev"):
+    """The old shape: values/configMaps.yaml lists, each file wraps its ConfigMap."""
+    d = out / ns / "configMaps"
+    d.mkdir(exist_ok=True)
+    for name, spec in files.items():
+        (d / f"{name}.yaml").write_text(yaml.safe_dump({"configMaps": {name: spec}}, allow_unicode=True),
+                                        encoding="utf-8")
+    (out / ns / "values" / "configMaps.yaml").write_text(yaml.safe_dump({"configMapFiles": listed}),
+                                                         encoding="utf-8")
 
 
 def test_root_applicationset_carries_every_appset_setting(tmp_path):
@@ -66,86 +77,108 @@ def test_root_applicationset_carries_every_appset_setting(tmp_path):
     assert p["autoSync"] == "false"
     assert p["preserveResourcesOnDeletion"] == "true"
     assert p["configMaps.enabled"] == "true"
-    assert p["configMaps.file"] == "configMaps.yaml"
     assert p["configMaps.dir"] == "configMaps"
-    assert p["configMaps.listKey"] == "configMapFiles"
+    assert "configMaps.file" not in p and "configMaps.listKey" not in p
     assert "chartPath" not in p
 
 
 def test_flags_set_the_root_parameters(tmp_path):
     p = params(convert(tmp_path, "--preserve-resources-on-deletion", "false", "--config-maps", "false",
-                       "--config-maps-file", "shared.yaml", "--config-maps-dir", "cms",
-                       "--config-maps-list-key", "files"))
+                       "--config-maps-dir", "cms"))
     assert p["preserveResourcesOnDeletion"] == "false"
-    assert (p["configMaps.enabled"], p["configMaps.file"], p["configMaps.dir"], p["configMaps.listKey"]) == \
-        ("false", "shared.yaml", "cms", "files")
+    assert (p["configMaps.enabled"], p["configMaps.dir"]) == ("false", "cms")
 
 
-def test_the_list_file_is_not_a_release(tmp_path):
+def test_the_old_list_file_is_not_a_release(tmp_path):
     values = tmp_path / "values"
     values.mkdir()
     for n in ("item1.yaml", "configMaps.yaml"):
         (values / n).write_text("{}\n", encoding="utf-8")
     assert [f.name for f in engine.values_files(values)] == ["item1.yaml"]
-    assert [f.name for f in engine.config_maps_files(values)] == ["configMaps.yaml"]
 
 
-def test_verify_renders_the_config_maps_release(tmp_path):
+def test_verify_renders_each_config_map_file_as_its_own_release(tmp_path):
     out = convert(tmp_path)
-    add_config_maps(out, ["env1", "namespace-conf.yaml"],
-                    {"env1": {"LOG_LEVEL": "info"}, "namespace-conf": {"region": "eu"}})
+    add_config_maps(out, {"env1": {"LOG_LEVEL": "info"}, "namespace-conf": {"greeting": "שלום עולם"}})
     rendered, conflicts = engine.verify_no_conflicts(REPO, out)
     assert conflicts == []
-    assert rendered == 3  # item1, item2 and the ConfigMaps release
-    chain, problem = engine.config_maps_chain(out / "shop-dev", out / "shop-dev" / "values" / "configMaps.yaml")
-    assert problem == ""
-    docs = engine.helm_template(REPO, "configmaps-dev", "shop-dev", chain)
-    assert sorted((d["kind"], d["metadata"]["name"]) for d in docs) == \
-        [("ConfigMap", "env1"), ("ConfigMap", "namespace-conf")]
+    assert rendered == 4  # item1, item2 and one release per ConfigMap file
+    vf = out / "shop-dev" / "configMaps" / "namespace-conf.yaml"
+    assert engine.config_maps_release(vf) == "namespace-conf-cm"
+    files, sets = engine.config_maps_render_args(vf)
+    docs = engine.helm_template(REPO, "namespace-conf-cm-dev", "shop-dev", files, sets)
+    assert [(d["kind"], d["metadata"]["name"], d["data"]) for d in docs] == \
+        [("ConfigMap", "namespace-conf", {"greeting": "שלום עולם"})]
 
 
-def test_verify_reports_a_missing_listed_file(tmp_path):
+def test_verify_still_renders_a_file_in_the_old_wrapped_shape(tmp_path):
     out = convert(tmp_path)
-    add_config_maps(out, ["env1", "nope"], {"env1": {"A": "1"}})
-    _, conflicts = engine.verify_no_conflicts(REPO, out)
-    assert any("BROKEN CHAIN" in c and "configMaps/nope.yaml" in c for c in conflicts), conflicts
+    d = out / "shop-dev" / "configMaps"
+    d.mkdir()
+    (d / "env1.yaml").write_text(yaml.safe_dump({"configMaps": {"env1": {"data": {"A": "1"}}}}), encoding="utf-8")
+    rendered, conflicts = engine.verify_no_conflicts(REPO, out)
+    assert conflicts == [] and rendered == 3
 
 
-def test_verify_reports_a_list_file_without_the_list(tmp_path):
+def test_verify_reports_a_leftover_list_file(tmp_path):
     out = convert(tmp_path)
-    add_config_maps(out, ["env1"], {"env1": {"A": "1"}})
-    (out / "shop-dev" / "values" / "configMaps.yaml").write_text("other: 1\n", encoding="utf-8")
+    add_config_maps(out, {"env1": {"A": "1"}})
+    (out / "shop-dev" / "values" / "configMaps.yaml").write_text("configMapFiles: [env1]\n", encoding="utf-8")
     _, conflicts = engine.verify_no_conflicts(REPO, out)
-    assert any("must list the configMaps/ files" in c for c in conflicts), conflicts
+    assert any("BROKEN CHAIN" in c and "old ConfigMaps list" in c for c in conflicts), conflicts
 
 
 def test_verify_reports_a_config_map_a_release_also_renders(tmp_path):
     cm = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "env1", "namespace": "shop-dev"},
           "data": {"A": "1"}}
     out = convert(tmp_path, extra={"item3": [deployment("item3", "shop-dev"), cm]})
-    add_config_maps(out, ["env1"], {"env1": {"A": "2"}})
+    add_config_maps(out, {"env1": {"A": "2"}})
     _, conflicts = engine.verify_no_conflicts(REPO, out)
-    assert any("NAMESPACE CONFLICT" in c and "ConfigMap/env1" in c and "configmaps" in c for c in conflicts), conflicts
+    assert any("NAMESPACE CONFLICT" in c and "ConfigMap/env1" in c and "env1-cm" in c for c in conflicts), conflicts
 
 
-def test_rerun_keeps_the_folder_and_list_file(tmp_path):
+def test_rerun_keeps_the_folder(tmp_path):
     out = convert(tmp_path)
-    add_config_maps(out, ["env1"], {"env1": {"A": "1"}})
+    add_config_maps(out, {"env1": {"A": "1"}})
     convert(tmp_path, "--prune")
-    assert (out / "shop-dev" / "values" / "configMaps.yaml").is_file()
-    assert (out / "shop-dev" / "configMaps" / "env1.yaml").is_file()
+    assert yaml.safe_load((out / "shop-dev" / "configMaps" / "env1.yaml").read_text(encoding="utf-8")) == \
+        {"data": {"A": "1"}}
 
 
-def test_upgrade_keeps_the_root_settings_and_skips_the_list_file(tmp_path):
+def test_rerun_migrates_the_old_shape(tmp_path):
+    out = convert(tmp_path)
+    add_legacy_config_maps(out, ["env1"], {
+        "env1": {"data": {"A": "שלום"}, "labels": {"team": "shop"}, "annotations": {"o": "ops"}},
+        "extra": {"binaryData": {"b": "aGk="}},
+    })
+    # A file named after nothing in particular, holding two ConfigMaps: split.
+    (out / "shop-dev" / "configMaps" / "pair.yaml").write_text(
+        yaml.safe_dump({"configMaps": {"one": {"data": {"X": "1"}}, "two": {"data": {"Y": "2"}}}}),
+        encoding="utf-8")
+    convert(tmp_path)
+    d = out / "shop-dev" / "configMaps"
+    assert not (out / "shop-dev" / "values" / "configMaps.yaml").exists()
+    assert sorted(f.name for f in d.iterdir()) == ["env1.yaml", "extra.yaml", "one.yaml", "two.yaml"]
+    env1 = (d / "env1.yaml").read_text(encoding="utf-8")
+    assert "שלום" in env1  # written as Hebrew, not \\u escapes
+    assert yaml.safe_load(env1) == {"data": {"A": "שלום"}, "commonLabels": {"team": "shop"},
+                                    "commonAnnotations": {"o": "ops"}}
+    assert yaml.safe_load((d / "one.yaml").read_text(encoding="utf-8")) == {"data": {"X": "1"}}
+    report = (out / "report" / "config_maps_migration.txt").read_text(encoding="utf-8")
+    assert "NOW DEPLOYED, not listed before" in report and "extra.yaml" in report and "one.yaml" in report
+    rendered, conflicts = engine.verify_no_conflicts(REPO, out)
+    assert conflicts == [] and rendered == 6
+
+
+def test_upgrade_keeps_the_root_settings_and_skips_the_old_list_file(tmp_path):
     from converter import upgrade
-    out = convert(tmp_path, "--preserve-resources-on-deletion", "false", "--config-maps-dir", "cms",
-                  "--config-maps-list-key", "files")
-    (out / "shop-dev" / "values" / "configMaps.yaml").write_text("files: [env1]\n", encoding="utf-8")
+    out = convert(tmp_path, "--preserve-resources-on-deletion", "false", "--config-maps-dir", "cms")
+    (out / "shop-dev" / "values" / "configMaps.yaml").write_text("configMapFiles: [env1]\n", encoding="utf-8")
     tree = upgrade.OldTree(out)
     rec = upgrade.recorded_settings(tree)
     assert rec["preserve_resources_on_deletion"] is False
     assert rec["config_maps"] is True
-    assert (rec["config_maps_dir"], rec["config_maps_list_key"], rec["config_maps_file"]) == \
-        ("cms", "files", "configMaps.yaml")
+    assert rec["config_maps_dir"] == "cms"
+    assert "config_maps_file" not in rec and "config_maps_list_key" not in rec
     # Not a release: an upgrade must not look for base/configMaps.yaml.
     assert sorted(tree.releases["shop-dev"]) == ["item1", "item2"]

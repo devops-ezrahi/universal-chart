@@ -19,7 +19,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from converter import engine, sources  # noqa: E402
 
 
+def _utf8_console() -> None:
+    """Print Hebrew (and any non-ASCII name or value) as-is. On Windows,
+    Python writes to a redirected or non-UTF-8 console in the ANSI codepage,
+    which garbles or fails on characters it cannot hold."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main() -> int:
+    _utf8_console()
     ap = engine.build_parser()
     ap.description = __doc__
     sources.add_arguments(ap)

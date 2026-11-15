@@ -162,8 +162,9 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
                 v = str(params.get(param, "")).lower()
                 if v in ("true", "false"):
                     s[dest] = v == "true"
-            for param, dest in (("configMaps.file", "config_maps_file"), ("configMaps.dir", "config_maps_dir"),
-                                ("configMaps.listKey", "config_maps_list_key")):
+            # configMaps.file / configMaps.listKey (the old list file) are gone:
+            # migrate_config_maps rewrites such a tree.
+            for param, dest in (("configMaps.dir", "config_maps_dir"),):
                 v = params.get(param)
                 if isinstance(v, str) and v and "{{" not in v:
                     s[dest] = v

@@ -247,7 +247,8 @@ def test_auto_sync_true_turns_it_back_on():
 
 
 @needs_helm
-@pytest.mark.parametrize("flag,automated", [([], True), (["--set", "autoSync=false"], False),
+@pytest.mark.parametrize("flag,automated", [([], False), (["--set", "autoSync=true"], True),
+                                            (["--set", "autoSync=false"], False),
                                             (["--set-string", "autoSync=false"], False)])
 def test_ms_applicationset_autosync(flag, automated):
     r = subprocess.run(["helm", "template", "x", str(CHART_DIR / "ms-applicationSet"),
@@ -383,7 +384,8 @@ def test_ms_applicationset_hands_links_to_the_chart():
     appset = next(d for d in docs if d["kind"] == "ApplicationSet")
     params = {p["name"]: p["value"] for p in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]}
     assert params["links.argocd"] == ('https://argo/applications/openshift-gitops/'
-                                      '{{ if eq .path.filename "configMaps.yaml" }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-dev')
+                                      '{{ .path.filename | trimSuffix ".yaml" }}{{ if or (eq .path.path "shop-dev/configMaps") '
+                                      '(hasPrefix "shop-dev/configMaps/" .path.path) }}-cm{{ end }}-dev')
     assert params["links.console"] == "https://console"
     link = next(d for d in docs if d["kind"] == "ConsoleLink")
     assert link["spec"]["namespaceDashboard"]["namespaces"] == ["shop-dev"]
