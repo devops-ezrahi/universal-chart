@@ -141,11 +141,20 @@ python gitops-factory/convert_to_universal_chart.py --help                      
   - `--cluster-scoped`: cluster objects go to the `cluster-shared` release.
   - `--instances x`: an instance layout.
   - `--verify-fidelity [--fidelity-strict]`: prove the rendered output equals the source.
+  - `--repair-mojibake [true|false]` (default true): ConfigMap/Secret text that
+    is UTF-8 read with a Windows console or ANSI codepage (Hebrew showing as
+    `╫É╫û╫ò` for cp437, `׳©׳` for cp1255, `×©` for cp1252) is written
+    repaired when it can be restored exactly, and every one is reported as
+    `[P1]` in `conflicts_and_warnings.txt`. Text that lost characters is only
+    reported. The fidelity check lists a repair as INFO, not as a change.
 - Deliberately not converted: ServiceMonitors (dropped, reported). PDBs and
   NetworkAttachmentDefinitions pass through `extraDeploy`.
 - Reports are written to `<out>/report/` (`conflicts_and_warnings.txt`,
   `renames.json`, `fidelity_report.txt`, `conversion_report.json`).
-- Tests: `python -m pytest -q`. `tests/converter/regression/<Defect>/` holds one
+- Tests: `python tools/convert_and_verify.py --cluster-scoped`, then
+  `cd tests/converter && python -m pytest -q` (as CI does: some tests read the
+  generated reports, and that folder's `pytest.ini` sets importlib mode and lists
+  `testpaths`, so add a new top-level test file there). `tests/converter/regression/<Defect>/` holds one
   folder per fixed bug (`error.txt`, `STATUS.md`, fixture, test). Read the
   matching folder before touching related engine code.
 - Showcase: `python tools/convert_and_verify.py` rebuilds `.generated/output-showcase/`

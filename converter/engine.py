@@ -114,6 +114,7 @@ import ast
 import copy
 import hashlib
 import json
+import base64
 import re
 import subprocess
 import sys
@@ -2890,54 +2891,94 @@ def rewire_service_selectors(releases: list[tuple["MicroserviceContext", list[di
 
 
 # Codepages that turn UTF-8 text into "random characters" when UTF-8 bytes are
-# decoded with them: Windows Hebrew, Windows Western, DOS Hebrew (the console).
-MOJIBAKE_CODEPAGES = ("cp1255", "cp1252", "cp862")
+# decoded with them. cp437 / cp850: the console of a US / Western Windows
+# (PowerShell and cmd read a native command's output with it), which turns
+# 'אזורי' into '╫É╫û╫ò╫¿╫Ö'. cp1255 / cp1252: Windows Hebrew / Western ANSI.
+# cp862: the console of a Hebrew Windows.
+MOJIBAKE_CODEPAGES = ("cp437", "cp850", "cp1255", "cp1252", "cp862")
+# Repair what find_mojibake can restore exactly (--repair-mojibake).
+REPAIR_MOJIBAKE = True
 
 
 def find_mojibake(value: str) -> "tuple[str, str] | None":
     """(codepage, repaired text) when `value` reads as UTF-8 text that was
-    decoded with a single-byte codepage, e.g. '׳©׳׳•׳' for 'שלום'. None for
-    clean text: real Hebrew does not survive encode(cp1255).decode(utf-8)."""
+    decoded with a single-byte codepage, e.g. '╫⌐╫£╫ò╫¥' (cp437) or '׳©׳׳•׳'
+    (cp1255) for 'שלום'. The repaired text is "" when characters were lost
+    and it cannot be restored. None for clean text: real Hebrew (or é, —, ₪)
+    does not survive encode(<codepage>).decode(utf-8)."""
     if value.isascii():
         return None
+    fixes = []
     for cp in MOJIBAKE_CODEPAGES:
         try:
             fixed = value.encode(cp).decode("utf-8")
         except (UnicodeEncodeError, UnicodeDecodeError):
             continue
         if fixed != value:
-            return cp, fixed
+            fixes.append((len(fixed), cp, fixed))
+    if fixes:
+        # Mojibake takes 2-3 characters per real one: the shortest repair wins.
+        _, cp, fixed = min(fixes)
+        return cp, fixed
     # Lossy: bytes the codepage has no character for already became U+FFFD, so
     # the text cannot be repaired. Every UTF-8 Hebrew letter starts with byte
-    # 0xD7, which reads as '׳' (cp1255/cp862) or '×' (cp1252), always followed
-    # by the letter's second byte (non-ASCII too): text whose non-ASCII
-    # characters are nearly all such pairs was Hebrew once.
+    # 0xD7, which reads as '╫' (cp437/cp850), '׳' (cp1255) or '×' (cp1252),
+    # always followed by the letter's second byte (non-ASCII too): text whose
+    # non-ASCII characters are nearly all such pairs was Hebrew once.
     non_ascii = sum(1 for c in value if not c.isascii())
-    for marker, cp in (("\u05f3", "cp1255"), ("\u00d7", "cp1252")):
+    for marker, cp in (("\u256b", "cp437"), ("\u05f3", "cp1255"), ("\u00d7", "cp1252")):
         pairs = sum(1 for a, b in zip(value, value[1:]) if a == marker and not b.isascii())
         if pairs >= 2 and pairs * 2 * 10 >= non_ascii * 8:
             return cp, ""
     return None
 
 
-def _flag_mojibake(doc: dict, ctx: "MicroserviceContext", kind: str, name: str) -> None:
-    """Warn, never rewrite: the text is already broken where it was read (the
-    cluster, or a file the shell saved), and the payload stays as found."""
-    for field in ("data", "stringData"):
-        for key, value in ((doc.get(field) or {}) if isinstance(doc.get(field), dict) else {}).items():
-            hit = find_mojibake(value) if isinstance(value, str) else None
-            if hit:
-                sample = hit[1].strip().splitlines()[0][:40] if hit[1].strip() else ""
-                ctx.warnings.append(
-                    f"[P1] {kind}/{name} {field}.{key}: text looks garbled - UTF-8 that was read as "
-                    f"{hit[0]}" + (f" (it reads '{sample}' when repaired)" if sample else
-                                   " (characters were lost, it cannot be repaired)")
-                    + ". Kept as found: fix it at the source (the object in the cluster, or the file "
-                      "it was applied from).")
+def _repair_mojibake(doc: dict, ctx: "MicroserviceContext", kind: str, name: str,
+                     fields: tuple[str, ...] = ("data",), b64_fields: tuple[str, ...] = ()) -> None:
+    """Garbled text (UTF-8 read with a console/ANSI codepage, see
+    find_mojibake) in a ConfigMap's data or a Secret's data/stringData.
+    Text that can be restored exactly is restored in `doc` (unless
+    --repair-mojibake false) and reported; text that lost characters is only
+    reported. Base64 fields (a Secret's data) are checked decoded."""
+    def report(field, key, cp, fixed, repaired):
+        sample = fixed.strip().splitlines()[0][:40] if fixed.strip() else ""
+        if repaired:
+            what = (f"repaired to '{sample}'. The live object holds the garbled text: syncing this "
+                    f"release writes the repaired text to the cluster")
+        elif fixed:
+            what = f"it reads '{sample}' when repaired; kept as found (--repair-mojibake false)"
+        else:
+            what = "characters were lost, it cannot be repaired; kept as found"
+        ctx.warnings.append(f"[P1] {kind}/{name} {field}.{key}: garbled text - UTF-8 that was read as "
+                            f"{cp} (a Windows console or ANSI codepage) - {what}. Fix it where it was "
+                            f"written (the file or script it was applied from).")
+
+    for field in fields + b64_fields:
+        values = doc.get(field)
+        if not isinstance(values, dict):
+            continue
+        for key, value in list(values.items()):
+            if not isinstance(value, str):
+                continue
+            text = value
+            if field in b64_fields:
+                try:
+                    text = base64.b64decode(value, validate=True).decode("utf-8")
+                except (ValueError, UnicodeDecodeError):
+                    continue
+            hit = find_mojibake(text)
+            if not hit:
+                continue
+            cp, fixed = hit
+            repaired = bool(fixed) and REPAIR_MOJIBAKE
+            if repaired:
+                values[key] = (base64.b64encode(fixed.encode("utf-8")).decode("ascii")
+                               if field in b64_fields else fixed)
+            report(field, key, cp, fixed, repaired)
 
 
 def handle_configmap(doc: dict, ctx: MicroserviceContext, name: str) -> None:
-    _flag_mojibake(doc, ctx, "ConfigMap", name)
+    _repair_mojibake(doc, ctx, "ConfigMap", name)
     entry = {}
     if doc.get("data"):
         entry["data"] = doc["data"]
@@ -2976,7 +3017,7 @@ def _flag_redis_config_issues(doc: dict, ctx: MicroserviceContext, name: str) ->
 
 
 def handle_secret(doc: dict, ctx: MicroserviceContext, name: str) -> None:
-    _flag_mojibake({"stringData": doc.get("stringData")}, ctx, "Secret", name)
+    _repair_mojibake(doc, ctx, "Secret", name, fields=("stringData",), b64_fields=("data",))
     entry = {"type": doc.get("type", "Opaque")}
     if doc.get("data"):
         entry["data"] = doc["data"]
@@ -6052,9 +6093,30 @@ def _fidelity_diff(kind: str, raw: Any, rendered: Any, path: tuple = ()) -> list
     # An empty raw value the render spells as the API default it stands for.
     if raw in (None, "") and path and KUBERNETES_FILLED_DEFAULTS.get(path[-1]) == rendered:
         return []
+    if raw != rendered and _is_mojibake_repair(raw, rendered):
+        return [("REPAIRED", _dot(path), f"raw={raw!r} render={rendered!r}")]
     if raw != rendered:
         return [("CHANGED", _dot(path), f"raw={raw!r} render={rendered!r}")]
     return []
+
+
+def _is_mojibake_repair(raw: Any, rendered: Any) -> bool:
+    """True when `rendered` is exactly find_mojibake's repair of `raw` (as
+    text, or as base64 of text: a Secret's data). --repair-mojibake did it on
+    purpose and reported it; it is not a loss."""
+    if not (isinstance(raw, str) and isinstance(rendered, str)):
+        return False
+    pairs = [(raw, rendered)]
+    try:
+        pairs.append((base64.b64decode(raw, validate=True).decode("utf-8"),
+                      base64.b64decode(rendered, validate=True).decode("utf-8")))
+    except (ValueError, UnicodeDecodeError):
+        pass
+    for r, out in pairs:
+        hit = find_mojibake(r)
+        if hit and hit[1] and hit[1] == out:
+            return True
+    return False
 
 
 def load_raw_index(ns_dir: Path) -> dict[tuple[str, str], list[tuple[str, dict]]]:
@@ -6511,6 +6573,11 @@ def verify_raw_fidelity(chart: Path, input_dir: Path, output_dir: Path,
                 if severity == "ADDED":
                     stats["added"] += 1
                     continue  # chart filling in a Kubernetes default — not loss
+                if severity == "REPAIRED":
+                    stats["relocated"] += 1
+                    report.append(f"  INFO   {kind}/{name} {field_path}: garbled Windows-codepage text "
+                                  f"repaired (--repair-mojibake), reported in conflicts_and_warnings.txt")
+                    continue
                 # A reference that CHANGED because the object it names was
                 # renamed on collision is the SAME FACT as the rename, which is
                 # already reported as its own INFO line above. _fidelity_diff
@@ -6919,6 +6986,12 @@ def build_parser() -> argparse.ArgumentParser:
                           "true (default): deleting a microservice's Application, a namespace "
                           "folder or its ApplicationSet leaves the workloads running. false: "
                           "deletes cascade to the workloads.")
+    ap.add_argument("--repair-mojibake", nargs="?", const=True, default=True, type=_bool_arg,
+                     metavar="true|false",
+                     help="ConfigMap/Secret text that is UTF-8 read with a Windows console or ANSI "
+                          "codepage (Hebrew showing as '╫É╫û╫ò' or '׳©׳'): on by default, text that "
+                          "can be restored exactly is written repaired, each one reported as [P1] in "
+                          "conflicts_and_warnings.txt. false: only report it.")
     ap.add_argument("--config-maps", nargs="?", const=True, default=True, type=_bool_arg,
                      metavar="true|false",
                      help="the namespace ConfigMaps folder (configMaps.enabled in "
@@ -7056,7 +7129,8 @@ def run(args: argparse.Namespace) -> None:
             sys.exit(f"--instances {base}: give a release name, optionally =copy1,copy2,...")
     ESO_API_VERSION_OVERRIDE = args.external_secrets_api_version
     ARGOCD_MANIFESTS = args.argocd_manifests
-    global CONFIG_MAPS, CONFIG_MAPS_DIR
+    global CONFIG_MAPS, CONFIG_MAPS_DIR, REPAIR_MOJIBAKE
+    REPAIR_MOJIBAKE = args.repair_mojibake
     CONFIG_MAPS, CONFIG_MAPS_DIR = args.config_maps, args.config_maps_dir.strip("/")
     ENV_IN_VALUES = args.env_in_values
     PREVENT_RESTART_FLAG = args.prevent_restart

@@ -127,7 +127,9 @@ helm lint .
 helm lint ms-applicationSet
 helm unittest .                    # needs the helm-unittest plugin
 helm unittest ms-applicationSet
-python -m pytest -q                # converter suite (pip install -r requirements.txt)
+# converter suite (pip install -r requirements.txt), exactly as CI runs it:
+python tools/convert_and_verify.py --cluster-scoped   # some tests read its .generated/ reports
+(cd tests/converter && python -m pytest -q)           # its pytest.ini: importlib mode + testpaths
 ```
 
 ## Changing the chart itself
