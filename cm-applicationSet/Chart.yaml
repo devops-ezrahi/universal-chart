@@ -7,5 +7,5 @@ description: >-
   ConfigMap/<name> with the Universal Chart. Rendered once per namespace
   directory by the values repo's own rootApplicationSet.yaml.
 type: application
-version: 4.6.0
+version: 5.0.0
 appVersion: "1.0.0"
