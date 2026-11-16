@@ -21,13 +21,13 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "sed -i 's/^version: .*/version: ${nextRelease.version}/' Chart.yaml ms-applicationSet/Chart.yaml"
+        "prepareCmd": "sed -i 's/^version: .*/version: ${nextRelease.version}/' Chart.yaml ms-applicationSet/Chart.yaml cm-applicationSet/Chart.yaml"
       }
     ],
     [
       "@semantic-release/git",
       {
-        "assets": ["Chart.yaml", "ms-applicationSet/Chart.yaml"],
+        "assets": ["Chart.yaml", "ms-applicationSet/Chart.yaml", "cm-applicationSet/Chart.yaml"],
         "message": "chore(release): ${nextRelease.version} [skip ci]"
       }
     ],

@@ -5,7 +5,7 @@ Read this whole file first. Deeper material:
 
 - `docs/ai/values-guide.md`: how to write values correctly (rules, every
   collection's shape, pitfalls).
-- `docs/ai/gitops-and-converter.md`: the values repo layout, `ms-applicationSet`,
+- `docs/ai/gitops-and-converter.md`: the values repo layout, `ms-applicationSet`, `cm-applicationSet`,
   the converter and `values_editor.py`.
 - `docs/ai/examples/*.yaml`: values files verified to render. Copy from these.
 
@@ -20,7 +20,7 @@ done until the docs match the code, in the same change (commit/PR)**:
 |---|---|
 | a template, helper, default or validation (`templates/`, `values.yaml`, `values.schema.json`) | `docs/ai/values-guide.md`, and the golden rules below if a rule changed |
 | a values key (added, renamed, removed, new default) | `docs/ai/values-guide.md`, and `docs/ai/examples/*.yaml` if they use it |
-| `ms-applicationSet/` (parameters, naming, layering) | `docs/ai/gitops-and-converter.md`. A new ApplicationSet-level setting goes in `rootApplicationSet.yaml` (a fallback in the template, a parameter written by `build_root_applicationset`), never as a key in `ms-applicationSet/values.yaml` |
+| `ms-applicationSet/` or `cm-applicationSet/` (parameters, naming, layering) | `docs/ai/gitops-and-converter.md`. A new ApplicationSet-level setting goes in `rootApplicationSet.yaml` (a fallback in the template, a parameter written by `build_root_applicationset`), never as a key in `ms-applicationSet/values.yaml` or `cm-applicationSet/values.yaml` |
 | converter options or output layout (`converter/`, `gitops-factory/`) | `docs/ai/gitops-and-converter.md`, `gitops-factory/README.md` |
 | the values-repo layout, or how agents should find the chart | `converter/values_repo_agents.md` (the AGENTS.md written into values repos) |
 | a breaking change for existing values | all of the above that apply, plus a clear `feat!:`/`fix!:` commit |
@@ -37,12 +37,13 @@ or tell the user.
 
 ## What this repo is
 
-Three things live here. Keep them apart in your head:
+Four things live here. Keep them apart in your head:
 
 | Part | Path | What it is |
 |---|---|---|
 | **The chart** | repo root (`Chart.yaml`, `values.yaml`, `values.schema.json`, `templates/`, `tests/`) | `super-universal-chart` v4: ONE generic Helm chart that deploys any app from values alone. No app-specific templates, ever. |
-| **ms-applicationSet** | `ms-applicationSet/` | A small separate chart: one Argo CD ApplicationSet per namespace folder of a values repo. It fans out over `values/*.yaml` and deploys each file with the chart (`values/configMaps.yaml` is the exception: one Application for the namespace's `configMaps/` folder). |
+| **ms-applicationSet** | `ms-applicationSet/` | A small separate chart: one Argo CD ApplicationSet per namespace folder of a values repo. It fans out over `values/*.yaml` and deploys each file with the chart. |
+| **cm-applicationSet** | `cm-applicationSet/` | Its sibling: one ApplicationSet (`<ns>-configmaps`) per namespace folder, one Application per `configMaps/<name>.yaml` (a ConfigMap whose file starts at `data:`). Deployed by the same root Application, as a second source. |
 | **The converter** | `gitops-factory/convert_to_universal_chart.py`, `converter/`, `tools/`, `tests/converter/` | Python. It converts running namespaces or manifest dumps into a values repo (`base/` + `<ns>/defaults.yaml` + `<ns>/values/`) and verifies it by rendering every release. |
 
 `.helmignore` excludes everything except the chart itself (Argo CD renders the
@@ -125,9 +126,13 @@ helm template myrel . -f v.yaml --show-only templates/deployment.yaml
 
 helm lint .
 helm lint ms-applicationSet
+helm lint cm-applicationSet
 helm unittest .                    # needs the helm-unittest plugin
 helm unittest ms-applicationSet
-python -m pytest -q                # converter suite (pip install -r requirements.txt)
+helm unittest cm-applicationSet
+# converter suite (pip install -r requirements.txt), exactly as CI runs it:
+python tools/convert_and_verify.py --cluster-scoped   # some tests read its .generated/ reports
+(cd tests/converter && python -m pytest -q)           # its pytest.ini: importlib mode + testpaths
 ```
 
 ## Changing the chart itself

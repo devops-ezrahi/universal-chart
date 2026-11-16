@@ -51,15 +51,15 @@ If that revision has no `docs/ai/` (older than the docs), use its
 base/<release>.yaml                 shared by EVERY namespace (prod included)
 <ns>/defaults.yaml                  every release in one namespace
 <ns>/values/<release>.yaml          one namespace only: image tag, replicas, differences
-<ns>/values/configMaps.yaml         optional, NOT a release: configMapFiles: [names] to deploy
-<ns>/configMaps/<name>.yaml         optional: the namespace's shared ConfigMaps (chart values)
+<ns>/configMaps/<name>.yaml         optional: ConfigMap/<name>, the file starts at `data:`
 ```
 
 Layered lowest → highest: `base` → `defaults` → `values`.
-The ConfigMaps folder is its own Application (`configmaps-<ns>`): the files
-`values/configMaps.yaml` lists, in order, then that file. No `base`, no
-`defaults`. ApplicationSet settings (`chartRevision`, `autoSync`,
-`preserveResourcesOnDeletion`, `destinationServer`, `configMaps.*`) live in
+Every file in `<ns>/configMaps/` is deployed by the chart repo's
+`cm-applicationSet` (ApplicationSet `<ns>-configmaps`), one Application each
+(`<name>-cm-<ns>`): only that file, named after it. It starts at `data:`
+(nothing before it). No list file, no `base`, no `defaults`. ApplicationSet settings (`chartRevision`, `autoSync`,
+`preserveResourcesOnDeletion`, `destinationServer`, `configMaps.dir`) live in
 `rootApplicationSet.yaml`.
 Put a change in the narrowest file that covers it. If it goes in `base/`, say
 that it changes prod too.

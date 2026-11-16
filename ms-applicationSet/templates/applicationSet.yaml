@@ -14,21 +14,17 @@
 {{- $destinationServer := .Values.destinationServer | default "https://kubernetes.default.svc" -}}
 {{- /* hasKey, not default: false/"false" must stay false. Absent = true. */ -}}
 {{- $preserve := ternary (toString .Values.preserveResourcesOnDeletion) "true" (hasKey .Values "preserveResourcesOnDeletion") | lower -}}
-{{- $autoSyncIn := ternary (toString .Values.autoSync) "true" (hasKey .Values "autoSync") | lower -}}
-{{- /* The namespace's ConfigMaps Application (see "ConfigMaps folder" below):
-       values/<cmFile> lists, under <cmListKey>, which <folder>/<cmDir>/*.yaml
-       files to deploy. Off with configMaps.enabled "false". */ -}}
-{{- $cmOn := ne (lower (toString (dig "configMaps" "enabled" "true" .Values.AsMap))) "false" -}}
-{{- $cmFile := dig "configMaps" "file" "configMaps.yaml" .Values.AsMap | toString -}}
-{{- $cmDir := dig "configMaps" "dir" "configMaps" .Values.AsMap | toString | trimSuffix "/" -}}
-{{- $cmListKey := dig "configMaps" "listKey" "configMapFiles" .Values.AsMap | toString -}}
-{{- /* The Application's name, as a goTemplate expression for the ApplicationSet.
-       The ConfigMaps file is named after its folder, lower-cased: configMaps.yaml
-       would make "configMaps-dev", which Kubernetes rejects. */ -}}
-{{- $appStem := "{{ .path.filename | trimSuffix \".yaml\" }}" -}}
-{{- if $cmOn -}}
-{{- $appStem = printf "{{ if eq .path.filename %s }}%s{{ else }}{{ .path.filename | trimSuffix \".yaml\" }}{{ end }}" ($cmFile | quote) ($cmFile | trimSuffix ".yaml" | trimSuffix ".yml" | lower) -}}
-{{- end -}}
+{{- /* Absent = false: Applications sync by hand unless the root file (or a
+       folder's defaults.yaml) says autoSync true. */ -}}
+{{- $autoSyncIn := ternary (toString .Values.autoSync) "false" (hasKey .Values "autoSync") | lower -}}
+{{- /* The namespace's ConfigMaps are deployed by the sibling chart
+       cm-applicationSet, not here. A values/configMaps.yaml left from the
+       pre-5.0 ConfigMaps list (a values repo not yet re-converted) is guarded:
+       it is named "configmaps", lower-cased, because "configMaps-dev" is not a
+       valid Application name and would stall the whole ApplicationSet, and it
+       deploys nothing (see templatePatch). */ -}}
+{{- $isLegacy := printf "and (eq .path.filename \"configMaps.yaml\") (eq .path.path %s)" (printf "%s%s/values" $prefix $folder | quote) -}}
+{{- $appStem := printf "{{ if %s }}configmaps{{ else }}{{ .path.filename | trimSuffix \".yaml\" }}{{ end }}" $isLegacy -}}
 {{- $appName := printf "%s-%s%s" $appStem ($ns | splitList "-" | last) $suffix -}}
 {{- /* Links (see values.yaml `links`). $fileUrl holds PATH where a repo path
        goes (a replace, not printf: a web URL may carry %-escapes): Bitbucket Server browses at /browse/<path>?at=<branch>,
@@ -287,64 +283,40 @@ spec:
          a helm parameter arrives as a string ("true", "False") and a YAML
          boolean in defaults.yaml as a bool; anything but "false" is on. */}}
   {{- $autoSync := ternary "false" "true" (eq $autoSyncIn "false") }}
-  {{- /* ConfigMaps folder. values/<cmFile> is not a microservice: it lists,
-         under <cmListKey>, which <folder>/<cmDir>/<name>.yaml files to deploy
-         (chart values snippets, e.g. configMaps: {env1: {data: ...}}). Its
-         Application layers those files in list order, then the list file
-         itself, and nothing else: no base/ (it has none) and no defaults.yaml
-         (that holds the microservices' workload settings). workload.type=none
-         renders no pods, only what the files define. The source list varies
-         per Application, so only the goTemplate templatePatch can build it; a
-         patch replaces spec.sources whole. Every other Application is left as
-         the template above writes it. */}}
-  {{- $cmAppName := printf "%s-%s%s" ($cmFile | trimSuffix ".yaml" | trimSuffix ".yml" | lower) ($ns | splitList "-" | last) $suffix }}
+  {{- $legacyNote := "values/configMaps.yaml is no longer read: the namespace's ConfigMaps are deployed by the <ns>-configmaps ApplicationSet (cm-applicationSet), one Application per configMaps/<name>.yaml. Delete this file (re-running the converter does)." }}
   templatePatch: |
-    {{- if $cmOn }}
-    {{ printf "{{- if eq .path.filename %s }}" ($cmFile | quote) }}
-    {{ printf "{{- if not (hasKey . %s) }}{{ fail %s }}{{ end }}" ($cmListKey | quote) (printf "%s%s/values/%s must list the %s/ files to deploy under %s" $prefix $folder $cmFile $cmDir $cmListKey | quote) }}
-    {{- if $fileUrl }}
+    {{ printf "{{- if %s }}" $isLegacy }}
     metadata:
+      labels:
+        universal-chart/obsolete: "true"
       annotations:
+        universal-chart/obsolete: {{ $legacyNote | quote }}
+        {{- if $fileUrl }}
         universal-chart/base-file: null
         universal-chart/defaults-file: null
-    {{- end }}
+        {{- end }}
     {{ "{{- end }}" }}
-    {{- end }}
     spec:
-      {{- if $cmOn }}
-      {{ printf "{{- if eq .path.filename %s }}" ($cmFile | quote) }}
+      {{- /* The old list file renders nothing (workload.type none, no base/)
+             and never syncs itself, so it can never prune the ConfigMaps the
+             cm-applicationSet Applications now own. */}}
+      {{ printf "{{- if %s }}" $isLegacy }}
       sources:
         - repoURL: {{ $chartRepoURL | quote }}
           targetRevision: {{ $chartRevision | quote }}
           path: {{ $chartPath | quote }}
           helm:
             valueFiles:
-              {{ printf "{{- range (index . %s) }}" ($cmListKey | quote) }}
-              - '$Values/{{ $prefix }}{{ $folder }}/{{ $cmDir }}/{{ "{{" }} . | toString | trimSuffix ".yaml" {{ "}}" }}.yaml'
-              {{ "{{- end }}" }}
               - '$Values/{{ $valuesFile }}'
             parameters:
               - name: workload.type
                 value: none
-              {{- if ne (toString $links.objects) "false" }}
-              {{- with $argocd }}
-              - name: links.argocd
-                value: {{ printf "%s/applications/%s/%s" . $argocdNs $cmAppName | quote }}
-                forceString: true
-              {{- end }}
-              {{- with $console }}
-              - name: links.console
-                value: {{ . | quote }}
-                forceString: true
-              {{- end }}
-              {{- end }}
         - repoURL: {{ $repo | quote }}
           targetRevision: {{ $branch | quote }}
           ref: Values
       {{ "{{- end }}" }}
-      {{- end }}
       syncPolicy:
-        {{ printf "{{- if ne (dig \"autoSync\" \"%s\" . | toString | lower) \"false\" }}" $autoSync }}
+        {{ printf "{{- if and (ne (dig \"autoSync\" \"%s\" . | toString | lower) \"false\") (not (%s)) }}" $autoSync $isLegacy }}
         automated:
           prune: true
           selfHeal: true

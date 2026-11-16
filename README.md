@@ -642,18 +642,20 @@ empty = the namespace folder itself), `valuesGlob` (default `*.yaml`; use
 and `chartPath` have defaults in its `values.yaml`.
 
 `destinationServer`, `chartRepoURL`, `chartRevision`, `autoSync`,
-`preserveResourcesOnDeletion` and `configMaps.*` are set only in the values
+`preserveResourcesOnDeletion` and `configMaps.dir` are set only in the values
 repo's `rootApplicationSet.yaml` (helm parameters, always written by the
 converter), never in `ms-applicationSet/values.yaml`. A root file that leaves
 one out gets the template's fallback: `https://kubernetes.default.svc`, this
-repo on GitHub, `main`, `true`, `true`, and the ConfigMaps folder on with
-`configMaps.yaml` / `configMaps/` / `configMapFiles`.
+repo on GitHub, `main`, `false` (manual sync), `true`, and `configMaps/`.
 
-A namespace's ConfigMaps folder: `values/configMaps.yaml` lists
-(`configMapFiles: [env1, namespace-conf]`) chart-values files under
-`<folder>/configMaps/`. It is not a microservice: it becomes one Application,
-`configmaps-<ns suffix>`, layering the listed files in order, then
-`values/configMaps.yaml`, with `workload.type=none` and no `base/` or
+A namespace's ConfigMaps folder: every `<folder>/configMaps/<name>.yaml` is
+deployed, with no list file. The file starts at `data:` (and/or `binaryData:`)
+and nothing comes before it; the file name is the ConfigMap's name. The
+sibling chart `cm-applicationSet/` deploys them: the root ApplicationSet's
+per-namespace Application has it as a second source, next to
+`ms-applicationSet/`, so each namespace also gets an ApplicationSet
+`<ns>-configmaps`. Each file becomes its own Application, `<name>-cm-<ns suffix>`, rendering only that file
+with `fullnameOverride=<name>` and `workload.type=none`, without `base/` or
 `defaults.yaml`. Microservices mount those ConfigMaps by name.
 
 Argo CD's ApplicationSet controller puts `resources-finalizer.argocd.argoproj.io`
