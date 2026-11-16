@@ -654,3 +654,30 @@ empty string and silently drops traffic instead of erroring. */}}
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+ConfigMap data as Kubernetes wants it: every value a string. A number or
+boolean written unquoted (PORT: 8080, DEBUG: true) would otherwise render
+unquoted and the API server rejects the whole ConfigMap. Helm reads YAML
+numbers as float64, so a whole number is printed as an integer (8080, 1000000,
+never 8080.0 or 1e+06). Null entries are dropped. Strings pass through as is.
+*/}}
+{{- define "universal-chart.stringData" -}}
+{{- $out := dict -}}
+{{- range $k, $v := . -}}
+{{- if kindIs "string" $v -}}
+{{- $_ := set $out $k $v -}}
+{{- else if or (kindIs "float64" $v) (kindIs "int" $v) (kindIs "int64" $v) -}}
+{{- if eq (float64 $v) (float64 (int64 $v)) -}}
+{{- $_ := set $out $k (int64 $v | toString) -}}
+{{- else -}}
+{{- $_ := set $out $k (toString $v) -}}
+{{- end -}}
+{{- else if kindIs "bool" $v -}}
+{{- $_ := set $out $k (toString $v) -}}
+{{- else if not (kindIs "invalid" $v) -}}
+{{- $_ := set $out $k $v -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $out -}}
+{{- end -}}

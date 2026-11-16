@@ -843,7 +843,7 @@ def place_secret_store_dependencies(namespace, microservices):
         if target not in files:
             microservices[target] = {"workload": None, "resources": []}
             files[target] = microservices[target]["resources"]
-        files[target].append((name, kind, yaml.dump(doc, default_flow_style=False, sort_keys=False)))
+        files[target].append((name, kind, yaml.dump(doc, default_flow_style=False, sort_keys=False, allow_unicode=True)))
         where = "shared.yaml" if target == SHARED_KEY else f"{target}.yaml"
         print(f"    {kind} '{name}' -> {where} (needed by {len(users)} file(s))", file=sys.stderr)
 
@@ -1091,7 +1091,7 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
     for workload in workloads:
         workload_name = wl_keys[id(workload)]
         kind = workload.get("kind", "Unknown")
-        yaml_str = yaml.dump(workload, default_flow_style=False, sort_keys=False)
+        yaml_str = yaml.dump(workload, default_flow_style=False, sort_keys=False, allow_unicode=True)
         microservices[workload_name] = {
             "workload": (workload.get("metadata", {}).get("name", "unknown"), kind, yaml_str),
             "resources": [],
@@ -1104,7 +1104,7 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
             kind = RESOURCE_PLURAL_TO_KIND.get(rt, rt)
             resource = resource_index.get((kind, name))
             if resource:
-                yaml_str = yaml.dump(resource, default_flow_style=False, sort_keys=False)
+                yaml_str = yaml.dump(resource, default_flow_style=False, sort_keys=False, allow_unicode=True)
                 shared_resources.append((name, kind, yaml_str))
 
     # Distribute unique resources
@@ -1113,14 +1113,14 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
             kind = RESOURCE_PLURAL_TO_KIND.get(rt, rt)
             resource = resource_index.get((kind, name))
             if resource and workload_name in microservices:
-                yaml_str = yaml.dump(resource, default_flow_style=False, sort_keys=False)
+                yaml_str = yaml.dump(resource, default_flow_style=False, sort_keys=False, allow_unicode=True)
                 microservices[workload_name]["resources"].append((name, kind, yaml_str))
 
     # Distribute services and routes
     for service in services:
         svc_name = service.get("metadata", {}).get("name", "")
         kind = service.get("kind", "Service")
-        yaml_str = yaml.dump(service, default_flow_style=False, sort_keys=False)
+        yaml_str = yaml.dump(service, default_flow_style=False, sort_keys=False, allow_unicode=True)
         matching = service_to_workloads.get(svc_name, [])
         if len(matching) > 1:
             shared_resources.append((svc_name, kind, yaml_str))
@@ -1132,7 +1132,7 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
     for route in routes:
         route_name = route.get("metadata", {}).get("name", "")
         kind = route.get("kind", "Route")
-        yaml_str = yaml.dump(route, default_flow_style=False, sort_keys=False)
+        yaml_str = yaml.dump(route, default_flow_style=False, sort_keys=False, allow_unicode=True)
         svc_name = route_to_service.get(route_name, "")
         matching = service_to_workloads.get(svc_name, [])
         if len(matching) > 1:
@@ -1155,13 +1155,13 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
 
             if len(referencing_workloads) > 1:
                 # Shared ES
-                es_yaml = yaml.dump(es_resource, default_flow_style=False, sort_keys=False)
+                es_yaml = yaml.dump(es_resource, default_flow_style=False, sort_keys=False, allow_unicode=True)
                 shared_resources.append((target_name + "-ext", "ExternalSecret", es_yaml))
             else:
                 # Unique ES
                 wl_name = next(iter(referencing_workloads))
                 if wl_name in microservices:
-                    es_yaml = yaml.dump(es_resource, default_flow_style=False, sort_keys=False)
+                    es_yaml = yaml.dump(es_resource, default_flow_style=False, sort_keys=False, allow_unicode=True)
                     microservices[wl_name]["resources"].append((target_name + "-ext", "ExternalSecret", es_yaml))
 
     if shared_resources:
@@ -1590,7 +1590,7 @@ def _handle_full_namespace(namespace, args):
                     continue
                 hpa_name = hpa.get("metadata", {}).get("name", "unknown")
                 all_resources[wl_name]["resources"].append(
-                    (hpa_name, "HorizontalPodAutoscaler", yaml.dump(hpa, default_flow_style=False, sort_keys=False)))
+                    (hpa_name, "HorizontalPodAutoscaler", yaml.dump(hpa, default_flow_style=False, sort_keys=False, allow_unicode=True)))
                 placed_hpa.add(hpa_name)
         for entry in all_resources.values():
             for name, kind, _ in entry.get("resources", []):
@@ -1623,7 +1623,7 @@ def _handle_full_namespace(namespace, args):
         if len(owners) == 1 and None not in owners:
             combined[owners.pop()]["resources"].append(
                 ((ing.get("metadata") or {}).get("name", "unknown"), "Ingress",
-                 yaml.dump(ing, default_flow_style=False, sort_keys=False)))
+                 yaml.dump(ing, default_flow_style=False, sort_keys=False, allow_unicode=True)))
             other_extras.remove(ing)
 
     # Everything else in the namespace goes to the combined shared.yaml:
@@ -1637,22 +1637,22 @@ def _handle_full_namespace(namespace, args):
         if hpa_name in placed_hpa:
             continue
         shared_sink.append((hpa_name, "HorizontalPodAutoscaler",
-                            yaml.dump(hpa, default_flow_style=False, sort_keys=False)))
+                            yaml.dump(hpa, default_flow_style=False, sort_keys=False, allow_unicode=True)))
     for res in other_extras:
         name = res.get("metadata", {}).get("name", "unknown")
         kind = res.get("kind", "Unknown")
-        shared_sink.append((name, kind, yaml.dump(res, default_flow_style=False, sort_keys=False)))
+        shared_sink.append((name, kind, yaml.dump(res, default_flow_style=False, sort_keys=False, allow_unicode=True)))
     for svc in all_services:
         name = svc.get("metadata", {}).get("name", "unknown")
         if name in matched_service_names:
             continue
-        shared_sink.append((name, "Service", yaml.dump(svc, default_flow_style=False, sort_keys=False)))
+        shared_sink.append((name, "Service", yaml.dump(svc, default_flow_style=False, sort_keys=False, allow_unicode=True)))
         print(f"  [extra] Service '{name}' not claimed by any workload -> shared.yaml", file=sys.stderr)
     for route in all_routes:
         name = route.get("metadata", {}).get("name", "unknown")
         if name in matched_route_names:
             continue
-        shared_sink.append((name, "Route", yaml.dump(route, default_flow_style=False, sort_keys=False)))
+        shared_sink.append((name, "Route", yaml.dump(route, default_flow_style=False, sort_keys=False, allow_unicode=True)))
         print(f"  [extra] Route '{name}' not claimed by any service -> shared.yaml", file=sys.stderr)
     combined[SHARED_KEY] = {"workload": None, "resources": shared_sink}
     place_secret_store_dependencies(namespace, combined)

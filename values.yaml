@@ -426,6 +426,16 @@ configMaps: {}
 #   annotations: {}
 #   labels: {}
 
+# ONE ConfigMap named after the release (fullnameOverride, else nameOverride,
+# else the release name), rendered when either is set. This is the shape of a
+# values repo's <ns>/configMaps/<name>.yaml: the file starts at `data:` and
+# cm-applicationSet deploys it as its own Application with
+# fullnameOverride=<name> and workload.type=none. Labels/annotations come from
+# commonLabels/commonAnnotations.
+data: {}
+# LOG_LEVEL: info
+binaryData: {}
+
 # ---------------------------------------------------------------------------
 # Secrets — MAP-BASED (keyed by secret name)
 # ---------------------------------------------------------------------------

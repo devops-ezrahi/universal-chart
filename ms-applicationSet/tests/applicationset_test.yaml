@@ -68,11 +68,13 @@ tests:
       - notExists:
           path: spec.template.spec.syncPolicy
 
-  - it: digs autoSync from defaults.yaml, falling back to the chart's autoSync (true)
+  - it: digs autoSync from defaults.yaml, falling back to the root file's autoSync
+    set:
+      autoSync: "true"
     asserts:
       - matchRegex:
           path: spec.templatePatch
-          pattern: '\{\{- if ne \(dig "autoSync" "true" \. \| toString \| lower\) "false" \}\}\n\s+automated:'
+          pattern: '\{\{- if and \(ne \(dig "autoSync" "true" \. \| toString \| lower\) "false"\) \(not \(.*\)\) \}\}\n\s+automated:'
       - matchRegex:
           path: spec.templatePatch
           pattern: 'CreateNamespace=true'
@@ -194,7 +196,7 @@ tests:
           path: spec.template.spec.sources[0].helm.parameters
           value:
             - name: links.argocd
-              value: https://argo.example.com/applications/openshift-gitops/{{ if eq .path.filename "configMaps.yaml" }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black
+              value: https://argo.example.com/applications/openshift-gitops/{{ if and (eq .path.filename "configMaps.yaml") (eq .path.path "rakia-fac1/black/values") }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black
               forceString: true
             - name: links.console
               value: https://console.example.com
@@ -242,11 +244,11 @@ tests:
           path: spec.template.spec.sources[0].targetRevision
           value: v4.2.0
 
-  - it: keeps autoSync true when the root file leaves it out
+  - it: falls back to manual sync when the root file leaves autoSync out
     asserts:
       - matchRegex:
           path: spec.templatePatch
-          pattern: 'dig "autoSync" "true" \.'
+          pattern: 'dig "autoSync" "false" \.'
 
   - it: accepts a boolean false for preserveResourcesOnDeletion
     set:
@@ -255,72 +257,32 @@ tests:
       - notExists:
           path: spec.syncPolicy
 
-  # --- ConfigMaps folder ---
+  # --- ConfigMaps: deployed by cm-applicationSet, never here ---
 
-  - it: names the ConfigMaps Application after its file, lower-cased
+  - it: has no ConfigMaps generator or Applications of its own
     asserts:
-      - equal:
-          path: spec.template.metadata.name
-          value: '{{ if eq .path.filename "configMaps.yaml" }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black'
-
-  - it: layers the listed configMaps/ files, then the list file, without base or defaults
-    asserts:
-      - matchRegex:
-          path: spec.templatePatch
-          pattern: '\{\{- if eq \.path\.filename "configMaps\.yaml" \}\}\n\s+sources:'
-      - matchRegex:
-          path: spec.templatePatch
-          pattern: '\{\{- range \(index \. "configMapFiles"\) \}\}\n\s+- .\$Values/rakia-fac1/black/configMaps/\{\{ \. \| toString \| trimSuffix "\.yaml" \}\}\.yaml.\n\s+\{\{- end \}\}\n\s+- .\$Values/\{\{ \.path\.path \}\}/\{\{ \.path\.filename \}\}.'
+      - notExists:
+          path: spec.generators[1]
       - notMatchRegex:
           path: spec.templatePatch
-          pattern: 'defaults\.yaml|\$Values/base'
-      - matchRegex:
-          path: spec.templatePatch
-          pattern: 'name: workload\.type\n\s+value: none'
-      - matchRegex:
-          path: spec.templatePatch
-          pattern: 'fail "rakia-fac1/black/values/configMaps\.yaml must list'
+          pattern: 'fullnameOverride|configMapFiles|black/configMaps'
 
-  - it: reads the ConfigMaps folder under originPath
-    set:
-      originPath: teams/a
-    asserts:
-      - matchRegex:
-          path: spec.templatePatch
-          pattern: '\$Values/teams/a/rakia-fac1/black/configMaps/'
-
-  - it: takes the ConfigMaps file, folder and list key from the root file
-    set:
-      configMaps:
-        file: shared.yaml
-        dir: cms
-        listKey: files
+  - it: names a leftover values/configMaps.yaml configmaps, never the invalid configMaps
     asserts:
       - equal:
           path: spec.template.metadata.name
-          value: '{{ if eq .path.filename "shared.yaml" }}shared{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black'
-      - matchRegex:
-          path: spec.templatePatch
-          pattern: 'range \(index \. "files"\).*\n.*\$Values/rakia-fac1/black/cms/'
+          value: '{{ if and (eq .path.filename "configMaps.yaml") (eq .path.path "rakia-fac1/black/values") }}configmaps{{ else }}{{ .path.filename | trimSuffix ".yaml" }}{{ end }}-fac1-black'
 
-  - it: links the ConfigMaps Application to its own name in Argo CD
+  - it: makes a leftover list file an empty Application that never syncs itself
     set:
-      links:
-        argocdUrl: https://argo.example.com
-        argocdNamespace: gitops
+      autoSync: "true"
     asserts:
       - matchRegex:
           path: spec.templatePatch
-          pattern: 'value: "https://argo\.example\.com/applications/gitops/configmaps-fac1-black"'
-
-  - it: leaves every Application as before with configMaps.enabled "false"
-    set:
-      configMaps:
-        enabled: "false"
-    asserts:
-      - equal:
-          path: spec.template.metadata.name
-          value: '{{ .path.filename | trimSuffix ".yaml" }}-fac1-black'
-      - notMatchRegex:
+          pattern: '\{\{- if and \(eq \.path\.filename "configMaps\.yaml"\) \(eq \.path\.path "rakia-fac1/black/values"\) \}\}\n\s+sources:\n(.*\n){4}\s+valueFiles:\n\s+- .\$Values/\{\{ \.path\.path \}\}/\{\{ \.path\.filename \}\}.\n\s+parameters:\n\s+- name: workload\.type\n\s+value: none'
+      - matchRegex:
           path: spec.templatePatch
-          pattern: 'configMaps|sources:'
+          pattern: 'if and \(ne \(dig "autoSync" "true" \. \| toString \| lower\) "false"\) \(not \(and \(eq \.path\.filename "configMaps\.yaml"\)'
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'universal-chart/obsolete: "true"'

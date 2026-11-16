@@ -162,11 +162,19 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
                 v = str(params.get(param, "")).lower()
                 if v in ("true", "false"):
                     s[dest] = v == "true"
-            for param, dest in (("configMaps.file", "config_maps_file"), ("configMaps.dir", "config_maps_dir"),
-                                ("configMaps.listKey", "config_maps_list_key")):
+            # configMaps.file / configMaps.listKey (the old list file) are gone:
+            # migrate_config_maps rewrites such a tree.
+            for param, dest in (("configMaps.dir", "config_maps_dir"),):
                 v = params.get(param)
                 if isinstance(v, str) and v and "{{" not in v:
                     s[dest] = v
+            # Since 5.0 the ConfigMaps folder is a second source of the same
+            # Application: the cm-applicationSet chart.
+            sources = (tmpl.get("spec") or {}).get("sources") or []
+            cm = [x for x in sources[1:] if isinstance(x, dict) and "helm" in x and "path" in x]
+            if cm:
+                s["config_maps"] = True
+                s["cm_appset_chart_path"] = cm[0]["path"]
             auto = str(params.get("autoSync", ""))
             # Plain true/false, or (since --namespace-auto-sync) a per-folder
             # lookup whose fallback is the tree's --auto-sync.

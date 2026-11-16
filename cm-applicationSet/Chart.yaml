@@ -1,0 +1,11 @@
+apiVersion: v2
+name: cm-applicationSet
+description: >-
+  One ArgoCD ApplicationSet per namespace, next to ms-applicationSet, that
+  deploys the namespace's ConfigMaps folder (<folder>/configMaps/<name>.yaml)
+  in a gitops values repo: one Application per file, each rendering
+  ConfigMap/<name> with the Universal Chart. Rendered once per namespace
+  directory by the values repo's own rootApplicationSet.yaml.
+type: application
+version: 4.6.0
+appVersion: "1.0.0"

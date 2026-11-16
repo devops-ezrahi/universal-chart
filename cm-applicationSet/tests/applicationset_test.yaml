@@ -1,0 +1,142 @@
+suite: cm-applicationSet
+templates:
+  - templates/applicationSet.yaml
+set:
+  namespace: rakia-fac1
+  folder: rakia-fac1/black
+  originRepoURL: https://example.com/values.git
+  originBranch: main
+tests:
+  - it: names the ApplicationSet <namespace><variant>-configmaps
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rakia-fac1-black-configmaps
+      - equal:
+          path: metadata.labels.managed-by
+          value: cm-applicationSet
+
+  - it: enumerates the ConfigMaps folder, matrixed with the folder's defaults.yaml
+    asserts:
+      - equal:
+          path: spec.generators[0].matrix.generators[0].git.files[0].path
+          value: rakia-fac1/black/configMaps/*.yaml
+      - equal:
+          path: spec.generators[0].matrix.generators[1].git.files[0].path
+          value: rakia-fac1/black/defaults.yaml
+      - equal:
+          path: spec.generators[0].matrix.generators[1].git.pathParamPrefix
+          value: defaults
+      - notExists:
+          path: spec.generators[1]
+
+  - it: names each Application <file>-cm-<ns><variant>
+    asserts:
+      - equal:
+          path: spec.template.metadata.name
+          value: '{{ .path.filename | trimSuffix ".yaml" }}-cm-fac1-black'
+      - equal:
+          path: spec.template.metadata.labels.configmaps
+          value: rakia-fac1-black
+
+  - it: renders the file alone, named after it, with no pods
+    asserts:
+      - equal:
+          path: spec.template.spec.sources[0].helm.valueFiles
+          value:
+            - '$Values/{{ .path.path }}/{{ .path.filename }}'
+      - equal:
+          path: spec.template.spec.sources[0].helm.parameters
+          value:
+            - name: workload.type
+              value: none
+            - name: fullnameOverride
+              value: '{{ .path.filename | trimSuffix ".yaml" }}'
+              forceString: true
+      - equal:
+          path: spec.template.spec.sources[1]
+          value:
+            repoURL: https://example.com/values.git
+            targetRevision: main
+            ref: Values
+      - equal:
+          path: spec.template.spec.destination.namespace
+          value: rakia-fac1
+
+  - it: reads the folder under originPath and a custom configMaps.dir
+    set:
+      originPath: teams/a
+      configMaps:
+        dir: cms/
+    asserts:
+      - equal:
+          path: spec.generators[0].matrix.generators[0].git.files[0].path
+          value: teams/a/rakia-fac1/black/cms/*.yaml
+
+  - it: falls back to manual sync, and digs autoSync from defaults.yaml
+    asserts:
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: '\{\{- if ne \(dig "autoSync" "false" \. \| toString \| lower\) "false" \}\}\n\s+automated:'
+
+  - it: takes autoSync true from the root file
+    set:
+      autoSync: "True"
+    asserts:
+      - matchRegex:
+          path: spec.templatePatch
+          pattern: 'dig "autoSync" "true" \.'
+
+  - it: preserves the ConfigMaps on delete by default, cascades on false
+    asserts:
+      - equal:
+          path: spec.syncPolicy
+          value:
+            preserveResourcesOnDeletion: true
+
+  - it: leaves syncPolicy out entirely when nothing is set
+    set:
+      preserveResourcesOnDeletion: "false"
+    asserts:
+      - notExists:
+          path: spec.syncPolicy
+
+  - it: uses the chart and destination the root file passes
+    set:
+      chartRepoURL: https://git.example.com/scm/OPS/universal-chart.git
+      chartRevision: v5.0.0
+      destinationName: other
+    asserts:
+      - equal:
+          path: spec.template.spec.sources[0].repoURL
+          value: https://git.example.com/scm/OPS/universal-chart.git
+      - equal:
+          path: spec.template.spec.sources[0].targetRevision
+          value: v5.0.0
+      - equal:
+          path: spec.template.spec.destination.name
+          value: other
+
+  - it: links each Application to its file and to itself in Argo CD
+    set:
+      originRepoURL: https://git.example.com/scm/OPS/values.git
+      links:
+        argocdUrl: https://argo.example.com/
+        argocdNamespace: gitops
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["link.argocd.argoproj.io/external-link"]
+          value: https://git.example.com/projects/OPS/repos/values/browse/{{ .path.path }}/{{ .path.filename }}?at=main
+      - contains:
+          path: spec.template.spec.sources[0].helm.parameters
+          content:
+            name: links.argocd
+            value: https://argo.example.com/applications/gitops/{{ .path.filename | trimSuffix ".yaml" }}-cm-fac1-black
+            forceString: true
+
+  - it: requires the namespace
+    set:
+      namespace: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: namespace is required

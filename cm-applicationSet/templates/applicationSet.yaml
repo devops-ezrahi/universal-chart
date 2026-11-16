@@ -1,0 +1,195 @@
+{{- $ns := required "namespace is required" .Values.namespace -}}
+{{- $repo := required "originRepoURL is required" .Values.originRepoURL -}}
+{{- $branch := required "originBranch is required" .Values.originBranch -}}
+{{- $prefix := "" -}}
+{{- if .Values.originPath }}{{- $prefix = printf "%s/" .Values.originPath -}}{{- end -}}
+{{- $folder := .Values.folder | default $ns -}}
+{{- $suffix := ternary "" (printf "-%s" (trimPrefix (printf "%s/" $ns) $folder | replace "/" "-")) (eq $folder $ns) -}}
+{{- /* Settings that live in each values repo's rootApplicationSet.yaml (helm
+       parameters), never in values.yaml, with the same fallbacks as
+       ms-applicationSet. */ -}}
+{{- $chartRepoURL := .Values.chartRepoURL | default "https://github.com/devops-ezrahi/universal-chart.git" -}}
+{{- $chartRevision := .Values.chartRevision | default "main" -}}
+{{- $chartPath := .Values.chartPath | default "." -}}
+{{- $destinationServer := .Values.destinationServer | default "https://kubernetes.default.svc" -}}
+{{- /* hasKey, not default: false/"false" must stay false. */ -}}
+{{- $preserve := ternary (toString .Values.preserveResourcesOnDeletion) "true" (hasKey .Values "preserveResourcesOnDeletion") | lower -}}
+{{- $autoSyncIn := ternary (toString .Values.autoSync) "false" (hasKey .Values "autoSync") | lower -}}
+{{- $autoSync := ternary "false" "true" (eq $autoSyncIn "false") -}}
+{{- $cmDir := dig "configMaps" "dir" "configMaps" .Values.AsMap | toString | trimSuffix "/" -}}
+{{- $cmPath := printf "%s%s/%s" $prefix $folder $cmDir -}}
+{{- /* The Application's name, as a goTemplate expression: <file>-cm-<ns>. The
+       "-cm" keeps ConfigMap app-conf (app-conf-cm-dev) apart from a
+       microservice called app-conf (app-conf-dev, ms-applicationSet). */ -}}
+{{- $appName := printf "{{ .path.filename | trimSuffix \".yaml\" }}-cm-%s%s" ($ns | splitList "-" | last) $suffix -}}
+{{- $links := .Values.links | default dict -}}
+{{- $argocd := trimSuffix "/" ($links.argocdUrl | default "") -}}
+{{- $argocdNs := $links.argocdNamespace | default .Release.Namespace -}}
+{{- $web := trimSuffix "/" ($links.repoWebUrl | default "") -}}
+{{- $bare := trimSuffix ".git" $repo -}}
+{{- if and (not $web) (regexMatch "^https?://[^@]+/scm/[^/]+/[^/]+$" $bare) -}}
+{{- $web = regexReplaceAll "^(https?://.+)/scm/([^/]+)/([^/]+)$" $bare "${1}/projects/${2}/repos/${3}" -}}
+{{- else if and (not $web) (regexMatch "^https://(github\\.com|gitlab\\.com)/" $bare) -}}
+{{- $web = $bare -}}
+{{- end -}}
+{{- /* SSH, which most values repos are cloned over: ssh://git@host[:port]/<path>
+       (Bitbucket Server's own form, port 7999) or scp-style git@host:<path>. The
+       web UI is taken to be https on the same host, without the SSH port. A
+       Bitbucket path is <project>/<repo>; its project key is upper case in the
+       web UI however the clone URL spells it, and ~user is a personal repo. */ -}}
+{{- $sshHost := "" -}}
+{{- $sshPath := "" -}}
+{{- if and (not $web) (regexMatch "^ssh://[^@/]+@[^/:]+(:[0-9]+)?/.+$" $bare) -}}
+{{- $sshHost = regexReplaceAll "^ssh://[^@/]+@([^/:]+)(:[0-9]+)?/(.+)$" $bare "${1}" -}}
+{{- $sshPath = regexReplaceAll "^ssh://[^@/]+@([^/:]+)(:[0-9]+)?/(.+)$" $bare "${3}" -}}
+{{- else if and (not $web) (regexMatch "^[^@/:]+@[^/:]+:[^/].*$" $bare) -}}
+{{- $sshHost = regexReplaceAll "^[^@/:]+@([^/:]+):(.+)$" $bare "${1}" -}}
+{{- $sshPath = regexReplaceAll "^[^@/:]+@([^/:]+):(.+)$" $bare "${2}" -}}
+{{- end -}}
+{{- if $sshHost -}}
+{{- if has $sshHost (list "github.com" "gitlab.com") -}}
+{{- $web = printf "https://%s/%s" $sshHost $sshPath -}}
+{{- else if regexMatch "^(scm/)?[^/]+/[^/]+$" $sshPath -}}
+{{- $parts := regexReplaceAll "^scm/" $sshPath "" | splitList "/" -}}
+{{- $project := index $parts 0 -}}
+{{- if hasPrefix "~" $project -}}
+{{- $web = printf "https://%s/users/%s/repos/%s" $sshHost (trimPrefix "~" $project) (index $parts 1) -}}
+{{- else -}}
+{{- $web = printf "https://%s/projects/%s/repos/%s" $sshHost (upper $project) (index $parts 1) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* Set in full, never derived: a values repo can span several clusters
+       and several Argo CDs, and no URL here says which console is whose. */ -}}
+{{- $console := trimSuffix "/" ($links.consoleUrl | default "") -}}
+{{- $fileUrl := "" -}}
+{{- if $web -}}
+{{- if regexMatch "/(projects|users)/[^/]+/repos/[^/]+$" $web -}}
+{{- $fileUrl = printf "%s/browse/PATH?at=%s" $web $branch -}}
+{{- else if contains "gitlab" $web -}}
+{{- $fileUrl = printf "%s/-/blob/%s/PATH" $web $branch -}}
+{{- else -}}
+{{- $fileUrl = printf "%s/blob/%s/PATH" $web $branch -}}
+{{- end -}}
+{{- end -}}
+{{- $valuesFile := "{{ .path.path }}/{{ .path.filename }}" -}}
+{{/*
+  One ApplicationSet for ONE namespace's ConfigMaps folder, next to the
+  ms-applicationSet one for its microservices. Both are sources of the same
+  root Application, so a namespace folder brings both.
+
+  Its git "files" generator enumerates <folder>/configMaps/*.yaml: that folder
+  IS the list of ConfigMaps, so adding a ConfigMap is adding a file. Each file
+  starts at `data:` (and/or binaryData:, commonLabels, commonAnnotations),
+  nothing before it, and becomes its own Application, <file>-cm-<ns>,
+  rendering ConfigMap/<file> with the Universal Chart: that file alone,
+  fullnameOverride=<file>, workload.type=none. No base/ and no defaults.yaml
+  is layered (defaults.yaml holds the microservices' workload settings), but
+  the folder's defaults.yaml is read for its `autoSync` (see syncPolicy).
+  Legacy git-file globbing lets '*' cross '/', so sub-folders are found too.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ printf "%s%s-configmaps" $ns $suffix | quote }}
+  labels:
+    namespace: {{ $ns | quote }}
+    managed-by: cm-applicationSet
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  {{- /* Written only when it holds something: the CRD rejects a null
+         spec.syncPolicy. */}}
+  {{- $appsetSync := dict }}
+  {{- if eq $preserve "true" }}
+  {{- $_ := set $appsetSync "preserveResourcesOnDeletion" true }}
+  {{- end }}
+  {{- with trim (toString (.Values.applicationsSync | default "")) }}
+  {{- $_ := set $appsetSync "applicationsSync" . }}
+  {{- end }}
+  {{- with $appsetSync }}
+  syncPolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- /* A matrix with the folder's defaults.yaml, so each Application sees its
+         top-level keys (autoSync). pathParamPrefix keeps .path the file's. */}}
+  generators:
+    - matrix:
+        generators:
+          - git:
+              repoURL: {{ $repo | quote }}
+              revision: {{ $branch | quote }}
+              files:
+                - path: '{{ $cmPath }}/*.yaml'
+          - git:
+              repoURL: {{ $repo | quote }}
+              revision: {{ $branch | quote }}
+              pathParamPrefix: defaults
+              files:
+                - path: '{{ $prefix }}{{ $folder }}/defaults.yaml'
+  template:
+    metadata:
+      name: '{{ $appName }}'
+      labels:
+        namespace: {{ $ns | quote }}
+        folder: {{ $folder | replace "/" "-" | trunc 63 | trimSuffix "-" | quote }}
+        configmaps: {{ $folder | replace "/" "-" | trunc 63 | trimSuffix "-" | quote }}
+        managed-by: cm-applicationSet
+      annotations:
+        argocd.argoproj.io/sync-wave: "0"
+        {{- with $fileUrl }}
+        link.argocd.argoproj.io/external-link: '{{ replace "PATH" $valuesFile . }}'
+        universal-chart/values-file: '{{ replace "PATH" $valuesFile . }}'
+        {{- end }}
+    spec:
+      project: {{ .Values.project | quote }}
+      destination:
+        {{- if .Values.destinationName }}
+        name: {{ .Values.destinationName | quote }}
+        {{- else }}
+        server: {{ $destinationServer | quote }}
+        {{- end }}
+        namespace: {{ $ns | quote }}
+      sources:
+        - repoURL: {{ $chartRepoURL | quote }}
+          targetRevision: {{ $chartRevision | quote }}
+          path: {{ $chartPath | quote }}
+          helm:
+            valueFiles:
+              - '$Values/{{ $valuesFile }}'
+            parameters:
+              - name: workload.type
+                value: none
+              - name: fullnameOverride
+                value: '{{ "{{" }} .path.filename | trimSuffix ".yaml" {{ "}}" }}'
+                forceString: true
+              {{- if ne (toString $links.objects) "false" }}
+              {{- with $argocd }}
+              - name: links.argocd
+                value: '{{ . }}/applications/{{ $argocdNs }}/{{ $appName }}'
+                forceString: true
+              {{- end }}
+              {{- with $console }}
+              - name: links.console
+                value: {{ . | quote }}
+                forceString: true
+              {{- end }}
+              {{- end }}
+        - repoURL: {{ $repo | quote }}
+          targetRevision: {{ $branch | quote }}
+          ref: Values
+  {{- /* syncPolicy per Application, exactly as ms-applicationSet decides it:
+         `autoSync: true|false` in the folder's defaults.yaml wins, the root
+         file's autoSync (fallback false) otherwise. Only a templatePatch can
+         make `automated` conditional (Argo CD 2.10+). */}}
+  templatePatch: |
+    spec:
+      syncPolicy:
+        {{ printf "{{- if ne (dig \"autoSync\" \"%s\" . | toString | lower) \"false\" }}" $autoSync }}
+        automated:
+          prune: true
+          selfHeal: true
+        {{ "{{- end }}" }}
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

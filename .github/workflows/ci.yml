@@ -29,8 +29,10 @@ jobs:
 
       - run: helm lint .
       - run: helm lint ms-applicationSet
+      - run: helm lint cm-applicationSet
       - run: helm unittest .
       - run: helm unittest ms-applicationSet
+      - run: helm unittest cm-applicationSet
       # The AI docs' examples (docs/ai/examples) are what agents copy from, here
       # and in every values repo. A chart change that breaks one must update it
       # in the same PR (see AGENTS.md, "keep the AI docs current").

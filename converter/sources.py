@@ -183,10 +183,10 @@ def offline_oc(docs: list[dict]):
         hits = [d for d in docs if d.get("kind") == kind
                 and (name is None or (d.get("metadata") or {}).get("name") == name)]
         if name is None:
-            return types.SimpleNamespace(stdout=yaml.safe_dump({"kind": "List", "items": hits}))
+            return types.SimpleNamespace(stdout=yaml.safe_dump({"kind": "List", "items": hits}, allow_unicode=True))
         if not hits:
             raise subprocess.CalledProcessError(1, args, stderr="referenced, but not in the given YAML")
-        return types.SimpleNamespace(stdout=yaml.safe_dump(hits[0]))
+        return types.SimpleNamespace(stdout=yaml.safe_dump(hits[0], allow_unicode=True))
     return run_oc
 
 

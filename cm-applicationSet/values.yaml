@@ -1,0 +1,58 @@
+# The three required values are supplied per-namespace by the values repo's
+# rootApplicationSet.yaml (helm parameters), not set here. They are the same
+# values ms-applicationSet gets: both charts are sources of the same root
+# Application.
+namespace: ""          # REQUIRED - the namespace directory in the values repo == the k8s namespace
+originRepoURL: ""      # REQUIRED - the values (gitops) repo holding <namespace>/configMaps/
+originBranch: ""       # REQUIRED - revision of that repo
+
+# Subpath inside originRepoURL where the values tree lives. Empty = repo root.
+originPath: ""
+
+# The namespace's folder under originPath. Empty = the namespace itself. A
+# variant folder ("prd/yellow") deploys into `namespace` and appends what
+# follows the namespace to every generated name (ApplicationSet
+# prd-yellow-configmaps, Application env1-cm-prd-yellow).
+folder: ""
+
+# What the ApplicationSet controller may do to the Applications it generates
+# (spec.syncPolicy.applicationsSync). Same meaning as in ms-applicationSet.
+applicationsSync: ""
+
+# Links (same keys as ms-applicationSet, set in rootApplicationSet.yaml):
+# argocdUrl/argocdNamespace/consoleUrl are handed to the chart so the
+# ConfigMap's Application can be linked; repoWebUrl (derived from
+# originRepoURL when empty) links each Application to its file.
+links:
+  objects: true
+  argocdUrl: ""
+  argocdNamespace: ""
+  consoleUrl: ""
+  repoWebUrl: ""
+
+project: default
+destinationName: ""   # a registered cluster name; wins over destinationServer when set
+
+# The Universal Chart each generated Application renders.
+chartPath: "."
+
+# ---------------------------------------------------------------------------
+# Set in each values repo's rootApplicationSet.yaml, NOT here.
+# ---------------------------------------------------------------------------
+# Helm parameters of the root ApplicationSet's cm-applicationSet source,
+# deliberately absent from this file. A root file that leaves one out gets the
+# fallback in brackets, built into templates/applicationSet.yaml.
+#
+#   destinationServer            [https://kubernetes.default.svc]
+#   chartRepoURL                 [https://github.com/devops-ezrahi/universal-chart.git]
+#   chartRevision                [main]
+#   autoSync                     ["false"]
+#       Whether each ConfigMap Application syncs itself. `autoSync:
+#       true|false` in the folder's defaults.yaml overrides it per folder
+#       (Argo CD 2.10+), exactly as for the microservices.
+#   preserveResourcesOnDeletion  ["true"]
+#       "true": deleting a ConfigMap's file (so its Application) leaves the
+#       ConfigMap in the cluster. "false": the ConfigMap is deleted with it.
+#   configMaps.dir               [configMaps]
+#       The folder under <folder>/ whose *.yaml files are deployed. Each file
+#       starts at `data:` (and/or binaryData:) and is ConfigMap/<file name>.

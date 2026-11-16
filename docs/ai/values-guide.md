@@ -14,6 +14,7 @@ this file and the templates win. Every snippet here matches
 | `containerName` | Main container name (default: release name). Set it to keep `kubectl logs -c` and log selectors working. |
 | map keys of `configMaps`, `secrets`, `pvc`, `cronjobs`, `jobs`, `services`, `routes`, `rbac.*`, `externalSecrets`, ... | The object's real name, verbatim. |
 | `service.name`, `routes.<n>.name` | Render a Service or Route under a different real name. |
+| top-level `data` / `binaryData` | ONE ConfigMap named like the workload (`fullnameOverride` / `nameOverride` / release name). This is the shape of a `configMaps/<name>.yaml` file (see section 3). |
 
 Cluster-scoped objects (`rbac.clusterRoles`, `storageClasses`,
 `persistentVolumes`, `scc`, `clusterSecretStores`) are global. Two releases
@@ -75,8 +76,13 @@ envFromOrder: []            # when two sources share a key (later wins)
 - A Kubernetes-style list still renders as written, but it can't be partially
   overridden. Avoid it.
 - Sidecars, init containers and `cronjobs.<n>.jobTemplate` take the same `env` map.
-- A ConfigMap from the namespace's `configMaps/` folder (its own Application,
-  see `gitops-and-converter.md`) is used like any existing ConfigMap: by name,
+- A ConfigMap from the namespace's `configMaps/` folder is written as its own
+  file, `<ns>/configMaps/<name>.yaml`, starting at `data:` (and/or
+  `binaryData:`; `commonLabels`/`commonAnnotations` for its metadata). Nothing
+  goes before `data:`: the file name is the ConfigMap's name, and every file in
+  the folder is deployed (one Application each, see `gitops-and-converter.md`).
+  Copy `docs/ai/examples/namespace-configmaps.yaml`. Microservices use it like
+  any existing ConfigMap: by name,
   `envFrom: {env1: {type: configMapRef}}` or a `volumes` entry with
   `configMap: {name: namespace-conf}`. Don't also define it in the release's
   `configMaps`, because two Applications would own one object. `checksums` doesn't
@@ -199,6 +205,10 @@ doesn't model. Use it last. Prefer a real values key when one exists.
 - [ ] HPA on with `replicaCount` expected to matter
 - [ ] StatefulSet `serviceName` pointing at a non-headless Service
 - [ ] Unescaped `{{` in ConfigMap data
+- [ ] A `configMaps/<name>.yaml` that wraps its data in `configMaps: <name>:`
+      (old shape; it starts at `data:` now), or a leftover `values/configMaps.yaml`
+- [ ] (handled) A number or boolean in ConfigMap `data` (`PORT: 8080`) is
+      rendered quoted, as Kubernetes requires; writing it quoted is still clearer
 - [ ] A cronjob key written as a short suffix, expecting a release prefix
 - [ ] A changed selector or pod-template field on a live workload (immutable, or a restart)
 - [ ] A key invented that exists nowhere in `values.yaml`/schema/templates
