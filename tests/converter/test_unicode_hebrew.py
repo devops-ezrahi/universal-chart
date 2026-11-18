@@ -382,7 +382,13 @@ def test_hand_written_hebrew_config_map_files_are_kept_in_any_encoding(tmp_path)
     (out / NS / "values" / "configMaps.yaml").write_text("configMapFiles: [legacy]\n", encoding="utf-8")
     before = {n: (cms / f"{n}.yaml").read_bytes() for n in files}
     _convert(["--from-yaml", str(src)], out)
-    assert {n: (cms / f"{n}.yaml").read_bytes() for n in files} == before  # untouched
+    # UTF-8 (BOM or not) is left byte for byte. UTF-16, which Helm 4 (and so
+    # Argo CD) cannot read, is rewritten as UTF-8 with the same text.
+    after = {n: (cms / f"{n}.yaml").read_bytes() for n in files}
+    assert after["plain"] == before["plain"] and after["bom"] == before["bom"]
+    assert after["utf16"] == before["utf16"].decode("utf-16").encode("utf-8")
+    report = (out / "report" / "config_maps_migration.txt").read_text(encoding="utf-8")
+    assert "configMaps/utf16.yaml was UTF-16" in report
     assert yaml.safe_load((cms / "legacy.yaml").read_text(encoding="utf-8")) == {
         "data": {"greeting": "שלום ישן"}, "commonAnnotations": {"o": "צוות"}}
     rendered = {d["metadata"]["name"]: d["data"] for d in _render_tree(out)

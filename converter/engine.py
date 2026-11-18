@@ -870,6 +870,25 @@ def config_maps_render_args(vf: Path) -> tuple[list[Path], tuple[str, ...]]:
     return [vf, CONFIG_MAPS_PARAMS_FILE], (f"fullnameOverride={vf.stem}",)
 
 
+def utf16_files_to_utf8(output_dir: Path) -> list[str]:
+    """Rewrite every UTF-16 YAML file of the values tree as UTF-8, its text
+    unchanged (comments, order, Hebrew and all). Windows PowerShell 5.1 saves
+    UTF-16 with `>` and Out-File. The converter reads it (read_manifest_text),
+    but Helm 4, and so Argo CD, refuses it ("yaml: incomplete UTF-16
+    character"), so the file would never deploy. UTF-8, with or without a BOM,
+    is left byte for byte. Returns report lines."""
+    notes = []
+    for f in sorted(output_dir.rglob("*.y*ml")):
+        if "report" in f.relative_to(output_dir).parts or not f.is_file():
+            continue
+        head = f.read_bytes()[:2]
+        if head in (b"\xff\xfe", b"\xfe\xff"):
+            f.write_text(read_manifest_text(f), encoding="utf-8")
+            notes.append(f"ENCODING: {f.relative_to(output_dir).as_posix()} was UTF-16 (Helm 4 and Argo CD "
+                         f"cannot read it) - rewritten as UTF-8, text unchanged.")
+    return notes
+
+
 def migrate_config_maps(ns_dir: Path, keep_list_file: bool = False) -> list[str]:
     """Bring a namespace's ConfigMaps folder from the old shape to the current
     one, in place. Returns one note per change or per file it left alone.
@@ -7949,8 +7968,9 @@ def run(args: argparse.Namespace) -> None:
 
     # The ConfigMaps folders: rewrite the old shape in place (see
     # migrate_config_maps), reported in its own file.
-    cm_notes = [n for _, ns_dir in namespace_dirs_of(output_dir)
-                for n in migrate_config_maps(ns_dir, keep_list_file=not args.preserve_resources_on_deletion)]
+    cm_notes = utf16_files_to_utf8(output_dir)
+    cm_notes += [n for _, ns_dir in namespace_dirs_of(output_dir)
+                 for n in migrate_config_maps(ns_dir, keep_list_file=not args.preserve_resources_on_deletion)]
     if cm_notes:
         report_dir.mkdir(parents=True, exist_ok=True)
         (report_dir / "config_maps_migration.txt").write_text("\n".join(cm_notes) + "\n", encoding="utf-8")

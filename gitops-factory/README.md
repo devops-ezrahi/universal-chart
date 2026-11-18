@@ -109,7 +109,8 @@ python gitops-factory/convert_to_universal_chart.py --input dump/ -o out
    (given YAML is all app: Roles, a ConfigMap nobody mounts, cluster-scoped
    objects). `--input` skips the pull. Every file it reads (dumps, and a values
    repo it re-runs on) may be UTF-8, UTF-8 with a BOM, or UTF-16 (what `>` writes in
-   Windows PowerShell 5.1).
+   Windows PowerShell 5.1). Helm 4 cannot read UTF-16, so a UTF-16 file in the values
+   tree is rewritten as UTF-8, text unchanged, and reported.
 2. **Convert.** The engine turns the dump into `base/`, per-folder
    `defaults.yaml` and `values/`, plus the Argo CD wiring if asked.
 3. **Verify.** Unless `--skip-verify`, every release is rendered with

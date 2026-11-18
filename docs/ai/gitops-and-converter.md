@@ -184,9 +184,12 @@ python gitops-factory/convert_to_universal_chart.py --help                      
   - Every file the converter reads (`--from-yaml` and `--input` dumps, and the
     values repo it re-runs on: `values/`, `defaults.yaml`, `configMaps/`) may
     be UTF-8, UTF-8 with a BOM (Notepad), or UTF-16 with a BOM (what `>` and
-    Out-File write in Windows PowerShell 5.1), as Helm accepts. Hand-written
-    `configMaps/` files are left byte-for-byte as they are; files it writes
-    are UTF-8 with Hebrew (any non-ASCII text) literal, never `\u` escapes.
+    Out-File write in Windows PowerShell 5.1). Helm 4, and so Argo CD, cannot
+    read UTF-16, so a UTF-16 file in the values tree is rewritten as UTF-8 with
+    its text unchanged (reported in `report/config_maps_migration.txt`). Other
+    hand-written `configMaps/` files are left byte-for-byte; files the
+    converter writes are UTF-8 with Hebrew (any non-ASCII text) literal, never
+    `\u` escapes.
 - Deliberately not converted: ServiceMonitors (dropped, reported). PDBs and
   NetworkAttachmentDefinitions pass through `extraDeploy`.
 - Reports are written to `<out>/report/` (`conflicts_and_warnings.txt`,
