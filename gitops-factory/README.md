@@ -64,7 +64,7 @@ Everything the tools generate lands in `.generated/` (gitignored):
 |---|---|
 | `gitops-factory/convert_to_universal_chart.py` | **The command.** Reads a source (`-n`, `--link`, `--from-yaml`, `--input`, `--upgrade`), converts, verifies. `--help` lists every option. |
 | `converter/engine.py` | The conversion itself: dump in, `base/` + per-folder `defaults.yaml` / `values/` (+ Argo CD wiring) out, then render-verification and the opt-in fidelity check. |
-| `converter/importer.py` | Pulls a namespace (or one app / one resource) through `oc` and writes the dump: `<dump>/<namespace>/<microservice>.yaml` + `shared.yaml`, cleaned of runtime metadata. An ExternalSecret brings its SecretStore/ClusterSecretStore along, with the store's Vault CA and ServiceAccount. |
+| `converter/importer.py` | Pulls a namespace (or one app / one resource) through `oc` and writes the dump: `<dump>/<namespace>/<microservice>.yaml` + `shared.yaml`, cleaned of runtime metadata. An ExternalSecret brings its SecretStore/ClusterSecretStore along, with the store's Vault CA and ServiceAccount. A Service goes into the file of the workload whose pods its selector picks (every selector label on the pod), its Routes with it; into `shared.yaml` only when it spans several workloads and its name (`api`, `api-...`) does not single one out, or selects no workload's pods. |
 | `converter/sources.py` | The sources the command reads, all ending in that dump. |
 | `tools/convert_and_verify.py` | Showcase convert + name check + fidelity check + sanitize, in one command. |
 | `tools/values_editor.py` | Values-authoring CLI for microservices you add or tune **by hand** — defaults.yaml-aware. See [values_editor.py](#values_editorpy--hand-authoring-microservices). |

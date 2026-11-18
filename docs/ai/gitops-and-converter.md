@@ -149,6 +149,11 @@ python gitops-factory/convert_to_universal_chart.py --help                      
 ```
 
 - Input dump layout: `<dump>/<namespace>/<microservice>.yaml` (multi-doc) + optional `shared.yaml`.
+- Where a pull (`-n`, `--link`, `--from-yaml`) files a Service: in the file of the
+  workload whose pods its selector picks (every selector label on the pod), its
+  Routes with it. `shared.yaml` gets it only when it selects pods of several
+  workloads and its name (`api`, `api-...`) does not single one out, or selects
+  no workload's pods at all.
 - Code map: `converter/importer.py` (pulls through `oc`, cleans runtime
   metadata), `converter/sources.py` (input kinds), `converter/engine.py` (the
   conversion, ~7.6k lines: factoring into base/defaults/values, renames,
