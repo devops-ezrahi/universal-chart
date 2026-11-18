@@ -8,6 +8,8 @@ cautious. BlockDumper asks for `|` on every multi-line string and lets the
 emitter use it whenever the value reads back unchanged, so nothing is ever
 altered to get the nicer form. It also indents list items under their key.
 """
+from pathlib import Path
+
 import yaml
 
 
@@ -47,6 +49,18 @@ class BlockDumper(_ForcedBlockEmitterMixin, yaml.SafeDumper):
 
 
 BlockDumper.add_representer(str, represent_str)
+
+
+def read_manifest_text(path) -> str:
+    """A YAML file as text, whatever Windows saved it as: UTF-8, UTF-8 with a
+    BOM (Notepad), or UTF-16 with a BOM (`oc get ... -o yaml > dump.yaml`, or
+    any `>`/Out-File, in Windows PowerShell 5.1). Helm, and so Argo CD, reads
+    all three; read as plain UTF-8 a UTF-16 file fails to decode and a BOM
+    sticks to the first key."""
+    raw = Path(path).read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16")
+    return raw.decode("utf-8-sig")
 
 
 if __name__ == "__main__":

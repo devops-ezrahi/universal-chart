@@ -170,12 +170,26 @@ python gitops-factory/convert_to_universal_chart.py --help                      
   - `--cluster-scoped`: cluster objects go to the `cluster-shared` release.
   - `--instances x`: an instance layout.
   - `--verify-fidelity [--fidelity-strict]`: prove the rendered output equals the source.
-  - `--repair-mojibake [true|false]` (default true): ConfigMap/Secret text that
-    is UTF-8 read with a Windows console or ANSI codepage (Hebrew showing as
-    `╫É╫û╫ò` for cp437, `׳©׳` for cp1255, `×©` for cp1252) is written
-    repaired when it can be restored exactly, and every one is reported as
-    `[P1]` in `conflicts_and_warnings.txt`. Text that lost characters is only
-    reported. The fidelity check lists a repair as INFO, not as a change.
+  - `--repair-mojibake [true|false]` (default true): text that is UTF-8 read
+    with a Windows console or ANSI codepage (Hebrew showing as `╫É╫û╫ò` for
+    cp437/cp850/cp862, `׳©׳` for cp1255, `×©` for cp1252) is written repaired
+    when it can be restored exactly, and every one is reported as `[P1]` in
+    `conflicts_and_warnings.txt`. It covers every string value of every
+    converted object (ConfigMap and Secret data, Secret `data` decoded from
+    base64, env values, args, command, annotations, labels...), not map keys.
+    Bytes an ANSI codepage leaves undefined (which Windows decodes to C1
+    control characters, e.g. U+009C for the second byte of `ל`) are restored
+    too. Text that lost characters (`�`) is only reported. The fidelity check
+    lists a repair as INFO, not as a change.
+  - Every file the converter reads (`--from-yaml` and `--input` dumps, and the
+    values repo it re-runs on: `values/`, `defaults.yaml`, `configMaps/`) may
+    be UTF-8, UTF-8 with a BOM (Notepad), or UTF-16 with a BOM (what `>` and
+    Out-File write in Windows PowerShell 5.1). Helm 4, and so Argo CD, cannot
+    read UTF-16, so a UTF-16 file in the values tree is rewritten as UTF-8 with
+    its text unchanged (reported in `report/config_maps_migration.txt`). Other
+    hand-written `configMaps/` files are left byte-for-byte; files the
+    converter writes are UTF-8 with Hebrew (any non-ASCII text) literal, never
+    `\u` escapes.
 - Deliberately not converted: ServiceMonitors (dropped, reported). PDBs and
   NetworkAttachmentDefinitions pass through `extraDeploy`.
 - Reports are written to `<out>/report/` (`conflicts_and_warnings.txt`,

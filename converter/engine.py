@@ -128,7 +128,7 @@ import yaml
 # The repo root holds the `converter` package; put it on sys.path so this
 # module also imports when loaded by file path (tests, the devops-portal).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1])) if str(Path(__file__).resolve().parents[1]) not in sys.path else None
-from converter.yaml_style import _ForcedBlockEmitterMixin  # noqa: E402
+from converter.yaml_style import _ForcedBlockEmitterMixin, read_manifest_text  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -870,6 +870,25 @@ def config_maps_render_args(vf: Path) -> tuple[list[Path], tuple[str, ...]]:
     return [vf, CONFIG_MAPS_PARAMS_FILE], (f"fullnameOverride={vf.stem}",)
 
 
+def utf16_files_to_utf8(output_dir: Path) -> list[str]:
+    """Rewrite every UTF-16 YAML file of the values tree as UTF-8, its text
+    unchanged (comments, order, Hebrew and all). Windows PowerShell 5.1 saves
+    UTF-16 with `>` and Out-File. The converter reads it (read_manifest_text),
+    but Helm 4, and so Argo CD, refuses it ("yaml: incomplete UTF-16
+    character"), so the file would never deploy. UTF-8, with or without a BOM,
+    is left byte for byte. Returns report lines."""
+    notes = []
+    for f in sorted(output_dir.rglob("*.y*ml")):
+        if "report" in f.relative_to(output_dir).parts or not f.is_file():
+            continue
+        head = f.read_bytes()[:2]
+        if head in (b"\xff\xfe", b"\xfe\xff"):
+            f.write_text(read_manifest_text(f), encoding="utf-8")
+            notes.append(f"ENCODING: {f.relative_to(output_dir).as_posix()} was UTF-16 (Helm 4 and Argo CD "
+                         f"cannot read it) - rewritten as UTF-8, text unchanged.")
+    return notes
+
+
 def migrate_config_maps(ns_dir: Path, keep_list_file: bool = False) -> list[str]:
     """Bring a namespace's ConfigMaps folder from the old shape to the current
     one, in place. Returns one note per change or per file it left alone.
@@ -893,7 +912,7 @@ def migrate_config_maps(ns_dir: Path, keep_list_file: bool = False) -> list[str]
     rel = lambda f: f"{ns_dir.name}/{f.relative_to(ns_dir)}"  # noqa: E731
     for f in config_maps_files(ns_dir):
         try:
-            data = yaml.safe_load(f.read_text(encoding="utf-8"))
+            data = yaml.safe_load(read_manifest_text(f))
         except yaml.YAMLError as e:
             notes.append(f"CONFIGMAPS: {rel(f)} is not valid YAML ({e}) - left as is.")
             continue
@@ -927,7 +946,7 @@ def migrate_config_maps(ns_dir: Path, keep_list_file: bool = False) -> list[str]
     legacy = ns_dir / VALUES_DIR_NAME / LEGACY_CONFIG_MAPS_FILE
     if legacy.is_file():
         try:
-            listed_raw = (yaml.safe_load(legacy.read_text(encoding="utf-8")) or {}).get(LEGACY_CONFIG_MAPS_LIST_KEY)
+            listed_raw = (yaml.safe_load(read_manifest_text(legacy)) or {}).get(LEGACY_CONFIG_MAPS_LIST_KEY)
         except (yaml.YAMLError, AttributeError):
             listed_raw = None
         listed = {str(n).removesuffix(".yaml") for n in listed_raw or []} if isinstance(listed_raw, list) else set()
@@ -961,7 +980,7 @@ def base_name_of(vf: Path) -> "str | None":
     """The base a values file names in BaseFile ('x' or 'x.yaml' -> 'x'); None
     when it names none (or the file is missing or unreadable)."""
     try:
-        data = yaml.safe_load(vf.read_text(encoding="utf-8"))
+        data = yaml.safe_load(read_manifest_text(vf))
     except (OSError, yaml.YAMLError):
         return None
     if isinstance(data, dict) and data.get(BASE_FILE_KEY) not in (None, ""):
@@ -1012,7 +1031,7 @@ VOLATILE_METADATA_KEYS = (
 # ---------------------------------------------------------------------------
 
 def load_multidoc(path: Path) -> list[dict]:
-    text = path.read_text(encoding="utf-8")
+    text = read_manifest_text(path)
     try:
         return [d for d in yaml.safe_load_all(text) if d]
     except yaml.YAMLError:
@@ -2912,6 +2931,26 @@ MOJIBAKE_CODEPAGES = ("cp437", "cp850", "cp1255", "cp1252", "cp862")
 REPAIR_MOJIBAKE = True
 
 
+def _windows_encode(value: str, cp: str) -> bytes:
+    """`value` encoded with `cp` the way Windows decoded it. Windows (and .NET,
+    PowerShell, Python's 'mbcs') turns a byte its ANSI codepage leaves undefined
+    into the C1 control character of the same number (0x9C -> U+009C) instead
+    of failing, where Python's strict codec refuses that character on the way
+    back. Those bytes are exactly the second bytes of common Hebrew letters
+    (א ך ל ם מ ן under cp1255, א ם under cp1252), so without this 'שלום' read
+    as cp1255 ('׳©׳\x9c׳•׳\x9d') looked lost and was never repaired."""
+    out = bytearray()
+    for ch in value:
+        try:
+            out += ch.encode(cp)
+        except UnicodeEncodeError:
+            if 0x80 <= ord(ch) <= 0x9F:
+                out.append(ord(ch))
+            else:
+                raise
+    return bytes(out)
+
+
 def find_mojibake(value: str) -> "tuple[str, str] | None":
     """(codepage, repaired text) when `value` reads as UTF-8 text that was
     decoded with a single-byte codepage, e.g. '╫⌐╫£╫ò╫¥' (cp437) or '׳©׳׳•׳'
@@ -2923,7 +2962,7 @@ def find_mojibake(value: str) -> "tuple[str, str] | None":
     fixes = []
     for cp in MOJIBAKE_CODEPAGES:
         try:
-            fixed = value.encode(cp).decode("utf-8")
+            fixed = _windows_encode(value, cp).decode("utf-8")
         except (UnicodeEncodeError, UnicodeDecodeError):
             continue
         if fixed != value:
@@ -2987,6 +3026,51 @@ def _repair_mojibake(doc: dict, ctx: "MicroserviceContext", kind: str, name: str
                 values[key] = (base64.b64encode(fixed.encode("utf-8")).decode("ascii")
                                if field in b64_fields else fixed)
             report(field, key, cp, fixed, repaired)
+
+
+# Fields _repair_mojibake checks with its own (base64-aware) rules.
+_MOJIBAKE_OWN_FIELDS = {"ConfigMap": ("data", "binaryData"), "Secret": ("data", "stringData")}
+
+
+def _repair_mojibake_everywhere(doc: dict, ctx: "MicroserviceContext", kind: str, name: str) -> None:
+    """find_mojibake on every other string value of a raw object: env values,
+    args, command, annotations, labels, probes... The same Windows codepage
+    garbles them as much as ConfigMap data. Repaired (unless --repair-mojibake
+    false) and reported like _repair_mojibake. Map keys are left alone."""
+    skip = _MOJIBAKE_OWN_FIELDS.get(kind, ())
+
+    def walk(node, path):
+        items = node.items() if isinstance(node, dict) else enumerate(node)
+        for key, value in list(items):
+            if not path and key in skip:
+                continue
+            here = f"{path}.{key}" if isinstance(node, dict) and path else (
+                str(key) if isinstance(node, dict) else f"{path}[{key}]")
+            if isinstance(value, (dict, list)):
+                walk(value, here)
+                continue
+            if not isinstance(value, str):
+                continue
+            hit = find_mojibake(value)
+            if not hit:
+                continue
+            cp, fixed = hit
+            repaired = bool(fixed) and REPAIR_MOJIBAKE
+            if repaired:
+                node[key] = fixed
+            sample = fixed.strip().splitlines()[0][:40] if fixed.strip() else ""
+            if repaired:
+                what = (f"repaired to '{sample}'. The live object holds the garbled text: syncing this "
+                        f"release writes the repaired text to the cluster")
+            elif fixed:
+                what = f"it reads '{sample}' when repaired; kept as found (--repair-mojibake false)"
+            else:
+                what = "characters were lost, it cannot be repaired; kept as found"
+            ctx.warnings.append(f"[P1] {kind}/{name} {here}: garbled text - UTF-8 that was read as "
+                                f"{cp} (a Windows console or ANSI codepage) - {what}. Fix it where it was "
+                                f"written (the file or script it was applied from).")
+
+    walk(doc, "")
 
 
 def handle_configmap(doc: dict, ctx: MicroserviceContext, name: str) -> None:
@@ -4498,6 +4582,9 @@ def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regis
     for doc in docs:
         kind = doc.get("kind")
         name = (doc.get("metadata") or {}).get("name")
+        if ctx.claim_actions.get(kind, {}).get(name) != "reference_shared" and not (
+                kind == "Secret" and is_auto_sa_secret(doc)):
+            _repair_mojibake_everywhere(doc, ctx, kind, name)
 
         if kind in WORKLOAD_KINDS:
             handle_workload(doc, ctx, kind)
@@ -4825,7 +4912,7 @@ def lint_env_shape(output_dir: Path, skip: frozenset = frozenset()) -> list[str]
     for f in sorted(files - set(skip)):
         rel = f.relative_to(output_dir)
         try:
-            data = yaml.safe_load(f.read_text(encoding="utf-8"))
+            data = yaml.safe_load(read_manifest_text(f))
         except yaml.YAMLError:
             continue
         out += env_shape_problems(data, rel.as_posix())
@@ -7015,7 +7102,7 @@ def build_parser() -> argparse.ArgumentParser:
                           "deletes cascade to the workloads.")
     ap.add_argument("--repair-mojibake", nargs="?", const=True, default=True, type=_bool_arg,
                      metavar="true|false",
-                     help="ConfigMap/Secret text that is UTF-8 read with a Windows console or ANSI "
+                     help="Text in any converted object (ConfigMap/Secret data, env, args, annotations...) that is UTF-8 read with a Windows console or ANSI "
                           "codepage (Hebrew showing as '╫É╫û╫ò' or '׳©׳'): on by default, text that "
                           "can be restored exactly is written repaired, each one reported as [P1] in "
                           "conflicts_and_warnings.txt. false: only report it.")
@@ -7881,8 +7968,9 @@ def run(args: argparse.Namespace) -> None:
 
     # The ConfigMaps folders: rewrite the old shape in place (see
     # migrate_config_maps), reported in its own file.
-    cm_notes = [n for _, ns_dir in namespace_dirs_of(output_dir)
-                for n in migrate_config_maps(ns_dir, keep_list_file=not args.preserve_resources_on_deletion)]
+    cm_notes = utf16_files_to_utf8(output_dir)
+    cm_notes += [n for _, ns_dir in namespace_dirs_of(output_dir)
+                 for n in migrate_config_maps(ns_dir, keep_list_file=not args.preserve_resources_on_deletion)]
     if cm_notes:
         report_dir.mkdir(parents=True, exist_ok=True)
         (report_dir / "config_maps_migration.txt").write_text("\n".join(cm_notes) + "\n", encoding="utf-8")

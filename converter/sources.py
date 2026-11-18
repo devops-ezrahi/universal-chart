@@ -31,6 +31,7 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO)) if str(REPO) not in sys.path else None
 from converter import importer as ni  # noqa: E402
+from converter import engine  # noqa: E402
 from converter.engine import CLUSTER_SCOPED_KINDS  # noqa: E402
 
 # The title of the argument group holding the source options. The portal's
@@ -206,7 +207,7 @@ def load_manifests(paths: list[str], default_ns: str) -> dict[str, list[dict]]:
     by_ns: dict[str, list[dict]] = {}
     homeless = []
     for f in files:
-        for d in ni.parse_yaml_stream(f.read_text(encoding="utf-8")):
+        for d in ni.parse_yaml_stream(engine.read_manifest_text(f)):
             ns = (d.get("metadata") or {}).get("namespace") or default_ns
             if ns:
                 by_ns.setdefault(ns, []).append(d)
@@ -230,7 +231,7 @@ def _written(ns_dir: Path) -> set:
     seen = set()
     for f in (ns_dir.rglob("*.y*ml") if ns_dir.is_dir() else []):
         try:
-            for d in yaml.safe_load_all(f.read_text(encoding="utf-8")):
+            for d in yaml.safe_load_all(engine.read_manifest_text(f)):
                 if isinstance(d, dict):
                     seen.add((d.get("kind"), (d.get("metadata") or {}).get("name")))
         except yaml.YAMLError:
