@@ -76,7 +76,7 @@ class OldTree:
             f: {vf.stem: vf.relative_to(d / engine.VALUES_DIR_NAME)
                 for vf in engine.values_files(d / engine.VALUES_DIR_NAME)}
             for f, d in self.folders.items()}
-        self.defaults = {f: (yaml.safe_load((d / engine.DEFAULTS_FILE_NAME).read_text(encoding="utf-8")) or {})
+        self.defaults = {f: (yaml.safe_load(engine.read_manifest_text(d / engine.DEFAULTS_FILE_NAME)) or {})
                          for f, d in self.folders.items()}
         self.cluster_shared = (self.root / engine.CLUSTER_SHARED_DIR_NAME).is_dir()
 
@@ -87,7 +87,7 @@ class OldTree:
         for name in (engine.ROOT_APPSET_FILE_NAME, "root-applicationSet.yaml"):
             p = self.root / name
             if p.is_file():
-                docs = [d for d in yaml.safe_load_all(p.read_text(encoding="utf-8")) if isinstance(d, dict)]
+                docs = [d for d in yaml.safe_load_all(engine.read_manifest_text(p)) if isinstance(d, dict)]
                 if docs:
                     return docs[0]
         return {}
@@ -223,7 +223,7 @@ def recorded_settings(tree: OldTree) -> dict[str, object]:
     instances: dict[str, list[str]] = {}
     for folder, rels in tree.releases.items():
         for stem, rel in rels.items():
-            data = yaml.safe_load((tree.folders[folder] / engine.VALUES_DIR_NAME / rel).read_text(encoding="utf-8")) or {}
+            data = yaml.safe_load(engine.read_manifest_text(tree.folders[folder] / engine.VALUES_DIR_NAME / rel)) or {}
             if isinstance(data, dict) and data.get(engine.BASE_FILE_KEY):
                 base = str(data[engine.BASE_FILE_KEY]).removesuffix(".yaml")
                 instances.setdefault(base, []).append(stem)
@@ -376,7 +376,7 @@ def render_tree(tree: OldTree, chart: Path, dump: Path) -> list[str]:
         try:
             docs = engine.helm_template(chart, "cluster-shared-resources", "platform-shared", [cs])
             target = dump / first / "shared.yaml"
-            prev = target.read_text(encoding="utf-8") if target.exists() else ""
+            prev = engine.read_manifest_text(target) if target.exists() else ""
             target.write_text(prev + ("---\n" if prev else "")
                               + yaml.safe_dump_all([strip_stamps(x) for x in docs], sort_keys=False, allow_unicode=True),
                               encoding="utf-8")
@@ -393,7 +393,7 @@ def strip_dump(dump: Path) -> None:
     """strip_stamps over every document of a pulled dump."""
     from converter.yaml_style import BlockDumper
     for f in sorted(dump.rglob("*.yaml")):
-        docs = [d for d in yaml.safe_load_all(f.read_text(encoding="utf-8")) if isinstance(d, dict)]
+        docs = [d for d in yaml.safe_load_all(engine.read_manifest_text(f)) if isinstance(d, dict)]
         f.write_text(yaml.dump_all([strip_stamps(d) for d in docs], Dumper=BlockDumper, sort_keys=False,
                                    allow_unicode=True), encoding="utf-8")
 
@@ -474,7 +474,7 @@ def regroup_by_owner(tree: OldTree, dump: Path) -> list[str]:
     owned: dict[tuple[str, str], list[dict]] = {}
     kept: dict[Path, list[dict]] = {}
     for f in sorted(dump.rglob("*.yaml")):
-        for doc in yaml.safe_load_all(f.read_text(encoding="utf-8")):
+        for doc in yaml.safe_load_all(engine.read_manifest_text(f)):
             if not isinstance(doc, dict):
                 continue
             o = owner_of(doc, apps)
@@ -492,7 +492,7 @@ def regroup_by_owner(tree: OldTree, dump: Path) -> list[str]:
                          f"old-tree release — kept as pulled ({f.relative_to(dump).as_posix()})" for d in docs)
     for (folder, stem), docs in owned.items():
         target = dump / folder / f"{stem}.yaml"
-        prev = list(yaml.safe_load_all(target.read_text(encoding="utf-8"))) if target.exists() else []
+        prev = list(yaml.safe_load_all(engine.read_manifest_text(target))) if target.exists() else []
         # The importer can write one object twice (a ServiceAccount as a
         # workload's reference and again from the namespace scan): one copy.
         seen, unique = set(), []

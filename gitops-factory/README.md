@@ -107,8 +107,9 @@ python gitops-factory/convert_to_universal_chart.py --input dump/ -o out
    of them use, runtime metadata stripped. `--from-yaml` answers the same reads
    from the files, then also files everything the workloads did not reference
    (given YAML is all app: Roles, a ConfigMap nobody mounts, cluster-scoped
-   objects). `--input` skips the pull. Input files may be UTF-8, UTF-8 with a
-   BOM, or UTF-16 (what `oc get ... -o yaml > file` writes in Windows PowerShell 5.1).
+   objects). `--input` skips the pull. Every file it reads (dumps, and a values
+   repo it re-runs on) may be UTF-8, UTF-8 with a BOM, or UTF-16 (what `>` writes in
+   Windows PowerShell 5.1).
 2. **Convert.** The engine turns the dump into `base/`, per-folder
    `defaults.yaml` and `values/`, plus the Argo CD wiring if asked.
 3. **Verify.** Unless `--skip-verify`, every release is rendered with

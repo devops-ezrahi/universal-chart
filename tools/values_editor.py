@@ -68,6 +68,18 @@ from typing import Any, Optional
 
 import yaml
 
+
+def read_manifest_text(path) -> str:
+    """A YAML file as text, whatever Windows saved it as: UTF-8, UTF-8 with a
+    BOM (Notepad), or UTF-16 with a BOM (`oc get ... -o yaml > dump.yaml`, or
+    any `>`/Out-File, in Windows PowerShell 5.1). Helm, and so Argo CD, reads
+    all three; read as plain UTF-8 a UTF-16 file fails to decode and a BOM
+    sticks to the first key."""
+    raw = Path(path).read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16")
+    return raw.decode("utf-8-sig")
+
 # The repo root holds the `converter` package; put it on sys.path so this
 # tool also imports when loaded by file path (tests, the devops-portal).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1])) if str(Path(__file__).resolve().parents[1]) not in sys.path else None
@@ -93,7 +105,7 @@ from converter.engine import (  # noqa: E402  (reuse, never redefine)
 def load_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return yaml.safe_load(read_manifest_text(path)) or {}
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -422,8 +434,8 @@ def cmd_set(args: argparse.Namespace) -> None:
               f"supplies — you likely don't need to set this at all. Setting it anyway "
               f"(explicit wins).")
 
-    header = target_path.read_text(encoding="utf-8").split("\n\n", 1)[0] + "\n\n" \
-        if target_path.exists() and target_path.read_text(encoding="utf-8").startswith("#") else ""
+    header = read_manifest_text(target_path).split("\n\n", 1)[0] + "\n\n" \
+        if target_path.exists() and read_manifest_text(target_path).startswith("#") else ""
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(header + dump_yaml(doc), encoding="utf-8")
     print(f"Set {args.key} = {value!r} in {target_path}")

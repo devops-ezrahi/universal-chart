@@ -45,7 +45,7 @@ from urllib.parse import unquote
 # The repo root holds the `converter` package; put it on sys.path so this
 # module also imports when loaded by file path (tests, the devops-portal).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1])) if str(Path(__file__).resolve().parents[1]) not in sys.path else None
-from converter.yaml_style import BlockDumper  # noqa: E402
+from converter.yaml_style import BlockDumper, read_manifest_text  # noqa: E402
 
 # Kubernetes label used to identify apps in topology view
 TOPOLOGY_LABEL = "app.kubernetes.io/part-of"
@@ -1302,7 +1302,7 @@ def _written_objects(ns_path):
     seen = set()
     for f in sorted(Path(ns_path).rglob("*.y*ml")) if Path(ns_path).exists() else []:
         try:
-            for d in yaml.safe_load_all(f.read_text(encoding="utf-8")):
+            for d in yaml.safe_load_all(read_manifest_text(f)):
                 if isinstance(d, dict):
                     seen.add((d.get("kind"), (d.get("metadata") or {}).get("name")))
         except yaml.YAMLError:
@@ -1357,7 +1357,7 @@ def file_unclaimed(ns_path, docs):
     if shared_add:
         ns_path.mkdir(parents=True, exist_ok=True)
         path = ns_path / "shared.yaml"
-        existing = [x for x in yaml.safe_load_all(path.read_text(encoding="utf-8")) if x] \
+        existing = [x for x in yaml.safe_load_all(read_manifest_text(path)) if x] \
             if path.exists() else []
         path.write_text(yaml.dump_all(existing + shared_add, default_flow_style=False, sort_keys=False,
                                       allow_unicode=True), encoding="utf-8")
@@ -1411,7 +1411,7 @@ def handle_topologies_file(topologies_file, args):
     if not file_path.exists():
         print(f"Error: Topologies file not found: {topologies_file}", file=sys.stderr)
         sys.exit(1)
-    urls = [line.strip() for line in file_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    urls = [line.strip() for line in read_manifest_text(file_path).splitlines() if line.strip()]
     if not urls:
         print("Error: No URLs found in topologies file", file=sys.stderr)
         sys.exit(1)

@@ -231,7 +231,7 @@ def _written(ns_dir: Path) -> set:
     seen = set()
     for f in (ns_dir.rglob("*.y*ml") if ns_dir.is_dir() else []):
         try:
-            for d in yaml.safe_load_all(f.read_text(encoding="utf-8")):
+            for d in yaml.safe_load_all(engine.read_manifest_text(f)):
                 if isinstance(d, dict):
                     seen.add((d.get("kind"), (d.get("metadata") or {}).get("name")))
         except yaml.YAMLError:

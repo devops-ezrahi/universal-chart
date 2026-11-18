@@ -181,9 +181,12 @@ python gitops-factory/convert_to_universal_chart.py --help                      
     control characters, e.g. U+009C for the second byte of `ל`) are restored
     too. Text that lost characters (`�`) is only reported. The fidelity check
     lists a repair as INFO, not as a change.
-  - Input files (`--from-yaml`, `--input`) may be UTF-8, UTF-8 with a BOM, or
-    UTF-16 with a BOM (what `oc get ... -o yaml > file` writes in Windows
-    PowerShell 5.1).
+  - Every file the converter reads (`--from-yaml` and `--input` dumps, and the
+    values repo it re-runs on: `values/`, `defaults.yaml`, `configMaps/`) may
+    be UTF-8, UTF-8 with a BOM (Notepad), or UTF-16 with a BOM (what `>` and
+    Out-File write in Windows PowerShell 5.1), as Helm accepts. Hand-written
+    `configMaps/` files are left byte-for-byte as they are; files it writes
+    are UTF-8 with Hebrew (any non-ASCII text) literal, never `\u` escapes.
 - Deliberately not converted: ServiceMonitors (dropped, reported). PDBs and
   NetworkAttachmentDefinitions pass through `extraDeploy`.
 - Reports are written to `<out>/report/` (`conflicts_and_warnings.txt`,

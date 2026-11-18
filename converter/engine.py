@@ -128,7 +128,7 @@ import yaml
 # The repo root holds the `converter` package; put it on sys.path so this
 # module also imports when loaded by file path (tests, the devops-portal).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1])) if str(Path(__file__).resolve().parents[1]) not in sys.path else None
-from converter.yaml_style import _ForcedBlockEmitterMixin  # noqa: E402
+from converter.yaml_style import _ForcedBlockEmitterMixin, read_manifest_text  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -893,7 +893,7 @@ def migrate_config_maps(ns_dir: Path, keep_list_file: bool = False) -> list[str]
     rel = lambda f: f"{ns_dir.name}/{f.relative_to(ns_dir)}"  # noqa: E731
     for f in config_maps_files(ns_dir):
         try:
-            data = yaml.safe_load(f.read_text(encoding="utf-8"))
+            data = yaml.safe_load(read_manifest_text(f))
         except yaml.YAMLError as e:
             notes.append(f"CONFIGMAPS: {rel(f)} is not valid YAML ({e}) - left as is.")
             continue
@@ -927,7 +927,7 @@ def migrate_config_maps(ns_dir: Path, keep_list_file: bool = False) -> list[str]
     legacy = ns_dir / VALUES_DIR_NAME / LEGACY_CONFIG_MAPS_FILE
     if legacy.is_file():
         try:
-            listed_raw = (yaml.safe_load(legacy.read_text(encoding="utf-8")) or {}).get(LEGACY_CONFIG_MAPS_LIST_KEY)
+            listed_raw = (yaml.safe_load(read_manifest_text(legacy)) or {}).get(LEGACY_CONFIG_MAPS_LIST_KEY)
         except (yaml.YAMLError, AttributeError):
             listed_raw = None
         listed = {str(n).removesuffix(".yaml") for n in listed_raw or []} if isinstance(listed_raw, list) else set()
@@ -961,7 +961,7 @@ def base_name_of(vf: Path) -> "str | None":
     """The base a values file names in BaseFile ('x' or 'x.yaml' -> 'x'); None
     when it names none (or the file is missing or unreadable)."""
     try:
-        data = yaml.safe_load(vf.read_text(encoding="utf-8"))
+        data = yaml.safe_load(read_manifest_text(vf))
     except (OSError, yaml.YAMLError):
         return None
     if isinstance(data, dict) and data.get(BASE_FILE_KEY) not in (None, ""):
@@ -1010,17 +1010,6 @@ VOLATILE_METADATA_KEYS = (
 # ---------------------------------------------------------------------------
 # YAML I/O helpers
 # ---------------------------------------------------------------------------
-
-def read_manifest_text(path: Path) -> str:
-    """A manifest file as text, whatever Windows saved it as: UTF-8, UTF-8
-    with a BOM (Notepad), or UTF-16 (`oc get ... -o yaml > dump.yaml` in
-    Windows PowerShell 5.1 writes UTF-16LE with a BOM). Read as plain UTF-8,
-    a UTF-16 file fails to decode and a BOM sticks to the first key."""
-    raw = path.read_bytes()
-    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return raw.decode("utf-16")
-    return raw.decode("utf-8-sig")
-
 
 def load_multidoc(path: Path) -> list[dict]:
     text = read_manifest_text(path)
@@ -4904,7 +4893,7 @@ def lint_env_shape(output_dir: Path, skip: frozenset = frozenset()) -> list[str]
     for f in sorted(files - set(skip)):
         rel = f.relative_to(output_dir)
         try:
-            data = yaml.safe_load(f.read_text(encoding="utf-8"))
+            data = yaml.safe_load(read_manifest_text(f))
         except yaml.YAMLError:
             continue
         out += env_shape_problems(data, rel.as_posix())
