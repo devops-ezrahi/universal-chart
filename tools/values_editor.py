@@ -469,7 +469,8 @@ def cmd_validate(args: argparse.Namespace) -> None:
                 cmd = ["helm", "template", name, args.chart, "--namespace", k8s_ns(namespace)]
                 for f in value_files:
                     cmd += ["-f", str(f)]
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = subprocess.run(cmd, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace")
                 rendered += 1
                 if result.returncode != 0:
                     errors.append(f"[{namespace}/{name}] helm template failed:\n{result.stderr.strip()}")

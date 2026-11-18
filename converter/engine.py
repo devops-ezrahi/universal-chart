@@ -1011,8 +1011,19 @@ VOLATILE_METADATA_KEYS = (
 # YAML I/O helpers
 # ---------------------------------------------------------------------------
 
+def read_manifest_text(path: Path) -> str:
+    """A manifest file as text, whatever Windows saved it as: UTF-8, UTF-8
+    with a BOM (Notepad), or UTF-16 (`oc get ... -o yaml > dump.yaml` in
+    Windows PowerShell 5.1 writes UTF-16LE with a BOM). Read as plain UTF-8,
+    a UTF-16 file fails to decode and a BOM sticks to the first key."""
+    raw = path.read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16")
+    return raw.decode("utf-8-sig")
+
+
 def load_multidoc(path: Path) -> list[dict]:
-    text = path.read_text(encoding="utf-8")
+    text = read_manifest_text(path)
     try:
         return [d for d in yaml.safe_load_all(text) if d]
     except yaml.YAMLError:
@@ -2912,6 +2923,26 @@ MOJIBAKE_CODEPAGES = ("cp437", "cp850", "cp1255", "cp1252", "cp862")
 REPAIR_MOJIBAKE = True
 
 
+def _windows_encode(value: str, cp: str) -> bytes:
+    """`value` encoded with `cp` the way Windows decoded it. Windows (and .NET,
+    PowerShell, Python's 'mbcs') turns a byte its ANSI codepage leaves undefined
+    into the C1 control character of the same number (0x9C -> U+009C) instead
+    of failing, where Python's strict codec refuses that character on the way
+    back. Those bytes are exactly the second bytes of common Hebrew letters
+    (א ך ל ם מ ן under cp1255, א ם under cp1252), so without this 'שלום' read
+    as cp1255 ('׳©׳\x9c׳•׳\x9d') looked lost and was never repaired."""
+    out = bytearray()
+    for ch in value:
+        try:
+            out += ch.encode(cp)
+        except UnicodeEncodeError:
+            if 0x80 <= ord(ch) <= 0x9F:
+                out.append(ord(ch))
+            else:
+                raise
+    return bytes(out)
+
+
 def find_mojibake(value: str) -> "tuple[str, str] | None":
     """(codepage, repaired text) when `value` reads as UTF-8 text that was
     decoded with a single-byte codepage, e.g. '╫⌐╫£╫ò╫¥' (cp437) or '׳©׳׳•׳'
@@ -2923,7 +2954,7 @@ def find_mojibake(value: str) -> "tuple[str, str] | None":
     fixes = []
     for cp in MOJIBAKE_CODEPAGES:
         try:
-            fixed = value.encode(cp).decode("utf-8")
+            fixed = _windows_encode(value, cp).decode("utf-8")
         except (UnicodeEncodeError, UnicodeDecodeError):
             continue
         if fixed != value:
@@ -2987,6 +3018,51 @@ def _repair_mojibake(doc: dict, ctx: "MicroserviceContext", kind: str, name: str
                 values[key] = (base64.b64encode(fixed.encode("utf-8")).decode("ascii")
                                if field in b64_fields else fixed)
             report(field, key, cp, fixed, repaired)
+
+
+# Fields _repair_mojibake checks with its own (base64-aware) rules.
+_MOJIBAKE_OWN_FIELDS = {"ConfigMap": ("data", "binaryData"), "Secret": ("data", "stringData")}
+
+
+def _repair_mojibake_everywhere(doc: dict, ctx: "MicroserviceContext", kind: str, name: str) -> None:
+    """find_mojibake on every other string value of a raw object: env values,
+    args, command, annotations, labels, probes... The same Windows codepage
+    garbles them as much as ConfigMap data. Repaired (unless --repair-mojibake
+    false) and reported like _repair_mojibake. Map keys are left alone."""
+    skip = _MOJIBAKE_OWN_FIELDS.get(kind, ())
+
+    def walk(node, path):
+        items = node.items() if isinstance(node, dict) else enumerate(node)
+        for key, value in list(items):
+            if not path and key in skip:
+                continue
+            here = f"{path}.{key}" if isinstance(node, dict) and path else (
+                str(key) if isinstance(node, dict) else f"{path}[{key}]")
+            if isinstance(value, (dict, list)):
+                walk(value, here)
+                continue
+            if not isinstance(value, str):
+                continue
+            hit = find_mojibake(value)
+            if not hit:
+                continue
+            cp, fixed = hit
+            repaired = bool(fixed) and REPAIR_MOJIBAKE
+            if repaired:
+                node[key] = fixed
+            sample = fixed.strip().splitlines()[0][:40] if fixed.strip() else ""
+            if repaired:
+                what = (f"repaired to '{sample}'. The live object holds the garbled text: syncing this "
+                        f"release writes the repaired text to the cluster")
+            elif fixed:
+                what = f"it reads '{sample}' when repaired; kept as found (--repair-mojibake false)"
+            else:
+                what = "characters were lost, it cannot be repaired; kept as found"
+            ctx.warnings.append(f"[P1] {kind}/{name} {here}: garbled text - UTF-8 that was read as "
+                                f"{cp} (a Windows console or ANSI codepage) - {what}. Fix it where it was "
+                                f"written (the file or script it was applied from).")
+
+    walk(doc, "")
 
 
 def handle_configmap(doc: dict, ctx: MicroserviceContext, name: str) -> None:
@@ -4498,6 +4574,9 @@ def _build_microservice(namespace: str, ms_name: str, docs: list[dict], ns_regis
     for doc in docs:
         kind = doc.get("kind")
         name = (doc.get("metadata") or {}).get("name")
+        if ctx.claim_actions.get(kind, {}).get(name) != "reference_shared" and not (
+                kind == "Secret" and is_auto_sa_secret(doc)):
+            _repair_mojibake_everywhere(doc, ctx, kind, name)
 
         if kind in WORKLOAD_KINDS:
             handle_workload(doc, ctx, kind)
@@ -7015,7 +7094,7 @@ def build_parser() -> argparse.ArgumentParser:
                           "deletes cascade to the workloads.")
     ap.add_argument("--repair-mojibake", nargs="?", const=True, default=True, type=_bool_arg,
                      metavar="true|false",
-                     help="ConfigMap/Secret text that is UTF-8 read with a Windows console or ANSI "
+                     help="Text in any converted object (ConfigMap/Secret data, env, args, annotations...) that is UTF-8 read with a Windows console or ANSI "
                           "codepage (Hebrew showing as '╫É╫û╫ò' or '׳©׳'): on by default, text that "
                           "can be restored exactly is written repaired, each one reported as [P1] in "
                           "conflicts_and_warnings.txt. false: only report it.")

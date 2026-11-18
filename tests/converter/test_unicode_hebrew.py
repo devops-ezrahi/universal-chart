@@ -157,5 +157,57 @@ def test_mojibake_detector():
     assert engine.find_mojibake("Café ₪ naïve") is None
 
 
+
+def windows_decode(text: str, cp: str) -> str:
+    """UTF-8 text as Windows (and .NET / PowerShell) decodes it with an ANSI
+    codepage: a byte the codepage leaves undefined becomes the C1 control
+    character of the same number, not an error."""
+    out = []
+    for b in text.encode("utf-8"):
+        try:
+            out.append(bytes([b]).decode(cp))
+        except UnicodeDecodeError:
+            out.append(chr(b))
+    return "".join(out)
+
+
+def test_windows_ansi_garbling_is_repairable():
+    # ל ם א מ ן ך sit on bytes cp1255 leaves undefined (א ם for cp1252): every
+    # one of them used to read as "characters were lost".
+    text = "שלום עולם, אמן ךןם"
+    for cp in ("cp1255", "cp1252", "cp437", "cp850", "cp862"):
+        assert engine.find_mojibake(windows_decode(text, cp)) == (cp, text), cp
+
+
+def test_garbled_text_outside_configmap_data_is_repaired(tmp_path):
+    docs = manifests()
+    ctr = docs[0]["spec"]["template"]["spec"]["containers"][0]
+    ctr["env"] = [{"name": "GREETING", "value": windows_decode("שלום עולם", "cp1255")}]
+    ctr["args"] = [windows_decode("--title=כותרת", "cp1252")]
+    docs[0]["metadata"]["annotations"] = {"description": windows_decode("שירות הזמנות", "cp437")}
+    docs[1]["data"] = {"a": windows_decode("מלון ים", "cp1255")}
+    src = tmp_path / "manifests.yaml"
+    # As Windows PowerShell 5.1 saves `oc get ... -o yaml > file`: UTF-16 with a BOM.
+    src.write_text(yaml.safe_dump_all(docs, allow_unicode=True), encoding="utf-16")
+    out = tmp_path / "out"
+    r = subprocess.run([sys.executable, str(REPO / "gitops-factory" / "convert_to_universal_chart.py"),
+                        "--from-yaml", str(src), "--output", str(out), "--skip-verify"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    written = "".join(f.read_text(encoding="utf-8") for f in out.rglob("*.yaml"))
+    for text in ("שלום עולם", "--title=כותרת", "שירות הזמנות", "מלון ים"):
+        assert text in written, text
+    assert engine.find_mojibake(written) is None
+    report = (out / "report" / "conflicts_and_warnings.txt").read_text(encoding="utf-8")
+    assert "Deployment/web spec.template.spec.containers[0].env[0].value" in report
+    assert "Deployment/web metadata.annotations.description" in report
+
+
+def test_manifest_files_with_a_bom_are_read(tmp_path):
+    f = tmp_path / "m.yaml"
+    for enc in ("utf-8-sig", "utf-16", "utf-8"):
+        f.write_text("kind: ConfigMap\ndata:\n  a: שלום\n", encoding=enc)
+        assert engine.load_multidoc(f) == [{"kind": "ConfigMap", "data": {"a": "שלום"}}], enc
+
 if __name__ == "__main__":
     sys.exit(fake_oc_main(sys.argv[1:]))
