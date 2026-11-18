@@ -302,6 +302,63 @@ def extract_pod_spec_from_resource(resource):
     return None
 
 
+def pod_template_labels(resource):
+    """The labels a workload's pods carry: what a Service selector is matched
+    against. Falls back to the workload's own selector (matchLabels, or a plain
+    map as DeploymentConfigs and ReplicationControllers write it) when the
+    template names none."""
+    if not isinstance(resource, dict):
+        return {}
+    spec = resource.get("spec") or {}
+    if resource.get("kind") == "CronJob":
+        spec = ((spec.get("jobTemplate") or {}).get("spec")) or {}
+    labels = (((spec.get("template") or {}).get("metadata") or {}).get("labels"))
+    if isinstance(labels, dict) and labels:
+        return labels
+    selector = spec.get("selector")
+    if isinstance(selector, dict):
+        match_labels = selector.get("matchLabels")
+        if isinstance(match_labels, dict):
+            return match_labels
+        if "matchExpressions" not in selector:
+            return {k: v for k, v in selector.items() if isinstance(v, str)}
+    return {}
+
+
+def service_selects(svc_selector, resource):
+    """Whether a Service with this selector sends traffic to the workload's pods:
+    Kubernetes' own rule — every selector label is on the pod. The selector is
+    usually a SUBSET of the pod labels (`app: api` in front of pods labelled
+    `app: api, deployment: api`); matching it the other way round (every
+    matchLabel in the selector) missed those, and the Service and its Route
+    fell through to shared.yaml as "claimed by no workload"."""
+    if not isinstance(svc_selector, dict) or not svc_selector:
+        return False
+    labels = pod_template_labels(resource)
+    return all(labels.get(k) == v for k, v in svc_selector.items())
+
+
+def service_owners(service, workloads, key_of):
+    """The grouping keys of the workloads a Service belongs to. Several only
+    when its selector really spans several workloads and its name does not
+    single one out (a Service named after a workload — `api`, `api-metrics` —
+    goes to that workload even when its selector also catches a sibling's pods:
+    the converter re-points its selector at exactly the pods it selected)."""
+    svc_name = (service.get("metadata") or {}).get("name", "")
+    svc_selector = (service.get("spec") or {}).get("selector") or {}
+    matched = [w for w in workloads if service_selects(svc_selector, w)]
+    if len(matched) > 1:
+        def name_hit(w):
+            n = (w.get("metadata") or {}).get("name", "")
+            return len(n) if n and (svc_name == n or svc_name.startswith(n + "-")) else 0
+        best = max(name_hit(w) for w in matched)
+        if best:
+            narrowed = [w for w in matched if name_hit(w) == best]
+            if len(narrowed) == 1:
+                matched = narrowed
+    return list(dict.fromkeys(key_of(w) for w in matched))
+
+
 def extract_resource_refs_from_pod_spec(pod_spec):
     """
     Recursively extract all referenced resource names from a pod spec.
@@ -596,44 +653,25 @@ def discover_routes_for_services(namespace, services, all_routes=None):
 
 def discover_services_for_workloads(namespace, workloads, all_services=None):
     """
-    Discover services that match workloads via:
-    1. Selector match: service.spec.selector matches workload's spec.selector.matchLabels
-    2. Name prefix match: service name starts with any workload name
-    3. App label overlap: service metadata labels match workload metadata labels
+    Discover the services whose selector picks any of these workloads' pods
+    (service_selects).
     If all_services is provided (pre-fetched), filter from it instead of querying the cluster.
     """
-    selectors = []
-    for workload in workloads:
-        spec = workload.get("spec", {})
-        if not isinstance(spec, dict):
-            continue
-        selector = spec.get("selector", {})
-        if isinstance(selector, dict):
-            match_labels = selector.get("matchLabels", {})
-            if isinstance(match_labels, dict) and match_labels:
-                selectors.append(match_labels)
-    if not selectors:
+    if not workloads:
         return []
     if all_services is None:
         print(f"  Fetching services in namespace {namespace} to match workload selectors...", file=sys.stderr)
         all_services = fetch_all_in_namespace(namespace, "services")
-    matching = []
-    for service in all_services:
-        svc_selector = service.get("spec", {}).get("selector", {})
-        if not isinstance(svc_selector, dict):
-            continue
-        for sel in selectors:
-            if all(svc_selector.get(k) == v for k, v in sel.items()):
-                matching.append(service)
-                break
-    return matching
+    return [service for service in all_services
+            if isinstance(service, dict)
+            and any(service_selects((service.get("spec") or {}).get("selector"), w) for w in workloads)]
 
 
 def discover_services_for_app(namespace, app_name, all_workloads=None, all_services=None):
     """
     Discover services for a given app (used in --namespace mode).
     Matches services by:
-    1. Selector match with workload matchLabels
+    1. Selector match: the service selects the workloads' pods (service_selects)
     2. Service name starts with or contains the app name
     If all_services is provided (pre-fetched), filter from it instead of querying the cluster.
     """
@@ -682,11 +720,8 @@ def discover_services_for_app(namespace, app_name, all_workloads=None, all_servi
 
         matched = False
 
-        # 1. Selector match
-        for sel in selectors:
-            if all(svc_selector.get(k) == v for k, v in sel.items()):
-                matched = True
-                break
+        # 1. Selector match: the Service selects this app's pods
+        matched = any(service_selects(svc_selector, wl) for wl in workloads)
 
         # 2. Name contains app name
         if not matched and app_name and svc_name:
@@ -1057,23 +1092,8 @@ def fetch_all_app_resources(namespace, app_name, all_workloads=None, all_service
         services = discover_services_for_workloads(namespace, workloads, all_services=all_services)
     service_to_workloads = {}
     for service in services:
-        svc_selector = service.get("spec", {}).get("selector", {})
-        if not isinstance(svc_selector, dict):
-            continue
         svc_name = service.get("metadata", {}).get("name", "")
-        matching_workloads = []
-        for workload in workloads:
-            spec = workload.get("spec", {})
-            if not isinstance(spec, dict):
-                continue
-                continue
-            selector = spec.get("selector", {})
-            if isinstance(selector, dict):
-                match_labels = selector.get("matchLabels", {})
-                if isinstance(match_labels, dict) and match_labels:
-                    if all(svc_selector.get(k) == v for k, v in match_labels.items()):
-                        matching_workloads.append(wl_keys[id(workload)])
-        service_to_workloads[svc_name] = matching_workloads
+        service_to_workloads[svc_name] = service_owners(service, workloads, lambda w: wl_keys[id(w)])
 
     # Step 5: Discover routes
     service_names = [s["metadata"]["name"] for s in services if isinstance(s, dict) and s.get("metadata")]
@@ -1609,6 +1629,50 @@ def _handle_full_namespace(namespace, args):
                     alt, n = f"{key}-{str(wl[1]).lower()}-{n}", n + 1
                 key = alt
             combined[key] = entry
+
+    # Each app placed its Services on its own, so one whose selector spans pods
+    # of two apps sits in both files. It belongs to neither alone: shared.yaml,
+    # together with the Routes in front of it.
+    placed_in = {}
+    for key, entry in combined.items():
+        for name, kind, _ in entry.get("resources", []):
+            if kind == "Service":
+                placed_in.setdefault(name, []).append(key)
+    # Named after one of them (service_owners' rule): it stays there only.
+    owner_by_name = {}
+    for name, keys in placed_in.items():
+        if len(keys) < 2:
+            continue
+        hits = {k: len(k) for k in keys if name == k or name.startswith(k + "-")}
+        best = [k for k, n in hits.items() if n == max(hits.values(), default=0)]
+        if len(best) == 1:
+            owner_by_name[name] = best[0]
+    route_to = {(r.get("metadata") or {}).get("name"): ((r.get("spec") or {}).get("to") or {}).get("name")
+                for r in all_routes if isinstance(r, dict)}
+    if owner_by_name:
+        for key, entry in combined.items():
+            entry["resources"] = [
+                res for res in entry.get("resources", [])
+                if not ((res[1] == "Service" and owner_by_name.get(res[0], key) != key)
+                        or (res[1] == "Route" and owner_by_name.get(route_to.get(res[0]), key) != key))]
+        for name in owner_by_name:
+            placed_in[name] = [owner_by_name[name]]
+    multi = {name for name, keys in placed_in.items() if len(keys) > 1}
+    if multi:
+        moved = set()
+        for entry in combined.values():
+            keep = []
+            for res in entry.get("resources", []):
+                name, kind, _ = res
+                if (kind == "Service" and name in multi) or (kind == "Route" and route_to.get(name) in multi):
+                    if (kind, name) not in moved:
+                        moved.add((kind, name))
+                        shared_sink.append(res)
+                    continue
+                keep.append(res)
+            entry["resources"] = keep
+        for name in sorted(multi):
+            print(f"  Service '{name}' selects pods of {', '.join(placed_in[name])} -> shared.yaml", file=sys.stderr)
 
     # An Ingress goes with the microservice whose Service(s) it routes to, the
     # way a Route already does. In shared.yaml the converter builds it into a
